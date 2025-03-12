@@ -601,20 +601,410 @@ class GitHub_API_Client {
         
         file_put_contents($temp_dir . '/.gitignore', $gitignore_content);
         
-        // Get ZIP URL endpoint for repository 
-        $upload_url = "repos/{$this->owner}/{$this->repo}/zipball/{$branch}";
+        // Upload files to GitHub using the Git Data API
+        try {
+            $result = $this->upload_files_to_github($temp_dir, $branch, "Initial sync from {$site_name}");
+            
+            // Clean up temporary directory regardless of success or failure
+            $this->recursive_rmdir($temp_dir);
+            
+            return $result;
+        } catch (Exception $e) {
+            // Clean up temporary directory on exception
+            $this->recursive_rmdir($temp_dir);
+            
+            // Log exception details
+            wp_github_sync_log("Exception during initial sync: " . $e->getMessage(), 'error');
+            
+            return new WP_Error('sync_exception', $e->getMessage());
+        }
+    }
+    
+    /**
+     * Upload files to GitHub using the Git Data API.
+     *
+     * This method implements a complete workflow to upload files to GitHub:
+     * 1. Gets the reference to the target branch
+     * 2. Gets the commit the reference points to
+     * 3. Gets the tree the commit points to
+     * 4. Creates a new tree with the new files
+     * 5. Creates a new commit pointing to the new tree
+     * 6. Updates the reference to point to the new commit
+     *
+     * @param string $directory     Directory containing files to upload
+     * @param string $branch        Branch to upload to
+     * @param string $commit_message Commit message
+     * @return bool|WP_Error True on success or WP_Error on failure
+     */
+    protected function upload_files_to_github($directory, $branch, $commit_message) {
+        wp_github_sync_log("Starting GitHub upload process for branch: {$branch}", 'info');
         
-        // TODO: Here we would compress the directory and upload it to GitHub
-        // This is complex and would be better handled using direct Git operations 
-        // which are out of scope for this update
+        // Check if directory exists and is readable
+        if (!is_dir($directory) || !is_readable($directory)) {
+            return new WP_Error('invalid_directory', __('Directory does not exist or is not readable', 'wp-github-sync'));
+        }
         
-        // For now, just return success and let the AJAX handler handle the messaging
-        // This simulates that we've successfully prepared the files
+        // Validate branch name (basic validation)
+        if (!preg_match('/^[a-zA-Z0-9_\-\.\/]+$/', $branch)) {
+            return new WP_Error('invalid_branch', __('Invalid branch name', 'wp-github-sync'));
+        }
         
-        // Clean up
-        $this->recursive_rmdir($temp_dir);
+        // Check rate limit before starting expensive operation
+        $rate_limit = $this->request('rate_limit');
+        if (!is_wp_error($rate_limit) && isset($rate_limit['resources']['core']['remaining'])) {
+            $remaining = $rate_limit['resources']['core']['remaining'];
+            if ($remaining < 100) { // Arbitrary threshold, adjust as needed
+                wp_github_sync_log("GitHub API rate limit low: {$remaining} remaining", 'warning');
+                // Continue anyway, but log warning
+            }
+        }
         
-        return true;
+        // Step 1: Get the reference
+        $reference = $this->request("repos/{$this->owner}/{$this->repo}/git/refs/heads/{$branch}");
+        
+        if (is_wp_error($reference)) {
+            // If reference doesn't exist, try to create it (for new repositories or branches)
+            if (strpos($reference->get_error_message(), 'Not Found') !== false) {
+                wp_github_sync_log("Branch {$branch} not found. Attempting to create it.", 'info');
+                
+                // Get the default branch first
+                $repo_info = $this->get_repository();
+                if (is_wp_error($repo_info)) {
+                    wp_github_sync_log("Failed to get repository information: " . $repo_info->get_error_message(), 'error');
+                    return new WP_Error('github_api_error', __('Failed to get repository information', 'wp-github-sync'));
+                }
+                
+                $default_branch = isset($repo_info['default_branch']) ? $repo_info['default_branch'] : 'main';
+                wp_github_sync_log("Using default branch: {$default_branch}", 'info');
+                
+                // Get the SHA of the default branch
+                $default_ref = $this->request("repos/{$this->owner}/{$this->repo}/git/refs/heads/{$default_branch}");
+                if (is_wp_error($default_ref)) {
+                    wp_github_sync_log("Failed to get default branch reference: " . $default_ref->get_error_message(), 'error');
+                    
+                    // If default branch also doesn't exist, try to create an empty commit for the first branch
+                    if (strpos($default_ref->get_error_message(), 'Not Found') !== false) {
+                        wp_github_sync_log("Default branch not found. Creating initial commit.", 'info');
+                        
+                        // Create an empty tree first
+                        $empty_tree = $this->request(
+                            "repos/{$this->owner}/{$this->repo}/git/trees",
+                            'POST',
+                            [
+                                'tree' => []
+                            ]
+                        );
+                        
+                        if (is_wp_error($empty_tree)) {
+                            wp_github_sync_log("Failed to create empty tree: " . $empty_tree->get_error_message(), 'error');
+                            return new WP_Error('github_api_error', __('Failed to create initial commit tree', 'wp-github-sync'));
+                        }
+                        
+                        // Create the initial commit with the empty tree
+                        $initial_commit = $this->request(
+                            "repos/{$this->owner}/{$this->repo}/git/commits",
+                            'POST',
+                            [
+                                'message' => 'Initial commit',
+                                'tree' => $empty_tree['sha'],
+                                'parents' => []
+                            ]
+                        );
+                        
+                        if (is_wp_error($initial_commit)) {
+                            wp_github_sync_log("Failed to create initial commit: " . $initial_commit->get_error_message(), 'error');
+                            return new WP_Error('github_api_error', __('Failed to create initial commit', 'wp-github-sync'));
+                        }
+                        
+                        // Create the main branch reference with the initial commit
+                        $create_main_ref = $this->request(
+                            "repos/{$this->owner}/{$this->repo}/git/refs",
+                            'POST',
+                            [
+                                'ref' => "refs/heads/{$branch}",
+                                'sha' => $initial_commit['sha']
+                            ]
+                        );
+                        
+                        if (is_wp_error($create_main_ref)) {
+                            wp_github_sync_log("Failed to create main branch reference: " . $create_main_ref->get_error_message(), 'error');
+                            return new WP_Error('github_api_error', __('Failed to create initial branch reference', 'wp-github-sync'));
+                        }
+                        
+                        $reference = $create_main_ref;
+                    } else {
+                        return new WP_Error('github_api_error', __('Failed to get default branch reference', 'wp-github-sync'));
+                    }
+                } else {
+                    // Create the new branch from default
+                    $create_ref = $this->request(
+                        "repos/{$this->owner}/{$this->repo}/git/refs",
+                        'POST',
+                        [
+                            'ref' => "refs/heads/{$branch}",
+                            'sha' => $default_ref['object']['sha']
+                        ]
+                    );
+                    
+                    if (is_wp_error($create_ref)) {
+                        wp_github_sync_log("Failed to create new branch: " . $create_ref->get_error_message(), 'error');
+                        return new WP_Error('github_api_error', __('Failed to create new branch', 'wp-github-sync'));
+                    }
+                    
+                    $reference = $create_ref;
+                }
+            } else {
+                wp_github_sync_log("Failed to get branch reference: " . $reference->get_error_message(), 'error');
+                return new WP_Error('github_api_error', __('Failed to get branch reference', 'wp-github-sync'));
+            }
+        }
+        
+        $ref_sha = $reference['object']['sha'];
+        wp_github_sync_log("Got reference SHA: {$ref_sha}", 'debug');
+        
+        // Step 2: Get the commit the reference points to
+        $commit = $this->request("repos/{$this->owner}/{$this->repo}/git/commits/{$ref_sha}");
+        
+        if (is_wp_error($commit)) {
+            return new WP_Error('github_api_error', __('Failed to get commit', 'wp-github-sync'));
+        }
+        
+        $base_tree_sha = $commit['tree']['sha'];
+        wp_github_sync_log("Got base tree SHA: {$base_tree_sha}", 'debug');
+        
+        // Step 3: Create blobs for each file
+        $tree_items = [];
+        $files_processed = 0;
+        $total_size = 0;
+        $upload_limit = 50 * 1024 * 1024; // 50MB recommended limit to avoid issues
+        $max_files = 1000; // GitHub has limits on tree size
+        
+        // Recursive function to process directories
+        $process_directory = function($dir, $base_path = '') use (&$process_directory, &$tree_items, &$files_processed, &$total_size, $upload_limit, $max_files) {
+            $files = scandir($dir);
+            
+            foreach ($files as $file) {
+                if ($file === '.' || $file === '..') {
+                    continue;
+                }
+                
+                // Skip hidden files and common unwanted patterns
+                if (strpos($file, '.') === 0 || in_array($file, ['node_modules', 'vendor', '.git', 'cache'])) {
+                    wp_github_sync_log("Skipping '{$file}' (hidden or excluded pattern)", 'debug');
+                    continue;
+                }
+                
+                $path = $dir . '/' . $file;
+                $relative_path = $base_path . ($base_path ? '/' : '') . $file;
+                
+                // Normalize the path to use forward slashes for GitHub
+                $relative_path = str_replace('\\', '/', $relative_path);
+                
+                if (is_dir($path)) {
+                    // For directories, recursively process them
+                    $process_directory($path, $relative_path);
+                } else {
+                    // Check file limits
+                    if ($files_processed >= $max_files) {
+                        wp_github_sync_log("Reached max file limit ({$max_files}). Some files were not processed.", 'warning');
+                        return;
+                    }
+                    
+                    // Check if file is binary or text
+                    $finfo = new finfo(FILEINFO_MIME);
+                    $mime_type = $finfo->file($path);
+                    $is_binary = (strpos($mime_type, 'text/') !== 0 && 
+                                 strpos($mime_type, 'application/json') !== 0 &&
+                                 strpos($mime_type, 'application/xml') !== 0);
+                    
+                    // Get file size
+                    $file_size = filesize($path);
+                    
+                    // Skip if file is too large (GitHub API has a 100MB limit)
+                    if ($file_size > 50 * 1024 * 1024) {
+                        wp_github_sync_log("Skipping file {$relative_path} (too large: " . round($file_size/1024/1024, 2) . "MB)", 'warning');
+                        continue;
+                    }
+                    
+                    // Check if this file would exceed our total size limit
+                    if ($total_size + $file_size > $upload_limit) {
+                        wp_github_sync_log("Total upload limit reached. Skipping remaining files.", 'warning');
+                        return;
+                    }
+                    
+                    try {
+                        // For files, create a blob and add to tree
+                        $content = file_get_contents($path);
+                        
+                        // Skip if file couldn't be read
+                        if ($content === false) {
+                            wp_github_sync_log("Skipping file {$relative_path} (couldn't read file)", 'warning');
+                            continue;
+                        }
+                        
+                        // Create blob based on file type
+                        $blob_data = [];
+                        if ($is_binary) {
+                            $blob_data = [
+                                'content' => base64_encode($content),
+                                'encoding' => 'base64'
+                            ];
+                        } else {
+                            $blob_data = [
+                                'content' => $content,
+                                'encoding' => 'utf-8'
+                            ];
+                        }
+                        
+                        $blob = $this->request(
+                            "repos/{$this->owner}/{$this->repo}/git/blobs",
+                            'POST',
+                            $blob_data
+                        );
+                        
+                        if (is_wp_error($blob)) {
+                            wp_github_sync_log("Failed to create blob for {$relative_path}: " . $blob->get_error_message(), 'error');
+                            continue;
+                        }
+                        
+                        // Determine file mode (executable or regular file)
+                        $file_mode = '100644'; // Regular file
+                        if (is_executable($path)) {
+                            $file_mode = '100755'; // Executable file
+                        }
+                        
+                        $tree_items[] = [
+                            'path' => $relative_path,
+                            'mode' => $file_mode,
+                            'type' => 'blob',
+                            'sha' => $blob['sha']
+                        ];
+                        
+                        $files_processed++;
+                        $total_size += $file_size;
+                        
+                        if ($files_processed % 25 === 0) {
+                            wp_github_sync_log("Processed {$files_processed} files, total size: " . round($total_size/1024/1024, 2) . "MB", 'info');
+                        }
+                    } catch (Exception $e) {
+                        wp_github_sync_log("Error processing file {$relative_path}: " . $e->getMessage(), 'error');
+                        continue;
+                    }
+                }
+            }
+        };
+        
+        // Process the directory
+        $process_directory($directory);
+        
+        if (empty($tree_items)) {
+            return new WP_Error('github_api_error', __('No files to upload', 'wp-github-sync'));
+        }
+        
+        wp_github_sync_log("Created " . count($tree_items) . " blobs", 'info');
+        
+        // Step 4: Create a new tree with the new files
+        wp_github_sync_log("Creating tree with " . count($tree_items) . " files", 'info');
+        
+        // Check if we have a large number of files that may exceed GitHub's limits
+        $max_items_per_request = 100; // GitHub may have issues with too many items in a single request
+        $chunks = array_chunk($tree_items, $max_items_per_request);
+        
+        if (count($chunks) > 1) {
+            wp_github_sync_log("Files split into " . count($chunks) . " chunks due to size", 'info');
+            
+            // We need to build the tree incrementally
+            $current_base_tree = $base_tree_sha;
+            
+            foreach ($chunks as $index => $chunk) {
+                wp_github_sync_log("Processing chunk " . ($index + 1) . " of " . count($chunks), 'info');
+                
+                $chunk_tree = $this->request(
+                    "repos/{$this->owner}/{$this->repo}/git/trees",
+                    'POST',
+                    [
+                        'base_tree' => $current_base_tree,
+                        'tree' => $chunk
+                    ]
+                );
+                
+                if (is_wp_error($chunk_tree)) {
+                    wp_github_sync_log("Failed to create tree chunk " . ($index + 1) . ": " . $chunk_tree->get_error_message(), 'error');
+                    return new WP_Error('github_api_error', __('Failed to create tree chunk', 'wp-github-sync'));
+                }
+                
+                // Use this tree as the base for the next chunk
+                $current_base_tree = $chunk_tree['sha'];
+                wp_github_sync_log("Created tree chunk " . ($index + 1) . " with SHA: {$current_base_tree}", 'debug');
+            }
+            
+            $new_tree_sha = $current_base_tree;
+        } else {
+            // Single chunk approach for smaller trees
+            $new_tree = $this->request(
+                "repos/{$this->owner}/{$this->repo}/git/trees",
+                'POST',
+                [
+                    'base_tree' => $base_tree_sha,
+                    'tree' => $tree_items
+                ]
+            );
+            
+            if (is_wp_error($new_tree)) {
+                wp_github_sync_log("Failed to create tree: " . $new_tree->get_error_message(), 'error');
+                return new WP_Error('github_api_error', __('Failed to create tree', 'wp-github-sync'));
+            }
+            
+            $new_tree_sha = $new_tree['sha'];
+        }
+        
+        wp_github_sync_log("Final tree created with SHA: {$new_tree_sha}", 'info');
+        
+        // Step 5: Create a new commit
+        try {
+            $new_commit = $this->request(
+                "repos/{$this->owner}/{$this->repo}/git/commits",
+                'POST',
+                [
+                    'message' => $commit_message,
+                    'tree' => $new_tree_sha,
+                    'parents' => [$ref_sha]
+                ]
+            );
+            
+            if (is_wp_error($new_commit)) {
+                wp_github_sync_log("Failed to create commit: " . $new_commit->get_error_message(), 'error');
+                return new WP_Error('github_api_error', __('Failed to create commit', 'wp-github-sync'));
+            }
+            
+            $new_commit_sha = $new_commit['sha'];
+            wp_github_sync_log("Created new commit with SHA: {$new_commit_sha}", 'info');
+            
+            // Step 6: Update the reference
+            $update_ref = $this->request(
+                "repos/{$this->owner}/{$this->repo}/git/refs/heads/{$branch}",
+                'PATCH',
+                [
+                    'sha' => $new_commit_sha,
+                    'force' => true // Force update in case of non-fast-forward update
+                ]
+            );
+            
+            if (is_wp_error($update_ref)) {
+                wp_github_sync_log("Failed to update reference: " . $update_ref->get_error_message(), 'error');
+                return new WP_Error('github_api_error', __('Failed to update reference', 'wp-github-sync'));
+            }
+            
+            wp_github_sync_log("Successfully updated reference to new commit", 'info');
+            
+            // Store this commit as the last deployed commit
+            update_option('wp_github_sync_last_deployed_commit', $new_commit_sha);
+            
+            return true;
+        } catch (Exception $e) {
+            wp_github_sync_log("Exception during commit creation or reference update: " . $e->getMessage(), 'error');
+            return new WP_Error('github_api_exception', $e->getMessage());
+        }
     }
     
     /**

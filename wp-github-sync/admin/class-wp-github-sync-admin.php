@@ -891,12 +891,23 @@ class WP_GitHub_Sync_Admin {
     public function handle_ajax_full_sync() {
         // Check permissions
         if (!wp_github_sync_current_user_can()) {
+            wp_github_sync_log("Permission denied for full sync", 'error');
             wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
+            return;
         }
         
         // Verify nonce
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
+            wp_github_sync_log("Invalid nonce for full sync", 'error');
             wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
+            return;
+        }
+        
+        // Check if sync is already in progress
+        if (get_option('wp_github_sync_sync_in_progress', false)) {
+            wp_github_sync_log("Sync already in progress, cannot start another", 'warning');
+            wp_send_json_error(array('message' => __('A sync operation is already in progress. Please wait for it to complete.', 'wp-github-sync')));
+            return;
         }
         
         // Ensure GitHub API is initialized
@@ -925,17 +936,41 @@ class WP_GitHub_Sync_Admin {
             return;
         }
         
-        // In the current version, we don't have a complete implementation for full sync
-        // Instead, we'll return a message informing the user of this limitation
+        // Perform the full sync to GitHub
+        $branch = wp_github_sync_get_current_branch();
         
-        // For future implementation:
-        // $result = $this->github_api->initial_sync();
-        // update_option('wp_github_sync_last_deployment_time', time());
+        // Show a message that sync is starting
+        wp_github_sync_log("Starting full sync to GitHub for branch: {$branch}", 'info');
         
-        // Return a "coming soon" message
-        wp_send_json_success(array(
-            'message' => __('Full sync to GitHub feature is coming soon. The file preparation functionality has been implemented, but the GitHub upload mechanism is still in development.', 'wp-github-sync')
-        ));
+        // Set a flag that sync is in progress
+        update_option('wp_github_sync_sync_in_progress', true);
+        
+        // Execute the initial sync operation
+        $result = $this->github_api->initial_sync($branch);
+        
+        // Clear the in-progress flag
+        delete_option('wp_github_sync_sync_in_progress');
+        
+        if (is_wp_error($result)) {
+            // Log the error details
+            wp_github_sync_log("Full sync to GitHub failed: " . $result->get_error_message(), 'error');
+            
+            // Return error to the user
+            wp_send_json_error(array(
+                'message' => sprintf(__('Full sync to GitHub failed: %s', 'wp-github-sync'), $result->get_error_message())
+            ));
+        } else {
+            // Update the sync time
+            update_option('wp_github_sync_last_deployment_time', time());
+            
+            // Log successful sync
+            wp_github_sync_log("Full sync to GitHub completed successfully", 'info');
+            
+            // Return success message
+            wp_send_json_success(array(
+                'message' => __('All WordPress files have been successfully synced to GitHub!', 'wp-github-sync')
+            ));
+        }
     }
 
     public function handle_oauth_callback() {
