@@ -153,7 +153,7 @@ $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] :
         </div>
         
         <!-- Getting Started Tab Content -->
-        <div class="wp-github-sync-tab-content active" id="guide-tab-content">
+        <div class="wp-github-sync-tab-content active" id="guide-tab-content" data-tab="guide">
             <div class="wp-github-sync-card">
                 <h2>
                     <span class="dashicons dashicons-book"></span>
@@ -268,7 +268,7 @@ $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] :
         </div>
         
         <!-- Branch Switching Tab Content -->
-        <div class="wp-github-sync-tab-content" id="branches-tab-content">
+        <div class="wp-github-sync-tab-content" id="branches-tab-content" data-tab="branches">
             <div class="wp-github-sync-card">
                 <h2>
                     <span class="dashicons dashicons-randomize"></span>
@@ -331,7 +331,7 @@ $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] :
         </div>
         
         <!-- Recent Commits Tab Content -->
-        <div class="wp-github-sync-tab-content" id="commits-tab-content">
+        <div class="wp-github-sync-tab-content" id="commits-tab-content" data-tab="commits">
             <div class="wp-github-sync-card">
                 <h2>
                     <span class="dashicons dashicons-backup"></span>
@@ -408,7 +408,7 @@ $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] :
         </div>
         
         <!-- Webhook Tab Content -->
-        <div class="wp-github-sync-tab-content" id="webhook-tab-content">
+        <div class="wp-github-sync-tab-content" id="webhook-tab-content" data-tab="webhook">
             <div class="wp-github-sync-card">
                 <h2>
                     <span class="dashicons dashicons-admin-links"></span>
@@ -459,9 +459,10 @@ $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] :
                     </div>
                 </div>
             </div>
+        </div>
             
         <!-- Developer Tools Tab Content -->
-        <div class="wp-github-sync-tab-content" id="dev-tab-content">
+        <div class="wp-github-sync-tab-content" id="dev-tab-content" data-tab="dev">
             <div class="wp-github-sync-card">
                 <h2>
                     <span class="dashicons dashicons-code-standards"></span>

@@ -911,25 +911,24 @@ class WP_GitHub_Sync_Admin {
         }
         
         // Check if repository exists
-        $repo_exists = $this->github_api->repository_exists();
+        $repo_exists = $this->github_api->get_repository();
         
-        if (is_wp_error($repo_exists) || !$repo_exists) {
-            $error_message = is_wp_error($repo_exists) ? $repo_exists->get_error_message() : __('Repository does not exist or is not accessible.', 'wp-github-sync');
-            wp_send_json_error(array('message' => sprintf(__('Error connecting to repository: %s', 'wp-github-sync'), $error_message)));
+        if (is_wp_error($repo_exists)) {
+            wp_send_json_error(array('message' => sprintf(__('Error connecting to repository: %s', 'wp-github-sync'), $repo_exists->get_error_message())));
             return;
         }
         
-        // Perform the full sync to GitHub
-        $result = $this->github_api->initial_sync();
+        // In the current version, we don't have a complete implementation for full sync
+        // Instead, we'll return a message informing the user of this limitation
         
-        if (is_wp_error($result)) {
-            wp_send_json_error(array('message' => sprintf(__('Full sync to GitHub failed: %s', 'wp-github-sync'), $result->get_error_message())));
-        } else {
-            // Update the sync time
-            update_option('wp_github_sync_last_deployment_time', time());
-            
-            wp_send_json_success(array('message' => __('Full sync to GitHub completed successfully.', 'wp-github-sync')));
-        }
+        // For future implementation:
+        // $result = $this->github_api->initial_sync();
+        // update_option('wp_github_sync_last_deployment_time', time());
+        
+        // Return a "coming soon" message
+        wp_send_json_success(array(
+            'message' => __('Full sync to GitHub feature is coming soon. The file preparation functionality has been implemented, but the GitHub upload mechanism is still in development.', 'wp-github-sync')
+        ));
     }
 
     public function handle_oauth_callback() {

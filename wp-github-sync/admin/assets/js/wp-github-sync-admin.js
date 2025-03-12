@@ -16,7 +16,12 @@
                 var tab = $(this).data('tab');
                 
                 $('.wp-github-sync-tab-content').removeClass('active');
-                $('#' + tab + '-tab-content').addClass('active');
+                // Try to find tab content by ID first, if it fails, try by data-tab attribute
+                var $tabContent = $('#' + tab + '-tab-content');
+                if ($tabContent.length === 0) {
+                    $tabContent = $('.wp-github-sync-tab-content[data-tab="' + tab + '"]');
+                }
+                $tabContent.addClass('active');
                 
                 // Update URL hash
                 window.location.hash = tab;
@@ -237,14 +242,21 @@
                         hideOverlay();
                         if (response.success) {
                             alert(response.data.message || 'Sync completed successfully!');
-                            window.location.reload();
+                            // Don't reload if it's a coming soon message
+                            if (response.data.message && response.data.message.indexOf('coming soon') === -1) {
+                                window.location.reload();
+                            }
                         } else {
                             alert(response.data.message || wpGitHubSync.strings.error);
                         }
                     },
-                    error: function() {
+                    error: function(xhr, status, error) {
                         hideOverlay();
-                        alert(wpGitHubSync.strings.error);
+                        var errorMessage = wpGitHubSync.strings.error;
+                        if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+                            errorMessage = xhr.responseJSON.data.message;
+                        }
+                        alert(errorMessage);
                     }
                 });
             }
