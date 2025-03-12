@@ -1,0 +1,102 @@
+/**
+ * Admin CSS for WordPress GitHub Sync.
+ *
+ * @package WPGitHubSync
+ */
+
+.wp-github-sync-widget {
+    margin-bottom: 15px;
+}
+
+.wp-github-sync-update-available {
+    color: #00a0d2;
+    font-weight: bold;
+}
+
+.wp-github-sync-card {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 3px;
+    margin-top: 20px;
+    padding: 20px;
+    position: relative;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+}
+
+.wp-github-sync-card h2:first-child {
+    margin-top: 0;
+}
+
+.wp-github-sync-settings .form-table th {
+    width: 250px;
+}
+
+.wp-github-sync-settings .description {
+    font-style: italic;
+    color: #666;
+}
+
+.wp-github-sync-deployment-item {
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #eee;
+}
+
+.wp-github-sync-deployment-item:last-child {
+    border-bottom: none;
+}
+
+.wp-github-sync-commit-message {
+    font-style: italic;
+    color: #555;
+    margin: 5px 0;
+}
+
+.wp-github-sync-commit-info {
+    font-size: 12px;
+    color: #666;
+    margin: 5px 0;
+}
+
+.wp-github-sync-status-pending {
+    color: #ffa500;
+}
+
+.wp-github-sync-status-success {
+    color: #46b450;
+}
+
+.wp-github-sync-status-error {
+    color: #dc3232;
+}
+
+.wp-github-sync-code {
+    font-family: monospace;
+    background: #f5f5f5;
+    padding: 10px;
+    border: 1px solid #ddd;
+    overflow: auto;
+    max-height: 300px;
+}
+
+/* Dashboard widget styles */
+#wp_github_sync_dashboard_widget .inside {
+    margin: 0;
+    padding: 12px;
+}
+
+#wp_github_sync_dashboard_widget .wp-github-sync-widget {
+    border-bottom: 1px solid #eee;
+    padding-bottom: 12px;
+    margin-bottom: 12px;
+}
+
+#wp_github_sync_dashboard_widget .wp-github-sync-widget:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-bottom: 0;
+}
+
+#wp_github_sync_dashboard_widget .button-primary {
+    margin-top: 10px;
+}
