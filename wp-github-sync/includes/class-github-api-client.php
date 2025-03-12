@@ -871,7 +871,9 @@ class GitHub_API_Client {
                     
                     $reference = $create_ref;
                 }
-            } else {
+            }
+            
+            if (is_wp_error($reference)) {
                 wp_github_sync_log("Failed to get branch reference: " . $reference->get_error_message(), 'error');
                 return new WP_Error('github_api_error', __('Failed to get branch reference', 'wp-github-sync'));
             }
