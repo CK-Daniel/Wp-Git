@@ -1,6 +1,6 @@
 <?php
 /**
- * Dashboard admin page template.
+ * Admin dashboard page template.
  *
  * @package WPGitHubSync
  */
@@ -15,253 +15,558 @@ if (!wp_github_sync_current_user_can()) {
     wp_die(__('You do not have sufficient permissions to access this page.', 'wp-github-sync'));
 }
 
-// Get current settings and status
+// Get settings and status
+$api_client = new WPGitHubSync\API\API_Client();
 $repository_url = get_option('wp_github_sync_repository', '');
 $branch = wp_github_sync_get_current_branch();
 $last_deployed_commit = get_option('wp_github_sync_last_deployed_commit', '');
-$latest_commit = get_option('wp_github_sync_latest_commit', array());
+$latest_commit_info = get_option('wp_github_sync_latest_commit', array());
 $update_available = get_option('wp_github_sync_update_available', false);
 $deployment_in_progress = get_option('wp_github_sync_deployment_in_progress', false);
 $deployment_history = get_option('wp_github_sync_deployment_history', array());
-$last_backup = get_option('wp_github_sync_last_backup', array());
+$last_deployment_time = !empty($deployment_history) ? max(array_column($deployment_history, 'timestamp')) : 0;
+$branches = get_option('wp_github_sync_branches', array());
+$recent_commits = get_option('wp_github_sync_recent_commits', array());
 
-// Handle form submission for deployment actions
-if (isset($_POST['wp_github_sync_action']) && wp_github_sync_current_user_can()) {
-    check_admin_referer('wp_github_sync_action');
-    
-    $action = sanitize_text_field($_POST['wp_github_sync_action']);
-    
-    if ($action === 'deploy_latest') {
-        // Deploy the latest commit
-        if (!empty($latest_commit['sha'])) {
-            $sync_manager = new WPGitHubSync\Sync\Sync_Manager(new WPGitHubSync\API\API_Client());
-            $result = $sync_manager->deploy($latest_commit['sha']);
-            
-            if (is_wp_error($result)) {
-                add_settings_error('wp_github_sync', 'deploy_error', $result->get_error_message(), 'error');
-            } else {
-                add_settings_error('wp_github_sync', 'deploy_success', __('Successfully deployed the latest commit.', 'wp-github-sync'), 'success');
-            }
-        }
-    } elseif ($action === 'check_updates') {
-        // Check for updates
-        $sync_manager = new WPGitHubSync\Sync\Sync_Manager(new WPGitHubSync\API\API_Client());
-        $sync_manager->check_for_updates();
-        
-        add_settings_error('wp_github_sync', 'check_updates', __('Checked for updates from GitHub.', 'wp-github-sync'), 'info');
-    } elseif ($action === 'switch_branch') {
-        // Switch to a different branch
-        $new_branch = sanitize_text_field($_POST['wp_github_sync_branch']);
-        
-        if (!empty($new_branch)) {
-            $sync_manager = new WPGitHubSync\Sync\Sync_Manager(new WPGitHubSync\API\API_Client());
-            $result = $sync_manager->switch_branch($new_branch);
-            
-            if (is_wp_error($result)) {
-                add_settings_error('wp_github_sync', 'switch_branch_error', $result->get_error_message(), 'error');
-            } else {
-                add_settings_error('wp_github_sync', 'switch_branch_success', sprintf(__('Successfully switched to branch %s.', 'wp-github-sync'), $new_branch), 'success');
-            }
-        }
-    } elseif ($action === 'rollback') {
-        // Rollback to a previous commit
-        $commit_sha = sanitize_text_field($_POST['wp_github_sync_commit_sha']);
-        
-        if (!empty($commit_sha)) {
-            $sync_manager = new WPGitHubSync\Sync\Sync_Manager(new WPGitHubSync\API\API_Client());
-            $result = $sync_manager->rollback($commit_sha);
-            
-            if (is_wp_error($result)) {
-                add_settings_error('wp_github_sync', 'rollback_error', $result->get_error_message(), 'error');
-            } else {
-                add_settings_error('wp_github_sync', 'rollback_success', __('Successfully rolled back to the selected commit.', 'wp-github-sync'), 'success');
-            }
-        }
-    }
-    
-    // Refresh the page to update the status
-    echo '<meta http-equiv="refresh" content="0">';
-}
-
-// Display admin notices
-settings_errors('wp_github_sync');
+// Parse repository URL to get owner/repo format
+$parsed_url = $api_client->parse_github_url($repository_url);
+$repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] : $repository_url;
 ?>
-
-<div class="wrap">
+<div class="wrap wp-github-sync-wrap">
     <h1><?php _e('GitHub Sync Dashboard', 'wp-github-sync'); ?></h1>
     
-    <?php if (empty($repository_url)): ?>
-        <div class="notice notice-warning">
-            <p>
-                <?php _e('GitHub repository URL is not configured. Please configure it in the settings.', 'wp-github-sync'); ?>
-                <a href="<?php echo admin_url('admin.php?page=wp-github-sync-settings'); ?>"><?php _e('Go to Settings', 'wp-github-sync'); ?></a>
-            </p>
+    <?php settings_errors('wp_github_sync'); ?>
+    
+    <?php if (empty($repository_url)) : ?>
+        <div class="wp-github-sync-info-box warning">
+            <div class="wp-github-sync-info-box-icon">
+                <span class="dashicons dashicons-warning"></span>
+            </div>
+            <div class="wp-github-sync-info-box-content">
+                <h4 class="wp-github-sync-info-box-title"><?php _e('GitHub Sync is not configured yet', 'wp-github-sync'); ?></h4>
+                <p class="wp-github-sync-info-box-message">
+                    <?php _e('Please set up your GitHub repository connection to start using the plugin.', 'wp-github-sync'); ?>
+                    <br>
+                    <a href="<?php echo admin_url('admin.php?page=wp-github-sync-settings'); ?>" class="wp-github-sync-button" style="margin-top: 15px;">
+                        <span class="dashicons dashicons-admin-tools"></span>
+                        <?php _e('Configure Now', 'wp-github-sync'); ?>
+                    </a>
+                </p>
+            </div>
         </div>
-    <?php else: ?>
-        <div class="card">
-            <h2><?php _e('Repository Information', 'wp-github-sync'); ?></h2>
-            <p><strong><?php _e('Repository URL:', 'wp-github-sync'); ?></strong> <?php echo esc_html($repository_url); ?></p>
-            <p><strong><?php _e('Current Branch:', 'wp-github-sync'); ?></strong> <?php echo esc_html($branch); ?></p>
+    <?php else : ?>
+        <!-- Status Summary Card -->
+        <div class="wp-github-sync-card">
+            <h2>
+                <span class="dashicons dashicons-info"></span>
+                <?php _e('Repository Overview', 'wp-github-sync'); ?>
+            </h2>
             
-            <?php if (!empty($last_deployed_commit)): ?>
-                <p>
-                    <strong><?php _e('Last Deployed Commit:', 'wp-github-sync'); ?></strong>
-                    <?php echo substr($last_deployed_commit, 0, 8); ?>
-                    <?php
-                    $last_deploy = array_reduce($deployment_history, function($latest, $item) {
-                        return (!$latest || $item['timestamp'] > $latest['timestamp']) ? $item : $latest;
-                    });
-                    if ($last_deploy && isset($last_deploy['commit']['message'])) {
-                        echo ' - ' . wp_github_sync_format_commit_message($last_deploy['commit']['message']);
-                    }
-                    ?>
-                </p>
-                <p>
-                    <strong><?php _e('Last Deployment Time:', 'wp-github-sync'); ?></strong>
-                    <?php
-                    if ($last_deploy) {
-                        echo date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $last_deploy['timestamp']);
-                        echo ' (' . wp_github_sync_time_diff($last_deploy['timestamp']) . ' ' . __('ago', 'wp-github-sync') . ')';
-                    } else {
-                        _e('Unknown', 'wp-github-sync');
-                    }
-                    ?>
-                </p>
-            <?php else: ?>
-                <p><?php _e('No deployments have been made yet.', 'wp-github-sync'); ?></p>
-            <?php endif; ?>
-            
-            <?php if (!empty($last_backup) && isset($last_backup['path']) && file_exists($last_backup['path'])): ?>
-                <p>
-                    <strong><?php _e('Last Backup:', 'wp-github-sync'); ?></strong>
-                    <?php echo date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($last_backup['date'])); ?>
-                </p>
-            <?php endif; ?>
-        </div>
-        
-        <div class="card">
-            <h2><?php _e('Actions', 'wp-github-sync'); ?></h2>
-            
-            <?php if ($deployment_in_progress): ?>
-                <div class="notice notice-info">
-                    <p><?php _e('A deployment is currently in progress. Please wait until it completes.', 'wp-github-sync'); ?></p>
-                </div>
-            <?php else: ?>
-                <form method="post" action="">
-                    <?php wp_nonce_field('wp_github_sync_action'); ?>
-                    <input type="hidden" name="wp_github_sync_action" value="check_updates">
-                    <p>
-                        <button type="submit" class="button"><?php _e('Check for Updates', 'wp-github-sync'); ?></button>
-                    </p>
-                </form>
-                
-                <?php if ($update_available && !empty($latest_commit)): ?>
-                    <div class="notice notice-info" style="background-color: #f0f8ff; border-left-color: #00a0d2;">
-                        <h3><?php _e('Update Available', 'wp-github-sync'); ?></h3>
-                        <p><strong><?php _e('Commit:', 'wp-github-sync'); ?></strong> <?php echo substr($latest_commit['sha'], 0, 8); ?></p>
-                        <p><strong><?php _e('Author:', 'wp-github-sync'); ?></strong> <?php echo esc_html($latest_commit['author']); ?></p>
-                        <p><strong><?php _e('Date:', 'wp-github-sync'); ?></strong> <?php echo date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($latest_commit['date'])); ?></p>
-                        <p><strong><?php _e('Message:', 'wp-github-sync'); ?></strong> <?php echo wp_github_sync_format_commit_message($latest_commit['message'], 200); ?></p>
+            <div class="wp-github-sync-card-content">
+                <div class="wp-github-sync-dashboard">
+                    <!-- Repository Info -->
+                    <div>
+                        <div class="wp-github-sync-status-item">
+                            <span class="wp-github-sync-status-label"><?php _e('Repository:', 'wp-github-sync'); ?></span>
+                            <span class="wp-github-sync-status-value">
+                                <a href="<?php echo esc_url($repository_url); ?>" target="_blank"><?php echo esc_html($repo_display); ?></a>
+                            </span>
+                        </div>
                         
-                        <form method="post" action="">
-                            <?php wp_nonce_field('wp_github_sync_action'); ?>
-                            <input type="hidden" name="wp_github_sync_action" value="deploy_latest">
-                            <p>
-                                <button type="submit" class="button button-primary"><?php _e('Deploy Now', 'wp-github-sync'); ?></button>
-                            </p>
-                        </form>
+                        <div class="wp-github-sync-status-item">
+                            <span class="wp-github-sync-status-label"><?php _e('Current Branch:', 'wp-github-sync'); ?></span>
+                            <span class="wp-github-sync-status-value"><?php echo esc_html($branch); ?></span>
+                        </div>
+                        
+                        <?php if (!empty($latest_commit_info)) : ?>
+                        <div class="wp-github-sync-status-item">
+                            <span class="wp-github-sync-status-label"><?php _e('Current Commit:', 'wp-github-sync'); ?></span>
+                            <span class="wp-github-sync-status-value">
+                                <span class="code"><?php echo esc_html(substr($latest_commit_info['sha'], 0, 8)); ?></span>
+                                - <?php echo esc_html(wp_github_sync_format_commit_message($latest_commit_info['message'])); ?>
+                            </span>
+                        </div>
+                        <?php endif; ?>
                     </div>
-                <?php else: ?>
-                    <div class="notice notice-success">
-                        <p><?php _e('Your site is up to date with the selected branch.', 'wp-github-sync'); ?></p>
+                    
+                    <!-- Status Info -->
+                    <div>
+                        <?php if (!empty($last_deployment_time)) : ?>
+                        <div class="wp-github-sync-status-item">
+                            <span class="wp-github-sync-status-label"><?php _e('Last Deployment:', 'wp-github-sync'); ?></span>
+                            <span class="wp-github-sync-status-value">
+                                <?php echo date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $last_deployment_time); ?>
+                                (<?php echo wp_github_sync_time_diff($last_deployment_time); ?> <?php _e('ago', 'wp-github-sync'); ?>)
+                            </span>
+                        </div>
+                        <?php endif; ?>
+                        
+                        <div class="wp-github-sync-status-item">
+                            <span class="wp-github-sync-status-label"><?php _e('Status:', 'wp-github-sync'); ?></span>
+                            <span class="wp-github-sync-status-value">
+                                <?php if ($deployment_in_progress) : ?>
+                                    <span class="wp-github-sync-status-in-progress">
+                                        <span class="dashicons dashicons-update"></span>
+                                        <?php _e('Deployment in progress...', 'wp-github-sync'); ?>
+                                    </span>
+                                <?php elseif ($update_available) : ?>
+                                    <span class="wp-github-sync-status-update-available">
+                                        <span class="dashicons dashicons-warning"></span>
+                                        <?php _e('Update available', 'wp-github-sync'); ?>
+                                    </span>
+                                <?php else : ?>
+                                    <span class="wp-github-sync-status-up-to-date">
+                                        <span class="dashicons dashicons-yes-alt"></span>
+                                        <?php _e('Up to date', 'wp-github-sync'); ?>
+                                    </span>
+                                <?php endif; ?>
+                            </span>
+                        </div>
+                    
+                        <div class="wp-github-sync-action-buttons">
+                            <?php if ($update_available && !$deployment_in_progress) : ?>
+                                <button class="wp-github-sync-button success wp-github-sync-deploy">
+                                    <span class="dashicons dashicons-cloud-upload"></span>
+                                    <?php _e('Deploy Latest Changes', 'wp-github-sync'); ?>
+                                </button>
+                            <?php endif; ?>
+                            
+                            <button class="wp-github-sync-button secondary wp-github-sync-check-updates">
+                                <span class="dashicons dashicons-update"></span>
+                                <?php _e('Check for Updates', 'wp-github-sync'); ?>
+                            </button>
+                            
+                            <button class="wp-github-sync-button wp-github-sync-full-sync">
+                                <span class="dashicons dashicons-upload"></span>
+                                <?php _e('Sync All to GitHub', 'wp-github-sync'); ?>
+                            </button>
+                        </div>
                     </div>
-                <?php endif; ?>
-                
-                <h3><?php _e('Switch Branch', 'wp-github-sync'); ?></h3>
-                <form method="post" action="">
-                    <?php wp_nonce_field('wp_github_sync_action'); ?>
-                    <input type="hidden" name="wp_github_sync_action" value="switch_branch">
-                    <p>
-                        <input type="text" name="wp_github_sync_branch" value="<?php echo esc_attr($branch); ?>" placeholder="<?php _e('Branch name', 'wp-github-sync'); ?>" class="regular-text">
-                        <button type="submit" class="button"><?php _e('Switch Branch', 'wp-github-sync'); ?></button>
-                    </p>
-                    <p class="description"><?php _e('Warning: This will immediately deploy the latest commit from the specified branch.', 'wp-github-sync'); ?></p>
-                </form>
-            <?php endif; ?>
+                </div>
+            </div>
         </div>
         
-        <div class="card">
-            <h2><?php _e('Deployment History', 'wp-github-sync'); ?></h2>
-            <?php if (empty($deployment_history)): ?>
-                <p><?php _e('No deployment history available.', 'wp-github-sync'); ?></p>
-            <?php else: ?>
-                <table class="wp-list-table widefat fixed striped">
-                    <thead>
-                        <tr>
-                            <th><?php _e('Date', 'wp-github-sync'); ?></th>
-                            <th><?php _e('Commit', 'wp-github-sync'); ?></th>
-                            <th><?php _e('Message', 'wp-github-sync'); ?></th>
-                            <th><?php _e('User', 'wp-github-sync'); ?></th>
-                            <th><?php _e('Actions', 'wp-github-sync'); ?></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach (array_reverse($deployment_history) as $deployment): ?>
-                            <tr>
-                                <td>
-                                    <?php 
-                                    echo date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $deployment['timestamp']);
-                                    echo '<br><small>' . wp_github_sync_time_diff($deployment['timestamp']) . ' ' . __('ago', 'wp-github-sync') . '</small>';
-                                    ?>
-                                </td>
-                                <td>
-                                    <?php 
-                                    if (isset($deployment['commit']['sha'])) {
-                                        echo substr($deployment['commit']['sha'], 0, 8);
-                                    } else {
-                                        echo substr($deployment['ref'], 0, 8);
-                                    }
-                                    ?>
-                                </td>
-                                <td>
-                                    <?php 
-                                    if (isset($deployment['commit']['message'])) {
-                                        echo wp_github_sync_format_commit_message($deployment['commit']['message']);
-                                    } else {
-                                        echo '—';
-                                    }
-                                    ?>
-                                </td>
-                                <td><?php echo esc_html($deployment['user']); ?></td>
-                                <td>
-                                    <?php if (!$deployment_in_progress && isset($deployment['commit']['sha'])): ?>
-                                        <form method="post" action="">
-                                            <?php wp_nonce_field('wp_github_sync_action'); ?>
-                                            <input type="hidden" name="wp_github_sync_action" value="rollback">
-                                            <input type="hidden" name="wp_github_sync_commit_sha" value="<?php echo $deployment['commit']['sha']; ?>">
-                                            <button type="submit" class="button"><?php _e('Rollback', 'wp-github-sync'); ?></button>
-                                        </form>
-                                    <?php endif; ?>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            <?php endif; ?>
+        <!-- Tabs -->
+        <div class="wp-github-sync-tabs">
+            <div class="wp-github-sync-tab active" data-tab="guide">
+                <span class="dashicons dashicons-book"></span>
+                <?php _e('Getting Started', 'wp-github-sync'); ?>
+            </div>
+            <div class="wp-github-sync-tab" data-tab="branches">
+                <span class="dashicons dashicons-randomize"></span>
+                <?php _e('Branches', 'wp-github-sync'); ?>
+            </div>
+            <div class="wp-github-sync-tab" data-tab="commits">
+                <span class="dashicons dashicons-backup"></span>
+                <?php _e('Commits', 'wp-github-sync'); ?>
+            </div>
+            <div class="wp-github-sync-tab" data-tab="webhook">
+                <span class="dashicons dashicons-admin-links"></span>
+                <?php _e('Webhook', 'wp-github-sync'); ?>
+            </div>
+            <div class="wp-github-sync-tab" data-tab="dev">
+                <span class="dashicons dashicons-code-standards"></span>
+                <?php _e('Developer Tools', 'wp-github-sync'); ?>
+            </div>
         </div>
+        
+        <!-- Getting Started Tab Content -->
+        <div class="wp-github-sync-tab-content active" id="guide-tab-content" data-tab="guide">
+            <div class="wp-github-sync-card">
+                <h2>
+                    <span class="dashicons dashicons-book"></span>
+                    <?php _e('Welcome to GitHub Sync', 'wp-github-sync'); ?>
+                </h2>
+                
+                <div class="wp-github-sync-card-content">
+                    <p><?php _e('GitHub Sync connects your WordPress site with GitHub, providing version control and deployment tools without needing technical knowledge.', 'wp-github-sync'); ?></p>
+                    
+                    <div style="display: flex; flex-wrap: wrap; gap: 30px; margin: 30px 0;">
+                        <div style="flex: 1; min-width: 280px;">
+                            <h3 style="display: flex; align-items: center; gap: 10px; margin-top: 0;">
+                                <span class="dashicons dashicons-admin-users" style="color: var(--wp-git-primary);"></span>
+                                <?php _e('For Non-Developers', 'wp-github-sync'); ?>
+                            </h3>
+                            
+                            <div class="wp-github-sync-info-box info" style="margin-top: 15px;">
+                                <div class="wp-github-sync-info-box-icon">
+                                    <span class="dashicons dashicons-info"></span>
+                                </div>
+                                <div class="wp-github-sync-info-box-content">
+                                    <h4 class="wp-github-sync-info-box-title"><?php _e('What is GitHub?', 'wp-github-sync'); ?></h4>
+                                    <p class="wp-github-sync-info-box-message">
+                                        <?php _e('GitHub is a platform that helps store different versions of your website files. Think of it like a backup system that tracks every change made to your site, allowing you to restore previous versions if needed.', 'wp-github-sync'); ?>
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <h4 style="margin-top: 20px;"><?php _e('Common Tasks:', 'wp-github-sync'); ?></h4>
+                            <ul style="list-style-type: none; padding: 0;">
+                                <li style="margin-bottom: 15px; display: flex; align-items: flex-start; gap: 10px;">
+                                    <span class="dashicons dashicons-yes-alt" style="color: var(--wp-git-success); margin-top: 2px;"></span>
+                                    <span><strong><?php _e('Update Your Site:', 'wp-github-sync'); ?></strong> <?php _e('When changes are made in GitHub, click "Deploy Latest Changes" to update your site.', 'wp-github-sync'); ?></span>
+                                </li>
+                                <li style="margin-bottom: 15px; display: flex; align-items: flex-start; gap: 10px;">
+                                    <span class="dashicons dashicons-yes-alt" style="color: var(--wp-git-success); margin-top: 2px;"></span>
+                                    <span><strong><?php _e('Restore Previous Version:', 'wp-github-sync'); ?></strong> <?php _e('Go to the Version History page to see all previous versions and restore if needed.', 'wp-github-sync'); ?></span>
+                                </li>
+                                <li style="margin-bottom: 15px; display: flex; align-items: flex-start; gap: 10px;">
+                                    <span class="dashicons dashicons-yes-alt" style="color: var(--wp-git-success); margin-top: 2px;"></span>
+                                    <span><strong><?php _e('Switch Branch:', 'wp-github-sync'); ?></strong> <?php _e('Use the Branches tab to switch between different versions of your site (like switching between "production" and "testing" versions).', 'wp-github-sync'); ?></span>
+                                </li>
+                            </ul>
+                            
+                            <a href="<?php echo admin_url('admin.php?page=wp-github-sync-history'); ?>" class="wp-github-sync-button" style="margin-top: 15px;">
+                                <span class="dashicons dashicons-backup"></span>
+                                <?php _e('View Version History', 'wp-github-sync'); ?>
+                            </a>
+                        </div>
+                        
+                        <div style="flex: 1; min-width: 280px;">
+                            <h3 style="display: flex; align-items: center; gap: 10px; margin-top: 0;">
+                                <span class="dashicons dashicons-code-standards" style="color: var(--wp-git-primary);"></span>
+                                <?php _e('For Developers', 'wp-github-sync'); ?>
+                            </h3>
+                            
+                            <div class="wp-github-sync-info-box info" style="margin-top: 15px;">
+                                <div class="wp-github-sync-info-box-icon">
+                                    <span class="dashicons dashicons-info"></span>
+                                </div>
+                                <div class="wp-github-sync-info-box-content">
+                                    <h4 class="wp-github-sync-info-box-title"><?php _e('Developer Features', 'wp-github-sync'); ?></h4>
+                                    <p class="wp-github-sync-info-box-message">
+                                        <?php _e('This plugin integrates with the GitHub API to provide seamless deployment workflows. Use webhooks for automatic deployments, compare file changes, and manage your branches directly from WordPress.', 'wp-github-sync'); ?>
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <h4 style="margin-top: 20px;"><?php _e('Advanced Features:', 'wp-github-sync'); ?></h4>
+                            <ul style="list-style-type: none; padding: 0;">
+                                <li style="margin-bottom: 15px; display: flex; align-items: flex-start; gap: 10px;">
+                                    <span class="dashicons dashicons-admin-tools" style="color: var(--wp-git-primary); margin-top: 2px;"></span>
+                                    <span><strong><?php _e('Component Sync:', 'wp-github-sync'); ?></strong> <?php _e('Sync specific plugins or themes individually using the Developer Tools tab.', 'wp-github-sync'); ?></span>
+                                </li>
+                                <li style="margin-bottom: 15px; display: flex; align-items: flex-start; gap: 10px;">
+                                    <span class="dashicons dashicons-admin-tools" style="color: var(--wp-git-primary); margin-top: 2px;"></span>
+                                    <span><strong><?php _e('Webhook Integration:', 'wp-github-sync'); ?></strong> <?php _e('Configure GitHub webhooks for automatic deployments when you push commits.', 'wp-github-sync'); ?></span>
+                                </li>
+                                <li style="margin-bottom: 15px; display: flex; align-items: flex-start; gap: 10px;">
+                                    <span class="dashicons dashicons-admin-tools" style="color: var(--wp-git-primary); margin-top: 2px;"></span>
+                                    <span><strong><?php _e('File Difference Viewer:', 'wp-github-sync'); ?></strong> <?php _e('Compare changes between local files and the repository to better understand modifications.', 'wp-github-sync'); ?></span>
+                                </li>
+                            </ul>
+                            
+                            <div class="wp-github-sync-action-buttons" style="margin-top: 15px;">
+                                <a href="#" class="wp-github-sync-button wp-github-sync-tab-link" data-tab-target="dev">
+                                    <span class="dashicons dashicons-code-standards"></span>
+                                    <?php _e('Go to Developer Tools', 'wp-github-sync'); ?>
+                                </a>
+                                
+                                <a href="#" class="wp-github-sync-button secondary wp-github-sync-tab-link" data-tab-target="webhook">
+                                    <span class="dashicons dashicons-admin-links"></span>
+                                    <?php _e('Configure Webhook', 'wp-github-sync'); ?>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="wp-github-sync-info-box success">
+                        <div class="wp-github-sync-info-box-icon">
+                            <span class="dashicons dashicons-yes-alt"></span>
+                        </div>
+                        <div class="wp-github-sync-info-box-content">
+                            <h4 class="wp-github-sync-info-box-title"><?php _e('Need Help?', 'wp-github-sync'); ?></h4>
+                            <p class="wp-github-sync-info-box-message">
+                                <?php _e('Check out our comprehensive documentation or contact our support team for assistance.', 'wp-github-sync'); ?>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Branch Switching Tab Content -->
+        <div class="wp-github-sync-tab-content" id="branches-tab-content" data-tab="branches">
+            <div class="wp-github-sync-card">
+                <h2>
+                    <span class="dashicons dashicons-randomize"></span>
+                    <?php _e('Branch Management', 'wp-github-sync'); ?>
+                </h2>
+                
+                <div class="wp-github-sync-card-content">
+                    <p><?php _e('Switch between branches to update your site with different versions of your code.', 'wp-github-sync'); ?></p>
+                    
+                    <?php if (!empty($branches)) : ?>
+                        <div class="wp-github-sync-branch-switcher">
+                            <select id="wp-github-sync-branch-select">
+                                <?php foreach ($branches as $branch_name) : ?>
+                                    <option value="<?php echo esc_attr($branch_name); ?>" <?php selected($branch, $branch_name); ?>>
+                                        <?php echo esc_html($branch_name); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <button class="wp-github-sync-button wp-github-sync-switch-branch">
+                                <span class="dashicons dashicons-randomize"></span>
+                                <?php _e('Switch Branch', 'wp-github-sync'); ?>
+                            </button>
+                            <button class="wp-github-sync-button secondary wp-github-sync-refresh-branches">
+                                <span class="dashicons dashicons-update"></span>
+                                <?php _e('Refresh', 'wp-github-sync'); ?>
+                            </button>
+                        </div>
+                        
+                        <div class="wp-github-sync-info-box info">
+                            <div class="wp-github-sync-info-box-icon">
+                                <span class="dashicons dashicons-info"></span>
+                            </div>
+                            <div class="wp-github-sync-info-box-content">
+                                <h4 class="wp-github-sync-info-box-title"><?php _e('About Branch Switching', 'wp-github-sync'); ?></h4>
+                                <p class="wp-github-sync-info-box-message">
+                                    <?php _e('When you switch branches, your site files will be updated to match the selected branch. This allows you to test different versions of your site. The plugin will create a backup before switching.', 'wp-github-sync'); ?>
+                                </p>
+                            </div>
+                        </div>
+                    <?php else : ?>
+                        <div class="wp-github-sync-info-box warning">
+                            <div class="wp-github-sync-info-box-icon">
+                                <span class="dashicons dashicons-warning"></span>
+                            </div>
+                            <div class="wp-github-sync-info-box-content">
+                                <h4 class="wp-github-sync-info-box-title"><?php _e('No Branches Found', 'wp-github-sync'); ?></h4>
+                                <p class="wp-github-sync-info-box-message">
+                                    <?php _e('No branches could be found in your repository. This could be due to an empty repository or authentication issues.', 'wp-github-sync'); ?>
+                                    <br><br>
+                                    <a href="<?php echo admin_url('admin.php?page=wp-github-sync-settings'); ?>" class="wp-github-sync-button secondary">
+                                        <span class="dashicons dashicons-admin-tools"></span>
+                                        <?php _e('Check Settings', 'wp-github-sync'); ?>
+                                    </a>
+                                </p>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Recent Commits Tab Content -->
+        <div class="wp-github-sync-tab-content" id="commits-tab-content" data-tab="commits">
+            <div class="wp-github-sync-card">
+                <h2>
+                    <span class="dashicons dashicons-backup"></span>
+                    <?php _e('Commit History', 'wp-github-sync'); ?>
+                </h2>
+                
+                <div class="wp-github-sync-card-content">
+                    <p><?php _e('You can review recent commits and roll back to a previous version if needed.', 'wp-github-sync'); ?></p>
+                    
+                    <?php if (!empty($recent_commits)) : ?>
+                        <div class="wp-github-sync-commits-list">
+                            <table class="widefat">
+                                <thead>
+                                    <tr>
+                                        <th><?php _e('Commit', 'wp-github-sync'); ?></th>
+                                        <th><?php _e('Message', 'wp-github-sync'); ?></th>
+                                        <th><?php _e('Author', 'wp-github-sync'); ?></th>
+                                        <th><?php _e('Date', 'wp-github-sync'); ?></th>
+                                        <th><?php _e('Actions', 'wp-github-sync'); ?></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($recent_commits as $commit) : ?>
+                                        <tr>
+                                            <td class="commit-hash"><?php echo esc_html(substr($commit['sha'], 0, 8)); ?></td>
+                                            <td><?php echo esc_html(wp_github_sync_format_commit_message($commit['message'])); ?></td>
+                                            <td><?php echo esc_html($commit['author']); ?></td>
+                                            <td class="commit-date"><?php echo date_i18n(get_option('date_format'), strtotime($commit['date'])); ?></td>
+                                            <td>
+                                                <?php if ($commit['sha'] !== $last_deployed_commit) : ?>
+                                                    <button class="wp-github-sync-button warning wp-github-sync-rollback" data-commit="<?php echo esc_attr($commit['sha']); ?>">
+                                                        <span class="dashicons dashicons-undo"></span>
+                                                        <?php _e('Roll Back', 'wp-github-sync'); ?>
+                                                    </button>
+                                                <?php else : ?>
+                                                    <span class="wp-github-sync-current-version">
+                                                        <span class="dashicons dashicons-yes-alt"></span>
+                                                        <?php _e('Current', 'wp-github-sync'); ?>
+                                                    </span>
+                                                <?php endif; ?>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <div class="wp-github-sync-info-box warning">
+                            <div class="wp-github-sync-info-box-icon">
+                                <span class="dashicons dashicons-warning"></span>
+                            </div>
+                            <div class="wp-github-sync-info-box-content">
+                                <h4 class="wp-github-sync-info-box-title"><?php _e('Rollback Warning', 'wp-github-sync'); ?></h4>
+                                <p class="wp-github-sync-info-box-message">
+                                    <?php _e('Rolling back will change your site\'s files to match the selected commit. This is useful to undo recent changes, but may cause issues if the rolled-back version is incompatible with your database.', 'wp-github-sync'); ?>
+                                </p>
+                            </div>
+                        </div>
+                    <?php else : ?>
+                        <div class="wp-github-sync-info-box warning">
+                            <div class="wp-github-sync-info-box-icon">
+                                <span class="dashicons dashicons-warning"></span>
+                            </div>
+                            <div class="wp-github-sync-info-box-content">
+                                <h4 class="wp-github-sync-info-box-title"><?php _e('No Commits Found', 'wp-github-sync'); ?></h4>
+                                <p class="wp-github-sync-info-box-message">
+                                    <?php _e('No recent commits found. This could be due to an empty repository or authentication issues.', 'wp-github-sync'); ?>
+                                </p>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Webhook Tab Content -->
+        <div class="wp-github-sync-tab-content" id="webhook-tab-content" data-tab="webhook">
+            <div class="wp-github-sync-card">
+                <h2>
+                    <span class="dashicons dashicons-admin-links"></span>
+                    <?php _e('Webhook Configuration', 'wp-github-sync'); ?>
+                </h2>
+                
+                <div class="wp-github-sync-card-content">
+                    <p><?php _e('Set up a webhook in your GitHub repository to enable automatic deployments when code is pushed.', 'wp-github-sync'); ?></p>
+                    
+                    <div class="wp-github-sync-webhook-info">
+                        <div class="wp-github-sync-status-item">
+                            <span class="wp-github-sync-status-label"><?php _e('Webhook URL:', 'wp-github-sync'); ?></span>
+                            <span class="wp-github-sync-status-value code">
+                                <?php echo esc_url(get_rest_url(null, 'wp-github-sync/v1/webhook')); ?>
+                            </span>
+                        </div>
+                        
+                        <div class="wp-github-sync-status-item">
+                            <span class="wp-github-sync-status-label"><?php _e('Secret:', 'wp-github-sync'); ?></span>
+                            <span class="wp-github-sync-status-value code">
+                                <?php echo esc_html(get_option('wp_github_sync_webhook_secret', '')); ?>
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <div class="wp-github-sync-action-buttons">
+                        <button class="wp-github-sync-button secondary wp-github-sync-regenerate-webhook">
+                            <span class="dashicons dashicons-update"></span>
+                            <?php _e('Regenerate Secret', 'wp-github-sync'); ?>
+                        </button>
+                    </div>
+                    
+                    <div class="wp-github-sync-info-box info">
+                        <div class="wp-github-sync-info-box-icon">
+                            <span class="dashicons dashicons-info"></span>
+                        </div>
+                        <div class="wp-github-sync-info-box-content">
+                            <h4 class="wp-github-sync-info-box-title"><?php _e('How to Configure Webhooks', 'wp-github-sync'); ?></h4>
+                            <p class="wp-github-sync-info-box-message">
+                                <?php
+                                printf(
+                                    __('1. Go to your <a href="%s/settings/hooks" target="_blank">GitHub repository settings</a><br>2. Click "Add webhook"<br>3. Set the Payload URL to the Webhook URL above<br>4. Select "application/json" as content type<br>5. Enter the Secret shown above<br>6. Choose "Just the push event"<br>7. Ensure "Active" is checked<br>8. Click "Add webhook"', 'wp-github-sync'),
+                                    esc_url($repository_url)
+                                );
+                                ?>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+            
+        <!-- Developer Tools Tab Content -->
+        <div class="wp-github-sync-tab-content" id="dev-tab-content" data-tab="dev">
+            <div class="wp-github-sync-card">
+                <h2>
+                    <span class="dashicons dashicons-code-standards"></span>
+                    <?php _e('Developer Tools', 'wp-github-sync'); ?>
+                </h2>
+                
+                <div class="wp-github-sync-card-content">
+                    <p><?php _e('Special tools for developers to simplify the workflow between local development and the GitHub repository.', 'wp-github-sync'); ?></p>
+                    
+                    <div class="wp-github-sync-developer-tools">
+                        <h3>
+                            <span class="dashicons dashicons-upload"></span>
+                            <?php _e('Local Changes Export', 'wp-github-sync'); ?>
+                        </h3>
+                        
+                        <p><?php _e('Export changes made on this WordPress site to your local development environment.', 'wp-github-sync'); ?></p>
+                        
+                        <div class="wp-github-sync-action-buttons">
+                            <button class="wp-github-sync-button wp-github-sync-export-changes">
+                                <span class="dashicons dashicons-download"></span>
+                                <?php _e('Export Changes as ZIP', 'wp-github-sync'); ?>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="wp-github-sync-developer-tools">
+                        <h3>
+                            <span class="dashicons dashicons-plugins-checked"></span>
+                            <?php _e('Plugin & Theme Development', 'wp-github-sync'); ?>
+                        </h3>
+                        
+                        <p><?php _e('Manage changes to specific plugins or themes in your repository.', 'wp-github-sync'); ?></p>
+                        
+                        <div class="wp-github-sync-status-item">
+                            <span class="wp-github-sync-status-label"><?php _e('Component:', 'wp-github-sync'); ?></span>
+                            <select id="wp-github-sync-component-select" class="wp-github-sync-status-value">
+                                <option value=""><?php _e('-- Select Component --', 'wp-github-sync'); ?></option>
+                                <optgroup label="<?php _e('Themes', 'wp-github-sync'); ?>">
+                                    <?php
+                                    $themes = wp_get_themes();
+                                    foreach ($themes as $theme_code => $theme) {
+                                        echo '<option value="theme:' . esc_attr($theme_code) . '">' . esc_html($theme->get('Name')) . '</option>';
+                                    }
+                                    ?>
+                                </optgroup>
+                                <optgroup label="<?php _e('Plugins', 'wp-github-sync'); ?>">
+                                    <?php
+                                    $plugins = get_plugins();
+                                    foreach ($plugins as $plugin_file => $plugin_data) {
+                                        $plugin_slug = explode('/', $plugin_file)[0];
+                                        echo '<option value="plugin:' . esc_attr($plugin_slug) . '">' . esc_html($plugin_data['Name']) . '</option>';
+                                    }
+                                    ?>
+                                </optgroup>
+                            </select>
+                        </div>
+                        
+                        <div class="wp-github-sync-action-buttons">
+                            <button class="wp-github-sync-button wp-github-sync-sync-component" disabled>
+                                <span class="dashicons dashicons-update"></span>
+                                <?php _e('Pull Latest Changes', 'wp-github-sync'); ?>
+                            </button>
+                            
+                            <button class="wp-github-sync-button secondary wp-github-sync-diff-component" disabled>
+                                <span class="dashicons dashicons-visibility"></span>
+                                <?php _e('View Differences', 'wp-github-sync'); ?>
+                            </button>
+                        </div>
+                        
+                        <div id="wp-github-sync-diff-viewer" style="display: none;">
+                            <h4><?php _e('Differences', 'wp-github-sync'); ?></h4>
+                            <div class="wp-github-sync-diff-content" style="background: #f6f7f7; padding: 15px; border-radius: 4px; overflow: auto; max-height: 400px; font-family: monospace; font-size: 12px; white-space: pre; line-height: 1.5;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Loading/Progress Overlay -->
+        <div class="wp-github-sync-overlay" style="display: none;">
+            <div class="wp-github-sync-loader"></div>
+            <div class="wp-github-sync-loading-message"><?php _e('Processing...', 'wp-github-sync'); ?></div>
+            <div class="wp-github-sync-loading-submessage"></div>
+        </div>
+
+        <!-- AJAX nonce for security -->
+        <input type="hidden" id="wp-github-sync-nonce" value="<?php echo wp_create_nonce('wp-github-sync-nonce'); ?>">
     <?php endif; ?>
 </div>
-<style type="text/css">
-    .card {
-        background: #fff;
-        border: 1px solid #ccd0d4;
-        border-radius: 3px;
-        margin-top: 20px;
-        padding: 20px;
-        position: relative;
-        box-shadow: 0 1px 1px rgba(0,0,0,.04);
-    }
-    .card h2:first-child {
-        margin-top: 0;
-    }
-</style>

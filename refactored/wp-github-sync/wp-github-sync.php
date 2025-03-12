@@ -52,7 +52,8 @@ require_once WP_GITHUB_SYNC_DIR . 'includes/autoload.php';
 // Load plugin activation/deactivation functions
 require_once WP_GITHUB_SYNC_DIR . 'includes/plugin.php';
 
-// Register activation, deactivation, and uninstall hooks
+// Register global activation, deactivation, and uninstall hooks
+// Note: Class-specific hooks are registered in WP_GitHub_Sync class
 register_activation_hook(__FILE__, 'wp_github_sync_activate');
 register_deactivation_hook(__FILE__, 'wp_github_sync_deactivate');
 register_uninstall_hook(__FILE__, 'wp_github_sync_uninstall');

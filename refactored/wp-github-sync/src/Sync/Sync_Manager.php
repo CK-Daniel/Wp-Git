@@ -103,6 +103,26 @@ class Sync_Manager {
         return $schedules;
     }
 
+    /**
+     * Handle activation tasks.
+     */
+    public function activate() {
+        // Create any required DB table or initial options
+        if (!get_option('wp_github_sync_webhook_secret')) {
+            update_option('wp_github_sync_webhook_secret', wp_github_sync_generate_webhook_secret());
+        }
+        
+        // Setup cron schedules
+        $this->setup_cron_schedules();
+    }
+
+    /**
+     * Handle deactivation tasks.
+     */
+    public function deactivate() {
+        // Clear scheduled cron job
+        wp_clear_scheduled_hook('wp_github_sync_cron_hook');
+    }
 
     /**
      * Check for updates from GitHub.
