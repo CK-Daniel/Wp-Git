@@ -803,73 +803,74 @@ class GitHub_API_Client {
                 // If default branch also doesn't exist, try to create an empty commit for the first branch
                 if (strpos($default_ref->get_error_message(), 'Not Found') !== false) {
                     wp_github_sync_log("Default branch not found. Creating initial commit.", 'info');
-                    
-                    // Create an empty tree first
-                    $empty_tree = $this->request(
-                        "repos/{$this->owner}/{$this->repo}/git/trees",
-                        'POST',
-                        [
-                            'tree' => []
-                        ]
-                    );
-                    
-                    if (is_wp_error($empty_tree)) {
-                        wp_github_sync_log("Failed to create empty tree: " . $empty_tree->get_error_message(), 'error');
-                        return new WP_Error('github_api_error', __('Failed to create initial commit tree', 'wp-github-sync'));
+                        
+                        // Create an empty tree first
+                        $empty_tree = $this->request(
+                            "repos/{$this->owner}/{$this->repo}/git/trees",
+                            'POST',
+                            [
+                                'tree' => []
+                            ]
+                        );
+                        
+                        if (is_wp_error($empty_tree)) {
+                            wp_github_sync_log("Failed to create empty tree: " . $empty_tree->get_error_message(), 'error');
+                            return new WP_Error('github_api_error', __('Failed to create initial commit tree', 'wp-github-sync'));
+                        }
+                        
+                        // Create the initial commit with the empty tree
+                        $initial_commit = $this->request(
+                            "repos/{$this->owner}/{$this->repo}/git/commits",
+                            'POST',
+                            [
+                                'message' => 'Initial commit',
+                                'tree' => $empty_tree['sha'],
+                                'parents' => []
+                            ]
+                        );
+                        
+                        if (is_wp_error($initial_commit)) {
+                            wp_github_sync_log("Failed to create initial commit: " . $initial_commit->get_error_message(), 'error');
+                            return new WP_Error('github_api_error', __('Failed to create initial commit', 'wp-github-sync'));
+                        }
+                        
+                        // Create the main branch reference with the initial commit
+                        $create_main_ref = $this->request(
+                            "repos/{$this->owner}/{$this->repo}/git/refs",
+                            'POST',
+                            [
+                                'ref' => "refs/heads/{$branch}",
+                                'sha' => $initial_commit['sha']
+                            ]
+                        );
+                        
+                        if (is_wp_error($create_main_ref)) {
+                            wp_github_sync_log("Failed to create main branch reference: " . $create_main_ref->get_error_message(), 'error');
+                            return new WP_Error('github_api_error', __('Failed to create initial branch reference', 'wp-github-sync'));
+                        }
+                        
+                        $reference = $create_main_ref;
+                    } else {
+                        return new WP_Error('github_api_error', __('Failed to get default branch reference', 'wp-github-sync'));
                     }
-                    
-                    // Create the initial commit with the empty tree
-                    $initial_commit = $this->request(
-                        "repos/{$this->owner}/{$this->repo}/git/commits",
-                        'POST',
-                        [
-                            'message' => 'Initial commit',
-                            'tree' => $empty_tree['sha'],
-                            'parents' => []
-                        ]
-                    );
-                    
-                    if (is_wp_error($initial_commit)) {
-                        wp_github_sync_log("Failed to create initial commit: " . $initial_commit->get_error_message(), 'error');
-                        return new WP_Error('github_api_error', __('Failed to create initial commit', 'wp-github-sync'));
-                    }
-                    
-                    // Create the main branch reference with the initial commit
-                    $create_main_ref = $this->request(
+                } else {
+                    // Create the new branch from default
+                    $create_ref = $this->request(
                         "repos/{$this->owner}/{$this->repo}/git/refs",
                         'POST',
                         [
                             'ref' => "refs/heads/{$branch}",
-                            'sha' => $initial_commit['sha']
+                            'sha' => $default_ref['object']['sha']
                         ]
                     );
                     
-                    if (is_wp_error($create_main_ref)) {
-                        wp_github_sync_log("Failed to create main branch reference: " . $create_main_ref->get_error_message(), 'error');
-                        return new WP_Error('github_api_error', __('Failed to create initial branch reference', 'wp-github-sync'));
+                    if (is_wp_error($create_ref)) {
+                        wp_github_sync_log("Failed to create new branch: " . $create_ref->get_error_message(), 'error');
+                        return new WP_Error('github_api_error', __('Failed to create new branch', 'wp-github-sync'));
                     }
                     
-                    $reference = $create_main_ref;
-                } else {
-                    return new WP_Error('github_api_error', __('Failed to get default branch reference', 'wp-github-sync'));
+                    $reference = $create_ref;
                 }
-            } else {
-                // Create the new branch from default
-                $create_ref = $this->request(
-                    "repos/{$this->owner}/{$this->repo}/git/refs",
-                    'POST',
-                    [
-                        'ref' => "refs/heads/{$branch}",
-                        'sha' => $default_ref['object']['sha']
-                    ]
-                );
-                
-                if (is_wp_error($create_ref)) {
-                    wp_github_sync_log("Failed to create new branch: " . $create_ref->get_error_message(), 'error');
-                    return new WP_Error('github_api_error', __('Failed to create new branch', 'wp-github-sync'));
-                }
-                
-                $reference = $create_ref;
             }
             
             if (is_wp_error($reference)) {
@@ -878,11 +879,7 @@ class GitHub_API_Client {
             }
         }
         
-        // At this point, we should have a valid reference
-        if (!isset($reference['object']['sha'])) {
-            return new WP_Error('github_api_error', __('Invalid branch reference', 'wp-github-sync'));
-        }
-        
+        // Continue with reference processing
         $ref_sha = $reference['object']['sha'];
         wp_github_sync_log("Got reference SHA: {$ref_sha}", 'debug');
         

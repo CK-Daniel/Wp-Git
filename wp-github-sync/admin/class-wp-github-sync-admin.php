@@ -15,7 +15,7 @@ if (!defined('WPINC')) {
  */
 class WP_GitHub_Sync_Admin {
 
-    /**
+    /**connt
      * The version of this plugin.
      *
      * @var string
