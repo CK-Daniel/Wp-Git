@@ -3,6 +3,17 @@
  * Modern and user-friendly design.
  */
 
+/* Spinner animation for loading states */
+@keyframes wp-github-sync-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.wp-github-sync-spin {
+    animation: wp-github-sync-spin 2s linear infinite;
+    display: inline-block;
+}
+
 :root {
     --wp-git-primary: #2271b1;
     --wp-git-primary-darker: #135e96;

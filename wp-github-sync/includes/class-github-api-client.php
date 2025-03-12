@@ -113,22 +113,70 @@ class GitHub_API_Client {
      * @return array|false Array with owner and repo keys, or false if invalid.
      */
     public function parse_github_url($url) {
+        // Trim whitespace
+        $url = trim($url);
+        
+        if (empty($url)) {
+            wp_github_sync_log("Cannot parse empty GitHub URL", 'error');
+            return false;
+        }
+        
+        // Log the URL we're trying to parse
+        wp_github_sync_log("Parsing GitHub URL: {$url}", 'debug');
+        
         // Handle HTTPS URLs
-        if (preg_match('#^https?://github\.com/([^/]+)/([^/]+)(?:\.git)?$#', $url, $matches)) {
+        if (preg_match('#^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?(?:/)?$#', $url, $matches)) {
+            $owner = $matches[1];
+            $repo = rtrim($matches[2], '.git');
+            
+            wp_github_sync_log("Successfully parsed HTTPS URL: owner={$owner}, repo={$repo}", 'debug');
+            
             return [
-                'owner' => $matches[1],
-                'repo' => rtrim($matches[2], '.git'),
+                'owner' => $owner,
+                'repo' => $repo,
             ];
         }
         
         // Handle git@ URLs
-        if (preg_match('#^git@github\.com:([^/]+)/([^/]+)(?:\.git)?$#', $url, $matches)) {
+        if (preg_match('#^git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$#', $url, $matches)) {
+            $owner = $matches[1];
+            $repo = rtrim($matches[2], '.git');
+            
+            wp_github_sync_log("Successfully parsed SSH URL: owner={$owner}, repo={$repo}", 'debug');
+            
             return [
-                'owner' => $matches[1],
-                'repo' => rtrim($matches[2], '.git'),
+                'owner' => $owner,
+                'repo' => $repo,
             ];
         }
         
+        // Handle potential API URLs
+        if (preg_match('#^https?://api\.github\.com/repos/([^/]+)/([^/]+)(?:/.*)?$#', $url, $matches)) {
+            $owner = $matches[1];
+            $repo = $matches[2];
+            
+            wp_github_sync_log("Successfully parsed API URL: owner={$owner}, repo={$repo}", 'debug');
+            
+            return [
+                'owner' => $owner,
+                'repo' => $repo,
+            ];
+        }
+        
+        // Handle raw owner/repo format
+        if (preg_match('#^([^/]+)/([^/]+?)(?:\.git)?$#', $url, $matches)) {
+            $owner = $matches[1];
+            $repo = rtrim($matches[2], '.git');
+            
+            wp_github_sync_log("Successfully parsed owner/repo format: owner={$owner}, repo={$repo}", 'debug');
+            
+            return [
+                'owner' => $owner,
+                'repo' => $repo,
+            ];
+        }
+        
+        wp_github_sync_log("Failed to parse GitHub URL: {$url}", 'error');
         return false;
     }
 
@@ -141,8 +189,16 @@ class GitHub_API_Client {
      * @return array|WP_Error The response or WP_Error on failure.
      */
     public function request($endpoint, $method = 'GET', $data = []) {
-        if (empty($this->token) || empty($this->owner) || empty($this->repo)) {
-            return new WP_Error('github_api_not_configured', __('GitHub API is not properly configured.', 'wp-github-sync'));
+        // Check if we have what we need to make a request
+        if (empty($this->token)) {
+            wp_github_sync_log("API request failed: No GitHub token available", 'error');
+            return new WP_Error('github_api_no_token', __('No GitHub authentication token available. Please check your settings.', 'wp-github-sync'));
+        }
+        
+        // Check if this endpoint requires owner/repo information
+        if (strpos($endpoint, 'repos/') === 0 && (empty($this->owner) || empty($this->repo))) {
+            wp_github_sync_log("API request failed: Missing owner/repo for endpoint: {$endpoint}", 'error');
+            return new WP_Error('github_api_no_repo', __('Repository owner or name is missing. Please check your repository URL.', 'wp-github-sync'));
         }
         
         $url = trailingslashit($this->api_base_url) . ltrim($endpoint, '/');
@@ -514,6 +570,35 @@ class GitHub_API_Client {
     }
     
     /**
+     * Set a temporary token for testing purposes.
+     * 
+     * This bypasses the normal encryption and is intended only for test connections.
+     * 
+     * @param string $token The unencrypted GitHub token to use temporarily
+     */
+    public function set_temporary_token($token) {
+        if (!empty($token)) {
+            $this->token = $token;
+            wp_github_sync_log("Set temporary token for testing", 'debug');
+        }
+    }
+    
+    /**
+     * Get the authenticated user's login name.
+     * 
+     * @return string|null The user login or null if not available
+     */
+    public function get_user_login() {
+        $user = $this->request('user');
+        
+        if (!is_wp_error($user) && isset($user['login'])) {
+            return $user['login'];
+        }
+        
+        return null;
+    }
+    
+    /**
      * Test if authentication is working correctly.
      *
      * @return bool|string True if authentication is working, error message otherwise.
@@ -659,32 +744,65 @@ class GitHub_API_Client {
             }
         }
         
-        // Step 1: Get the reference
-        $reference = $this->request("repos/{$this->owner}/{$this->repo}/git/refs/heads/{$branch}");
+        // First, verify we can access the repository
+        $repo_info = $this->get_repository();
+        if (is_wp_error($repo_info)) {
+            wp_github_sync_log("Repository access check failed: " . $repo_info->get_error_message(), 'error');
+            return new WP_Error('github_api_repo_access', __('Cannot access repository. Please check your authentication and repository URL.', 'wp-github-sync'));
+        }
         
-        if (is_wp_error($reference)) {
-            // If reference doesn't exist, try to create it (for new repositories or branches)
-            if (strpos($reference->get_error_message(), 'Not Found') !== false) {
-                wp_github_sync_log("Branch {$branch} not found. Attempting to create it.", 'info');
+        // Verify the branch is valid (basic validation)
+        if (!preg_match('/^[a-zA-Z0-9_\-\.\/]+$/', $branch)) {
+            wp_github_sync_log("Invalid branch name: {$branch}", 'error');
+            return new WP_Error('invalid_branch', __('Invalid branch name. Branch names can only contain letters, numbers, dashes, underscores, dots, and forward slashes.', 'wp-github-sync'));
+        }
+        
+        // Step 1: Get all branches to see what exists
+        $all_branches = $this->get_branches();
+        if (is_wp_error($all_branches)) {
+            wp_github_sync_log("Failed to get branches: " . $all_branches->get_error_message(), 'error');
+            return new WP_Error('github_api_error', __('Failed to get branches. Please check your authentication.', 'wp-github-sync'));
+        }
+        
+        // Check if our target branch exists
+        $branch_exists = false;
+        $default_branch = isset($repo_info['default_branch']) ? $repo_info['default_branch'] : 'main';
+        
+        foreach ($all_branches as $branch_data) {
+            if (isset($branch_data['name']) && $branch_data['name'] === $branch) {
+                $branch_exists = true;
+                break;
+            }
+        }
+        
+        if ($branch_exists) {
+            // Branch exists, get reference (using both possible endpoint forms)
+            // GitHub API v3 has slight inconsistencies in how it handles references
+            $reference = $this->request("repos/{$this->owner}/{$this->repo}/git/refs/heads/{$branch}");
+            
+            // If the first form fails, try the alternative
+            if (is_wp_error($reference)) {
+                wp_github_sync_log("First reference endpoint failed, trying alternative", 'debug');
+                $reference = $this->request("repos/{$this->owner}/{$this->repo}/git/refs/heads/{$branch}");
                 
-                // Get the default branch first
-                $repo_info = $this->get_repository();
-                if (is_wp_error($repo_info)) {
-                    wp_github_sync_log("Failed to get repository information: " . $repo_info->get_error_message(), 'error');
-                    return new WP_Error('github_api_error', __('Failed to get repository information', 'wp-github-sync'));
+                // If both fail, return error
+                if (is_wp_error($reference)) {
+                    wp_github_sync_log("Failed to get reference for existing branch {$branch}: " . $reference->get_error_message(), 'error');
+                    return new WP_Error('github_api_error', __('Failed to get branch reference. Please verify your GitHub authentication credentials have sufficient permissions.', 'wp-github-sync'));
                 }
+            }
+        } else {
+            // Branch doesn't exist, we need to create it
+            wp_github_sync_log("Branch {$branch} not found. Attempting to create it from {$default_branch}.", 'info');
+            
+            // Get the SHA of the default branch
+            $default_ref = $this->request("repos/{$this->owner}/{$this->repo}/git/refs/heads/{$default_branch}");
+            if (is_wp_error($default_ref)) {
+                wp_github_sync_log("Failed to get default branch reference: " . $default_ref->get_error_message(), 'error');
                 
-                $default_branch = isset($repo_info['default_branch']) ? $repo_info['default_branch'] : 'main';
-                wp_github_sync_log("Using default branch: {$default_branch}", 'info');
-                
-                // Get the SHA of the default branch
-                $default_ref = $this->request("repos/{$this->owner}/{$this->repo}/git/refs/heads/{$default_branch}");
-                if (is_wp_error($default_ref)) {
-                    wp_github_sync_log("Failed to get default branch reference: " . $default_ref->get_error_message(), 'error');
-                    
-                    // If default branch also doesn't exist, try to create an empty commit for the first branch
-                    if (strpos($default_ref->get_error_message(), 'Not Found') !== false) {
-                        wp_github_sync_log("Default branch not found. Creating initial commit.", 'info');
+                // If default branch also doesn't exist, try to create an empty commit for the first branch
+                if (strpos($default_ref->get_error_message(), 'Not Found') !== false) {
+                    wp_github_sync_log("Default branch not found. Creating initial commit.", 'info');
                         
                         // Create an empty tree first
                         $empty_tree = $this->request(

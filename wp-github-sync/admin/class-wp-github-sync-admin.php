@@ -56,6 +56,7 @@ class WP_GitHub_Sync_Admin {
         add_action('wp_ajax_wp_github_sync_oauth_disconnect', array($this, 'handle_ajax_oauth_disconnect'));
         add_action('wp_ajax_wp_github_sync_initial_sync', array($this, 'handle_ajax_initial_sync'));
         add_action('wp_ajax_wp_github_sync_full_sync', array($this, 'handle_ajax_full_sync'));
+        add_action('wp_ajax_wp_github_sync_test_connection', array($this, 'handle_ajax_test_connection'));
         
         // Handle OAuth callback
         add_action('admin_init', array($this, 'handle_oauth_callback'));
@@ -969,6 +970,93 @@ class WP_GitHub_Sync_Admin {
             // Return success message
             wp_send_json_success(array(
                 'message' => __('All WordPress files have been successfully synced to GitHub!', 'wp-github-sync')
+            ));
+        }
+    }
+
+    /**
+     * Handle AJAX test connection request.
+     */
+    public function handle_ajax_test_connection() {
+        // Check permissions
+        if (!wp_github_sync_current_user_can()) {
+            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
+        }
+        
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
+            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
+        }
+        
+        // Check if a temporary token was provided for testing
+        $temp_token = isset($_POST['token']) ? sanitize_text_field($_POST['token']) : '';
+        
+        // Create a temporary API client for testing
+        $github_api = new GitHub_API_Client();
+        
+        // If a temporary token was provided, use it instead of the stored one
+        if (!empty($temp_token)) {
+            // Set the token directly on the API client (bypassing encryption)
+            $github_api->set_temporary_token($temp_token);
+        }
+        
+        // Test authentication
+        $auth_test = $github_api->test_authentication();
+        
+        if ($auth_test === true) {
+            // Authentication succeeded, now check repo if provided
+            $repo_url = isset($_POST['repo_url']) ? esc_url_raw($_POST['repo_url']) : get_option('wp_github_sync_repository', '');
+            
+            if (!empty($repo_url)) {
+                // Parse the repo URL
+                $parsed_url = $github_api->parse_github_url($repo_url);
+                
+                if ($parsed_url) {
+                    // Check if repo exists and is accessible
+                    $repo_exists = $github_api->repository_exists($parsed_url['owner'], $parsed_url['repo']);
+                    
+                    if ($repo_exists) {
+                        // Success! Authentication and repo are valid
+                        wp_send_json_success(array(
+                            'message' => __('Success! Your GitHub credentials and repository are valid.', 'wp-github-sync'),
+                            'username' => $github_api->get_user_login(),
+                            'repo_info' => array(
+                                'owner' => $parsed_url['owner'],
+                                'repo' => $parsed_url['repo']
+                            )
+                        ));
+                    } else {
+                        // Authentication worked but repo isn't accessible
+                        wp_send_json_error(array(
+                            'message' => __('Authentication successful, but the repository could not be accessed. Please check your repository URL and ensure your token has access to it.', 'wp-github-sync'),
+                            'username' => $github_api->get_user_login(),
+                            'auth_ok' => true,
+                            'repo_error' => true
+                        ));
+                    }
+                } else {
+                    // Authentication worked but repo URL is invalid
+                    wp_send_json_error(array(
+                        'message' => __('Authentication successful, but the repository URL is invalid. Please provide a valid GitHub repository URL.', 'wp-github-sync'),
+                        'username' => $github_api->get_user_login(),
+                        'auth_ok' => true,
+                        'url_error' => true
+                    ));
+                }
+            } else {
+                // Authentication worked but no repo was provided
+                wp_send_json_success(array(
+                    'message' => __('Authentication successful! Your GitHub credentials are valid.', 'wp-github-sync'),
+                    'username' => $github_api->get_user_login(),
+                    'auth_ok' => true,
+                    'no_repo' => true
+                ));
+            }
+        } else {
+            // Authentication failed
+            wp_send_json_error(array(
+                'message' => sprintf(__('Authentication failed: %s', 'wp-github-sync'), $auth_test),
+                'auth_error' => true
             ));
         }
     }

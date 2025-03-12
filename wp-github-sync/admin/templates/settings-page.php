@@ -115,31 +115,51 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
     
     <script>
     jQuery(document).ready(function($) {
+        // Remove any existing handlers to prevent duplicates
+        $('.wp-github-sync-tab').off('click.settings-tab');
+        
         // Tab functionality
-        $('.wp-github-sync-tab').on('click', function() {
+        $('.wp-github-sync-tab').on('click.settings-tab', function(e) {
+            e.preventDefault();
+            
             $('.wp-github-sync-tab').removeClass('active');
             $(this).addClass('active');
             
             // Get the selected tab
             const tab = $(this).data('tab');
             
+            console.log('Tab clicked:', tab);
+            
             // Reorganize form sections based on the tab
             organizeSettingsByTab(tab);
         });
         
         function organizeSettingsByTab(tab) {
+            if (!tab) {
+                console.error('No tab specified for organizeSettingsByTab');
+                return;
+            }
+            
+            console.log('Organizing settings for tab:', tab);
+            
             // Hide all setting sections first
             $('.settings-section').hide();
             
             // Show only the sections for the selected tab
             $(`.settings-section[data-tab="${tab}"]`).show();
             
-            // Update URL hash
-            window.location.hash = tab;
+            // Update URL hash without scrolling
+            if (history.pushState) {
+                history.pushState(null, null, '#' + tab);
+            } else {
+                window.location.hash = tab;
+            }
         }
         
         // Function to initialize tabs based on classes added to settings sections
         function initializeTabs() {
+            console.log('Initializing settings tabs');
+            
             // Add tab attribute to each settings section based on its title
             $('.form-table').each(function() {
                 const $section = $(this).closest('.settings-section');
@@ -159,15 +179,24 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                     tab = 'advanced';
                 }
                 
+                console.log('Setting section tab:', sectionTitle, '→', tab);
                 $section.attr('data-tab', tab);
+            });
+            
+            // Check how many sections are in each tab
+            ['general', 'authentication', 'sync', 'advanced'].forEach(function(tabName) {
+                const count = $(`.settings-section[data-tab="${tabName}"]`).length;
+                console.log(`Tab ${tabName} has ${count} sections`);
             });
             
             // Check if URL has a hash for a tab
             const hash = window.location.hash.substring(1);
             if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
+                console.log('Found hash in URL:', hash);
                 $('.wp-github-sync-tab[data-tab="' + hash + '"]').click();
             } else {
                 // Default to first tab
+                console.log('No hash in URL, defaulting to general tab');
                 organizeSettingsByTab('general');
             }
         }
@@ -242,6 +271,87 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                     setTimeout(function() {
                         $('.wp-github-sync-overlay').hide();
                     }, 3000);
+                }
+            });
+        });
+        
+        // Connection testing
+        $('.wp-github-sync-test-connection').on('click', function() {
+            const $statusArea = $('#github-connection-status');
+            const token = $('#wp_github_sync_access_token').val();
+            const repoUrl = $('#wp_github_sync_repository').val();
+            
+            // Don't test with masked token
+            if (token === '********') {
+                $statusArea.html(
+                    '<div class="wp-github-sync-info-box warning" style="margin-top: 10px;">' +
+                    '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-warning"></span></div>' +
+                    '<div class="wp-github-sync-info-box-content">' +
+                    '<p>Please enter your token first. The masked token cannot be used for testing.</p>' +
+                    '</div></div>'
+                );
+                return;
+            }
+            
+            // Show testing indicator
+            $statusArea.html(
+                '<div class="wp-github-sync-info-box info" style="margin-top: 10px;">' +
+                '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-update wp-github-sync-spin"></span></div>' +
+                '<div class="wp-github-sync-info-box-content">' +
+                '<p>Testing connection to GitHub...</p>' +
+                '</div></div>'
+            );
+            
+            // Send the AJAX request to test connection
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'wp_github_sync_test_connection',
+                    token: token,
+                    repo_url: repoUrl,
+                    nonce: '<?php echo wp_create_nonce('wp_github_sync_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Success - credentials and possibly repo are valid
+                        let message = response.data.message;
+                        
+                        if (response.data.username) {
+                            message += ' Authenticated as <strong>' + response.data.username + '</strong>.';
+                        }
+                        
+                        if (response.data.repo_info) {
+                            message += ' Repository: <strong>' + response.data.repo_info.owner + '/' + response.data.repo_info.repo + '</strong>';
+                        }
+                        
+                        $statusArea.html(
+                            '<div class="wp-github-sync-info-box success" style="margin-top: 10px;">' +
+                            '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-yes-alt"></span></div>' +
+                            '<div class="wp-github-sync-info-box-content">' +
+                            '<p>' + message + '</p>' +
+                            '</div></div>'
+                        );
+                    } else {
+                        // Error - display the error message
+                        $statusArea.html(
+                            '<div class="wp-github-sync-info-box error" style="margin-top: 10px;">' +
+                            '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-no"></span></div>' +
+                            '<div class="wp-github-sync-info-box-content">' +
+                            '<p>' + response.data.message + '</p>' +
+                            '</div></div>'
+                        );
+                    }
+                },
+                error: function() {
+                    // AJAX request failed
+                    $statusArea.html(
+                        '<div class="wp-github-sync-info-box error" style="margin-top: 10px;">' +
+                        '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-no"></span></div>' +
+                        '<div class="wp-github-sync-info-box-content">' +
+                        '<p>Connection test failed. Please try again.</p>' +
+                        '</div></div>'
+                    );
                 }
             });
         });

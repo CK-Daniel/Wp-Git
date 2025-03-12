@@ -422,15 +422,22 @@ class WP_GitHub_Sync_Settings {
         if ($auth_method === 'pat') {
             ?>
             <div class="wp-github-sync-pat-field">
-                <input type="password" id="wp_github_sync_access_token" name="wp_github_sync_access_token" value="<?php echo $has_token ? '********' : ''; ?>" class="regular-text" />
-                <button type="button" class="button wp-github-sync-reveal-token"><?php _e('Show', 'wp-github-sync'); ?></button>
+                <div class="wp-github-sync-field-row">
+                    <input type="password" id="wp_github_sync_access_token" name="wp_github_sync_access_token" value="<?php echo $has_token ? '********' : ''; ?>" class="regular-text" />
+                    <button type="button" class="button wp-github-sync-reveal-token"><?php _e('Show', 'wp-github-sync'); ?></button>
+                    <button type="button" class="button wp-github-sync-test-connection"><?php _e('Test Connection', 'wp-github-sync'); ?></button>
+                </div>
+                <div id="github-connection-status"></div>
                 <p class="description">
                     <?php
                     printf(
-                        __('Create a <a href="%s" target="_blank">Personal Access Token</a> with "repo" scope permissions.', 'wp-github-sync'),
+                        __('Create a <a href="%s" target="_blank">Personal Access Token</a> with "repo" scope permissions. The "repo" scope is needed to create repositories, read/write content, and manage workflows.', 'wp-github-sync'),
                         'https://github.com/settings/tokens/new'
                     );
                     ?>
+                </p>
+                <p class="description">
+                    <?php _e('<strong>Important:</strong> Your token must have <code>repo</code> and <code>workflow</code> permissions to use all features of this plugin.', 'wp-github-sync'); ?>
                 </p>
             </div>
             <?php
