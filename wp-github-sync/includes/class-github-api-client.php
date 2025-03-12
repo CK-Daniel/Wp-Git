@@ -68,17 +68,40 @@ class GitHub_API_Client {
         // Get authentication token
         $auth_method = get_option('wp_github_sync_auth_method', 'pat');
         
-        if ($auth_method === 'pat') {
-            // Personal Access Token
-            $encrypted_token = get_option('wp_github_sync_access_token', '');
-            if (!empty($encrypted_token)) {
-                $this->token = wp_github_sync_decrypt($encrypted_token);
-            }
-        } elseif ($auth_method === 'oauth') {
-            // OAuth token
-            $encrypted_token = get_option('wp_github_sync_oauth_token', '');
-            if (!empty($encrypted_token)) {
-                $this->token = wp_github_sync_decrypt($encrypted_token);
+        // First check for unencrypted token in environment for development purposes
+        $dev_token = defined('WP_GITHUB_SYNC_DEV_TOKEN') ? WP_GITHUB_SYNC_DEV_TOKEN : '';
+        if (!empty($dev_token)) {
+            wp_github_sync_log("Using development token from environment variable", 'debug');
+            $this->token = $dev_token;
+        } else {
+            if ($auth_method === 'pat') {
+                // Personal Access Token
+                $encrypted_token = get_option('wp_github_sync_access_token', '');
+                if (!empty($encrypted_token)) {
+                    $decrypted = wp_github_sync_decrypt($encrypted_token);
+                    if ($decrypted !== false) {
+                        $this->token = $decrypted;
+                        wp_github_sync_log("Successfully decrypted PAT token", 'debug');
+                    } else {
+                        wp_github_sync_log("Failed to decrypt PAT token", 'error');
+                    }
+                } else {
+                    wp_github_sync_log("No PAT token found in options", 'error');
+                }
+            } elseif ($auth_method === 'oauth') {
+                // OAuth token
+                $encrypted_token = get_option('wp_github_sync_oauth_token', '');
+                if (!empty($encrypted_token)) {
+                    $decrypted = wp_github_sync_decrypt($encrypted_token);
+                    if ($decrypted !== false) {
+                        $this->token = $decrypted;
+                        wp_github_sync_log("Successfully decrypted OAuth token", 'debug');
+                    } else {
+                        wp_github_sync_log("Failed to decrypt OAuth token", 'error');
+                    }
+                } else {
+                    wp_github_sync_log("No OAuth token found in options", 'error');
+                }
             }
         }
     }
@@ -141,6 +164,15 @@ class GitHub_API_Client {
             $url = add_query_arg($data, $url);
         }
         
+        // Debug logging for authentication issues
+        $token_length = strlen($this->token);
+        $token_start = $token_length > 4 ? substr($this->token, 0, 4) : '****';
+        $token_end = $token_length > 4 ? substr($this->token, -4) : '****';
+        wp_github_sync_log("Request to: {$url}", 'debug');
+        wp_github_sync_log("Authorization token length: {$token_length}", 'debug');
+        wp_github_sync_log("Authorization token prefix/suffix: {$token_start}...{$token_end}", 'debug');
+        wp_github_sync_log("Headers: " . print_r($args['headers'], true), 'debug');
+        
         $response = wp_remote_request($url, $args);
         
         if (is_wp_error($response)) {
@@ -168,6 +200,21 @@ class GitHub_API_Client {
         if ($response_code >= 400) {
             $error_message = isset($response_data['message']) ? $response_data['message'] : 'Unknown API error';
             wp_github_sync_log("GitHub API error ({$response_code}): {$error_message}", 'error');
+            
+            // Additional logging for Bad credentials error
+            if ($error_message === 'Bad credentials') {
+                $token_length = strlen($this->token);
+                $token_start = $token_length > 4 ? substr($this->token, 0, 4) : '****';
+                $token_end = $token_length > 4 ? substr($this->token, -4) : '****';
+                wp_github_sync_log("Bad credentials error. Token info - Length: {$token_length}, Start: {$token_start}, End: {$token_end}", 'error');
+                wp_github_sync_log("Full response body: " . wp_remote_retrieve_body($response), 'error');
+                
+                // Check if token might be empty or invalid
+                if ($token_length < 10) {
+                    wp_github_sync_log("Token appears to be too short or empty", 'error');
+                }
+            }
+            
             return new WP_Error("github_api_{$response_code}", $error_message);
         }
         
@@ -434,18 +481,27 @@ class GitHub_API_Client {
     /**
      * Check if a repository exists and is accessible with the current authentication.
      *
-     * @param string $owner The repository owner.
-     * @param string $repo  The repository name.
+     * @param string $owner The repository owner. If empty, uses currently set owner.
+     * @param string $repo  The repository name. If empty, uses currently set repo.
      * @return bool True if repository exists and is accessible, false otherwise.
      */
-    public function repository_exists($owner, $repo) {
+    public function repository_exists($owner = '', $repo = '') {
+        // Use provided values or current ones
+        $check_owner = !empty($owner) ? $owner : $this->owner;
+        $check_repo = !empty($repo) ? $repo : $this->repo;
+        
+        if (empty($check_owner) || empty($check_repo)) {
+            wp_github_sync_log("Cannot check repository: owner or repo is empty", 'error');
+            return false;
+        }
+        
         // Temporarily store the current owner/repo
         $current_owner = $this->owner;
         $current_repo = $this->repo;
         
         // Set the owner/repo to check
-        $this->owner = $owner;
-        $this->repo = $repo;
+        $this->owner = $check_owner;
+        $this->repo = $check_repo;
         
         // Try to get the repository
         $response = $this->get_repository();
@@ -455,6 +511,32 @@ class GitHub_API_Client {
         $this->repo = $current_repo;
         
         return !is_wp_error($response);
+    }
+    
+    /**
+     * Test if authentication is working correctly.
+     *
+     * @return bool|string True if authentication is working, error message otherwise.
+     */
+    public function test_authentication() {
+        // First check if token is set
+        if (empty($this->token)) {
+            return 'No authentication token found';
+        }
+        
+        // Make a simple request to the user endpoint to check authentication
+        $response = $this->request('user');
+        
+        if (is_wp_error($response)) {
+            return $response->get_error_message();
+        }
+        
+        // If we got a valid response with a login, authentication is working
+        if (isset($response['login'])) {
+            return true;
+        }
+        
+        return 'Unknown authentication error';
     }
     
     /**

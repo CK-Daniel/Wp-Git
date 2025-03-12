@@ -910,11 +910,18 @@ class WP_GitHub_Sync_Admin {
             return;
         }
         
-        // Check if repository exists
-        $repo_exists = $this->github_api->get_repository();
+        // First test if authentication is working
+        $auth_test = $this->github_api->test_authentication();
+        if ($auth_test !== true) {
+            wp_send_json_error(array('message' => sprintf(__('Authentication error: %s', 'wp-github-sync'), $auth_test)));
+            return;
+        }
         
-        if (is_wp_error($repo_exists)) {
-            wp_send_json_error(array('message' => sprintf(__('Error connecting to repository: %s', 'wp-github-sync'), $repo_exists->get_error_message())));
+        // Check if repository exists
+        $repo_exists = $this->github_api->repository_exists();
+        
+        if (!$repo_exists) {
+            wp_send_json_error(array('message' => __('Repository does not exist or is not accessible with current credentials.', 'wp-github-sync')));
             return;
         }
         

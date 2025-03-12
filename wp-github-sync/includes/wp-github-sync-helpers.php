@@ -18,6 +18,13 @@ if (!defined('WPINC')) {
  */
 function wp_github_sync_encrypt($data) {
     if (empty($data)) {
+        wp_github_sync_log("Cannot encrypt empty data", 'error');
+        return false;
+    }
+
+    // Check if token is already a masked placeholder (don't re-encrypt)
+    if ($data === '********') {
+        wp_github_sync_log("Skipping encryption for masked placeholder", 'debug');
         return false;
     }
 
@@ -30,6 +37,7 @@ function wp_github_sync_encrypt($data) {
         if (!$encryption_key) {
             $encryption_key = wp_generate_password(64, true, true);
             update_option('wp_github_sync_encryption_key', $encryption_key);
+            wp_github_sync_log("Generated new encryption key", 'debug');
         }
     }
 
@@ -41,15 +49,19 @@ function wp_github_sync_encrypt($data) {
         
         $encrypted = openssl_encrypt($data, $method, $encryption_key, 0, $iv);
         if ($encrypted === false) {
+            wp_github_sync_log("OpenSSL encryption failed", 'error');
             return false;
         }
         
         // Return iv+encrypted data in base64
-        return base64_encode($iv . $encrypted);
+        $result = base64_encode($iv . $encrypted);
+        wp_github_sync_log("Successfully encrypted data using OpenSSL", 'debug');
+        return $result;
     }
     
     // Fallback if OpenSSL is not available - less secure but better than plaintext
-    return base64_encode($data);
+    wp_github_sync_log("OpenSSL not available, using base64 fallback (less secure)", 'warning');
+    return 'base64:' . base64_encode($data);
 }
 
 /**
@@ -60,7 +72,20 @@ function wp_github_sync_encrypt($data) {
  */
 function wp_github_sync_decrypt($encrypted_data) {
     if (empty($encrypted_data)) {
+        wp_github_sync_log("Cannot decrypt empty data", 'error');
         return false;
+    }
+
+    // Check for base64 fallback format
+    if (strpos($encrypted_data, 'base64:') === 0) {
+        wp_github_sync_log("Decrypting using base64 fallback method", 'debug');
+        $base64_data = substr($encrypted_data, 7); // Remove 'base64:' prefix
+        $result = base64_decode($base64_data);
+        if ($result === false) {
+            wp_github_sync_log("Base64 decoding failed", 'error');
+            return false;
+        }
+        return $result;
     }
 
     // Check if we have a predefined encryption key
@@ -70,6 +95,7 @@ function wp_github_sync_decrypt($encrypted_data) {
     if (!$encryption_key) {
         $encryption_key = get_option('wp_github_sync_encryption_key');
         if (!$encryption_key) {
+            wp_github_sync_log("No encryption key found, cannot decrypt", 'error');
             return false; // Can't decrypt without the key
         }
     }
@@ -81,6 +107,13 @@ function wp_github_sync_decrypt($encrypted_data) {
         
         $decoded = base64_decode($encrypted_data);
         if ($decoded === false) {
+            wp_github_sync_log("Base64 decoding of encrypted data failed", 'error');
+            return false;
+        }
+        
+        // Make sure decoded data is long enough to contain IV
+        if (strlen($decoded) <= $iv_length) {
+            wp_github_sync_log("Decoded data too short to contain valid IV", 'error');
             return false;
         }
         
@@ -88,11 +121,24 @@ function wp_github_sync_decrypt($encrypted_data) {
         $iv = substr($decoded, 0, $iv_length);
         $ciphertext = substr($decoded, $iv_length);
         
-        return openssl_decrypt($ciphertext, $method, $encryption_key, 0, $iv);
+        $result = openssl_decrypt($ciphertext, $method, $encryption_key, 0, $iv);
+        if ($result === false) {
+            wp_github_sync_log("OpenSSL decryption failed", 'error');
+            return false;
+        }
+        
+        wp_github_sync_log("Successfully decrypted using OpenSSL", 'debug');
+        return $result;
     }
     
-    // Fallback if OpenSSL is not available - this would mean data was not properly encrypted
-    return base64_decode($encrypted_data);
+    // Fallback if OpenSSL is not available
+    wp_github_sync_log("OpenSSL not available, trying base64 fallback", 'warning');
+    $result = base64_decode($encrypted_data);
+    if ($result === false) {
+        wp_github_sync_log("Fallback base64 decoding failed", 'error');
+        return false;
+    }
+    return $result;
 }
 
 /**
