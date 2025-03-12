@@ -6,6 +6,64 @@
     
     // Initialize on document ready
     $(document).ready(function() {
+        // Handle the initial sync process
+        $('#initial_sync_button').on('click', function() {
+            var createNewRepo = $('#create_new_repo').is(':checked');
+            var repoName = $('#new_repo_name').val();
+            
+            if (createNewRepo && !repoName) {
+                alert('Please enter a repository name.');
+                return;
+            }
+            
+            showOverlay();
+            $('.wp-github-sync-loading-message').text('Setting up GitHub Sync...');
+            
+            if (createNewRepo) {
+                $('.wp-github-sync-loading-submessage').text('Creating new repository...');
+            } else {
+                $('.wp-github-sync-loading-submessage').text('Connecting to existing repository...');
+            }
+            
+            $.ajax({
+                url: wpGitHubSync.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'wp_github_sync_initial_sync',
+                    create_new_repo: createNewRepo ? 1 : 0,
+                    repo_name: repoName,
+                    nonce: wpGitHubSync.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $('.wp-github-sync-loading-message').text('Success!');
+                        $('.wp-github-sync-loading-submessage').text(response.data.message);
+                        
+                        // Redirect to dashboard after 2 seconds
+                        setTimeout(function() {
+                            window.location.href = wpGitHubSync.adminUrl + '?page=wp-github-sync';
+                        }, 2000);
+                    } else {
+                        $('.wp-github-sync-loading-message').text('Error');
+                        $('.wp-github-sync-loading-submessage').text(response.data.message);
+                        
+                        // Hide overlay after 3 seconds
+                        setTimeout(function() {
+                            hideOverlay();
+                        }, 3000);
+                    }
+                },
+                error: function() {
+                    $('.wp-github-sync-loading-message').text('Error');
+                    $('.wp-github-sync-loading-submessage').text('An unexpected error occurred. Please try again.');
+                    
+                    // Hide overlay after 3 seconds
+                    setTimeout(function() {
+                        hideOverlay();
+                    }, 3000);
+                }
+            });
+        });
         // Handle deploying the latest changes
         $('.wp-github-sync-deploy').on('click', function() {
             if (confirm(wpGitHubSync.strings.confirmDeploy)) {

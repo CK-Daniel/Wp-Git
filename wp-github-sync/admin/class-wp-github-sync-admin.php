@@ -54,6 +54,7 @@ class WP_GitHub_Sync_Admin {
         add_action('wp_ajax_wp_github_sync_regenerate_webhook', array($this, 'handle_ajax_regenerate_webhook'));
         add_action('wp_ajax_wp_github_sync_oauth_connect', array($this, 'handle_ajax_oauth_connect'));
         add_action('wp_ajax_wp_github_sync_oauth_disconnect', array($this, 'handle_ajax_oauth_disconnect'));
+        add_action('wp_ajax_wp_github_sync_initial_sync', array($this, 'handle_ajax_initial_sync'));
         
         // Handle OAuth callback
         add_action('admin_init', array($this, 'handle_oauth_callback'));
@@ -103,6 +104,7 @@ class WP_GitHub_Sync_Admin {
             'wpGitHubSync',
             array(
                 'ajaxUrl' => admin_url('admin-ajax.php'),
+                'adminUrl' => admin_url(),
                 'nonce' => wp_create_nonce('wp_github_sync_nonce'),
                 'strings' => array(
                     'confirmDeploy' => __('Are you sure you want to deploy the latest changes from GitHub? This will update your site files.', 'wp-github-sync'),
@@ -111,6 +113,10 @@ class WP_GitHub_Sync_Admin {
                     'confirmRegenerateWebhook' => __('Are you sure you want to regenerate the webhook secret? You will need to update it in your GitHub repository settings.', 'wp-github-sync'),
                     'success' => __('Operation completed successfully.', 'wp-github-sync'),
                     'error' => __('An error occurred. Please try again.', 'wp-github-sync'),
+                    'initialSyncNoRepo' => __('Please enter a repository name.', 'wp-github-sync'),
+                    'initialSyncCreating' => __('Creating new repository...', 'wp-github-sync'),
+                    'initialSyncConnecting' => __('Connecting to existing repository...', 'wp-github-sync'),
+                    'initialSyncError' => __('An unexpected error occurred. Please try again.', 'wp-github-sync'),
                 ),
             )
         );
@@ -127,7 +133,7 @@ class WP_GitHub_Sync_Admin {
             'manage_options',
             'wp-github-sync',
             array($this, 'display_admin_dashboard'),
-            'dashicons-cloud',
+            'data:image/svg+xml;base64,' . base64_encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>'),
             80
         );
         
@@ -355,8 +361,16 @@ class WP_GitHub_Sync_Admin {
         // Check if plugin is configured
         if (empty($repository_url)) {
             ?>
-            <p><?php _e('GitHub Sync is not configured yet.', 'wp-github-sync'); ?></p>
-            <a href="<?php echo admin_url('admin.php?page=wp-github-sync-settings'); ?>" class="button"><?php _e('Configure Now', 'wp-github-sync'); ?></a>
+            <div class="wp-github-sync-widget-info-box" style="background-color: rgba(219, 166, 23, 0.1); border-left: 4px solid #dba617; padding: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px;">
+                <span class="dashicons dashicons-warning" style="color: #dba617;"></span>
+                <div>
+                    <p style="margin: 0 0 8px 0; font-weight: 600;"><?php _e('GitHub Sync is not configured yet', 'wp-github-sync'); ?></p>
+                    <a href="<?php echo admin_url('admin.php?page=wp-github-sync-settings'); ?>" class="button" style="display: inline-flex; align-items: center; gap: 5px;">
+                        <span class="dashicons dashicons-admin-tools" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                        <?php _e('Configure Now', 'wp-github-sync'); ?>
+                    </a>
+                </div>
+            </div>
             <?php
             return;
         }
@@ -367,37 +381,61 @@ class WP_GitHub_Sync_Admin {
         $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] : $repository_url;
         
         ?>
-        <div class="wp-github-sync-dashboard-widget">
-            <p>
-                <strong><?php _e('Repository:', 'wp-github-sync'); ?></strong>
-                <a href="<?php echo esc_url($repository_url); ?>" target="_blank"><?php echo esc_html($repo_display); ?></a>
-            </p>
-            
-            <p>
-                <strong><?php _e('Branch:', 'wp-github-sync'); ?></strong>
-                <?php echo esc_html($branch); ?>
-            </p>
-            
-            <?php if (!empty($last_deployed_commit)) : ?>
-                <p>
-                    <strong><?php _e('Current commit:', 'wp-github-sync'); ?></strong>
-                    <?php echo esc_html(substr($last_deployed_commit, 0, 8)); ?>
-                </p>
-            <?php endif; ?>
-            
-            <?php if (!empty($last_deployment_time)) : ?>
-                <p>
-                    <strong><?php _e('Last updated:', 'wp-github-sync'); ?></strong>
-                    <?php echo wp_github_sync_time_diff($last_deployment_time); ?> <?php _e('ago', 'wp-github-sync'); ?>
-                </p>
-            <?php endif; ?>
-            
-            <div class="wp-github-sync-widget-actions">
-                <?php if ($update_available) : ?>
-                    <p class="wp-github-sync-update-notice">
-                        <?php _e('Update available', 'wp-github-sync'); ?>
-                    </p>
+        <div class="wp-github-sync-dashboard-widget" style="font-size: 13px;">
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px;">
+                <div style="flex: 1; min-width: 200px;">
+                    <div style="display: flex; margin-bottom: 8px; align-items: center;">
+                        <span style="width: 20px; margin-right: 5px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg></span>
+                        <strong><?php _e('Repository:', 'wp-github-sync'); ?></strong>
+                        <a href="<?php echo esc_url($repository_url); ?>" target="_blank" style="margin-left: 5px;"><?php echo esc_html($repo_display); ?></a>
+                    </div>
                     
+                    <div style="display: flex; margin-bottom: 8px; align-items: center;">
+                        <span style="width: 20px; margin-right: 5px;"><span class="dashicons dashicons-randomize" style="font-size: 16px; width: 16px; height: 16px;"></span></span>
+                        <strong><?php _e('Branch:', 'wp-github-sync'); ?></strong>
+                        <span style="margin-left: 5px;"><?php echo esc_html($branch); ?></span>
+                    </div>
+                    
+                    <?php if (!empty($last_deployed_commit)) : ?>
+                        <div style="display: flex; margin-bottom: 8px; align-items: center;">
+                            <span style="width: 20px; margin-right: 5px;"><span class="dashicons dashicons-backup" style="font-size: 16px; width: 16px; height: 16px;"></span></span>
+                            <strong><?php _e('Current commit:', 'wp-github-sync'); ?></strong>
+                            <code style="margin-left: 5px; background: #f6f7f7; padding: 2px 4px; border-radius: 3px; font-size: 12px;"><?php echo esc_html(substr($last_deployed_commit, 0, 8)); ?></code>
+                        </div>
+                    <?php endif; ?>
+                </div>
+                
+                <div style="flex: 1; min-width: 200px;">
+                    <?php if (!empty($last_deployment_time)) : ?>
+                        <div style="display: flex; margin-bottom: 8px; align-items: center;">
+                            <span style="width: 20px; margin-right: 5px;"><span class="dashicons dashicons-clock" style="font-size: 16px; width: 16px; height: 16px;"></span></span>
+                            <strong><?php _e('Last updated:', 'wp-github-sync'); ?></strong>
+                            <span style="margin-left: 5px;"><?php echo wp_github_sync_time_diff($last_deployment_time); ?> <?php _e('ago', 'wp-github-sync'); ?></span>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                        <span style="width: 20px; margin-right: 5px;"><span class="dashicons dashicons-info" style="font-size: 16px; width: 16px; height: 16px;"></span></span>
+                        <strong><?php _e('Status:', 'wp-github-sync'); ?></strong>
+                        <span style="margin-left: 5px;">
+                            <?php if ($update_available) : ?>
+                                <span style="color: #dba617; display: flex; align-items: center; gap: 4px;">
+                                    <span class="dashicons dashicons-warning" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                                    <?php _e('Update available', 'wp-github-sync'); ?>
+                                </span>
+                            <?php else : ?>
+                                <span style="color: #00a32a; display: flex; align-items: center; gap: 4px;">
+                                    <span class="dashicons dashicons-yes-alt" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                                    <?php _e('Up to date', 'wp-github-sync'); ?>
+                                </span>
+                            <?php endif; ?>
+                        </span>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="padding-top: 12px; border-top: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                <?php if ($update_available) : ?>
                     <?php
                     $deploy_url = wp_nonce_url(
                         add_query_arg(
@@ -411,14 +449,16 @@ class WP_GitHub_Sync_Admin {
                     );
                     ?>
                     
-                    <a href="<?php echo esc_url($deploy_url); ?>" class="button button-primary"><?php _e('Deploy Now', 'wp-github-sync'); ?></a>
-                <?php else : ?>
-                    <p class="wp-github-sync-up-to-date">
-                        <?php _e('Site is up to date with GitHub', 'wp-github-sync'); ?>
-                    </p>
+                    <a href="<?php echo esc_url($deploy_url); ?>" class="button button-primary" style="display: inline-flex; align-items: center; gap: 5px;">
+                        <span class="dashicons dashicons-cloud-upload" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                        <?php _e('Deploy Now', 'wp-github-sync'); ?>
+                    </a>
                 <?php endif; ?>
                 
-                <a href="<?php echo admin_url('admin.php?page=wp-github-sync'); ?>" class="button"><?php _e('View Details', 'wp-github-sync'); ?></a>
+                <a href="<?php echo admin_url('admin.php?page=wp-github-sync'); ?>" class="button" style="display: inline-flex; align-items: center; gap: 5px;">
+                    <span class="dashicons dashicons-dashboard" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                    <?php _e('View Dashboard', 'wp-github-sync'); ?>
+                </a>
             </div>
         </div>
         <?php
@@ -742,8 +782,107 @@ class WP_GitHub_Sync_Admin {
     }
 
     /**
-     * Handle OAuth callback.
+     * Handle AJAX initial sync request.
      */
+    public function handle_ajax_initial_sync() {
+        // Check permissions
+        if (!wp_github_sync_current_user_can()) {
+            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
+        }
+        
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_initial_sync')) {
+            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
+        }
+        
+        // Check if we should create a new repository
+        $create_new_repo = isset($_POST['create_new_repo']) && $_POST['create_new_repo'] == 1;
+        $repo_name = isset($_POST['repo_name']) ? sanitize_text_field($_POST['repo_name']) : '';
+        
+        // Make sure GitHub API is initialized with the latest settings
+        $this->github_api->initialize();
+        
+        // If creating a new repository
+        if ($create_new_repo) {
+            if (empty($repo_name)) {
+                // Generate default repo name based on site URL
+                $site_url = parse_url(get_site_url(), PHP_URL_HOST);
+                $repo_name = sanitize_title(str_replace('.', '-', $site_url));
+            }
+            
+            // Create description based on site name
+            $site_name = get_bloginfo('name');
+            $description = sprintf(__('WordPress site: %s', 'wp-github-sync'), $site_name);
+            
+            // Create the repository
+            $result = $this->github_api->create_repository($repo_name, $description);
+            
+            if (is_wp_error($result)) {
+                wp_send_json_error(array('message' => sprintf(__('Failed to create repository: %s', 'wp-github-sync'), $result->get_error_message())));
+                return;
+            }
+            
+            // Get the repository URL and owner/repo details
+            if (isset($result['html_url'])) {
+                $repo_url = $result['html_url'];
+                $repo_owner = isset($result['owner']['login']) ? $result['owner']['login'] : '';
+                $repo_name = isset($result['name']) ? $result['name'] : '';
+                
+                // Save repository URL to settings
+                update_option('wp_github_sync_repository', $repo_url);
+                
+                // Try initial sync for a new repository
+                $sync_result = $this->github_api->initial_sync();
+                
+                if (is_wp_error($sync_result)) {
+                    // Even if sync fails, we created the repo, so consider it successful
+                    wp_send_json_success(array(
+                        'message' => sprintf(
+                            __('Repository created successfully at %s. However, initial file sync failed: %s', 'wp-github-sync'),
+                            $repo_url,
+                            $sync_result->get_error_message()
+                        ),
+                        'repo_url' => $repo_url,
+                    ));
+                    return;
+                }
+                
+                // Set deployed branch and mark first deployment
+                update_option('wp_github_sync_branch', 'main');
+                update_option('wp_github_sync_last_deployment_time', time());
+                
+                wp_send_json_success(array(
+                    'message' => sprintf(__('Repository created and initialized successfully at %s', 'wp-github-sync'), $repo_url),
+                    'repo_url' => $repo_url,
+                ));
+                return;
+            } else {
+                wp_send_json_error(array('message' => __('Repository created, but the response did not include the repository URL.', 'wp-github-sync')));
+                return;
+            }
+        } else {
+            // Using existing repository - perform initial deployment
+            $repo_url = get_option('wp_github_sync_repository', '');
+            
+            if (empty($repo_url)) {
+                wp_send_json_error(array('message' => __('No repository URL configured. Please enter a repository URL in the settings.', 'wp-github-sync')));
+                return;
+            }
+            
+            // Get the branch
+            $branch = get_option('wp_github_sync_branch', 'main');
+            
+            // Perform the deployment
+            $result = $this->sync_manager->deploy($branch);
+            
+            if (is_wp_error($result)) {
+                wp_send_json_error(array('message' => sprintf(__('Initial deployment failed: %s', 'wp-github-sync'), $result->get_error_message())));
+            } else {
+                wp_send_json_success(array('message' => __('Initial deployment completed successfully.', 'wp-github-sync')));
+            }
+        }
+    }
+
     public function handle_oauth_callback() {
         // Check if this is an OAuth callback
         if (!isset($_GET['github_oauth_callback']) || $_GET['github_oauth_callback'] != 1) {
