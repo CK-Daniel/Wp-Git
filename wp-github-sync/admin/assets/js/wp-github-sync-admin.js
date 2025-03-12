@@ -6,6 +6,48 @@
     
     // Initialize on document ready
     $(document).ready(function() {
+        // Tab functionality for all pages
+        function initializeTabs() {
+            // Tab click handler
+            $('.wp-github-sync-tab').on('click', function() {
+                $('.wp-github-sync-tab').removeClass('active');
+                $(this).addClass('active');
+                
+                var tab = $(this).data('tab');
+                
+                $('.wp-github-sync-tab-content').removeClass('active');
+                $('#' + tab + '-tab-content').addClass('active');
+                
+                // Update URL hash
+                window.location.hash = tab;
+            });
+            
+            // Check if URL has a hash for a tab
+            var hash = window.location.hash.substring(1);
+            if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
+                $('.wp-github-sync-tab[data-tab="' + hash + '"]').click();
+            } else if ($('.wp-github-sync-tab.active').length === 0 && $('.wp-github-sync-tab').length > 0) {
+                // Activate first tab if none is active
+                $('.wp-github-sync-tab').first().click();
+            }
+            
+            // Handle tab link buttons (for easy navigation between tabs)
+            $('.wp-github-sync-tab-link').on('click', function(e) {
+                e.preventDefault();
+                var targetTab = $(this).data('tab-target');
+                if (targetTab && $('.wp-github-sync-tab[data-tab="' + targetTab + '"]').length) {
+                    $('.wp-github-sync-tab[data-tab="' + targetTab + '"]').click();
+                    
+                    // Scroll to top of tabs
+                    $('html, body').animate({
+                        scrollTop: $('.wp-github-sync-tabs').offset().top - 50
+                    }, 300);
+                }
+            });
+        }
+        
+        // Initialize tabs
+        initializeTabs();
         // Handle the initial sync process
         $('#initial_sync_button').on('click', function() {
             var createNewRepo = $('#create_new_repo').is(':checked');
@@ -175,6 +217,37 @@
                 hideOverlay();
                 window.location.reload();
             }, 2000);
+        });
+        
+        // Handle full sync to GitHub
+        $('.wp-github-sync-full-sync').on('click', function() {
+            if (confirm(wpGitHubSync.strings.confirmFullSync || 'This will sync all your WordPress files to GitHub. Continue?')) {
+                showOverlay();
+                $('.wp-github-sync-loading-message').text('Syncing all files to GitHub...');
+                $('.wp-github-sync-loading-submessage').text('This may take some time depending on the size of your site.');
+                
+                $.ajax({
+                    url: wpGitHubSync.ajaxUrl,
+                    type: 'POST',
+                    data: {
+                        action: 'wp_github_sync_full_sync',
+                        nonce: wpGitHubSync.nonce
+                    },
+                    success: function(response) {
+                        hideOverlay();
+                        if (response.success) {
+                            alert(response.data.message || 'Sync completed successfully!');
+                            window.location.reload();
+                        } else {
+                            alert(response.data.message || wpGitHubSync.strings.error);
+                        }
+                    },
+                    error: function() {
+                        hideOverlay();
+                        alert(wpGitHubSync.strings.error);
+                    }
+                });
+            }
         });
         
         // Handle refreshing branches

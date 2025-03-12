@@ -117,6 +117,11 @@ $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] :
                                 <span class="dashicons dashicons-update"></span>
                                 <?php _e('Check for Updates', 'wp-github-sync'); ?>
                             </button>
+                            
+                            <button class="wp-github-sync-button wp-github-sync-full-sync">
+                                <span class="dashicons dashicons-upload"></span>
+                                <?php _e('Sync All to GitHub', 'wp-github-sync'); ?>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -648,42 +653,7 @@ index 1234567..abcdefg 100644
             <div class="wp-github-sync-loading-submessage"></div>
         </div>
         
-        <script>
-        jQuery(document).ready(function($) {
-            // Tab functionality
-            $('.wp-github-sync-tab').on('click', function() {
-                $('.wp-github-sync-tab').removeClass('active');
-                $(this).addClass('active');
-                
-                const tab = $(this).data('tab');
-                
-                $('.wp-github-sync-tab-content').removeClass('active');
-                $('#' + tab + '-tab-content').addClass('active');
-                
-                // Update URL hash
-                window.location.hash = tab;
-            });
-            
-            // Check if URL has a hash for a tab
-            const hash = window.location.hash.substring(1);
-            if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
-                $('.wp-github-sync-tab[data-tab="' + hash + '"]').click();
-            }
-            
-            // Handle tab link buttons (for easy navigation between tabs)
-            $('.wp-github-sync-tab-link').on('click', function(e) {
-                e.preventDefault();
-                const targetTab = $(this).data('tab-target');
-                if (targetTab && $('.wp-github-sync-tab[data-tab="' + targetTab + '"]').length) {
-                    $('.wp-github-sync-tab[data-tab="' + targetTab + '"]').click();
-                    
-                    // Scroll to top of tabs
-                    $('html, body').animate({
-                        scrollTop: $('.wp-github-sync-tabs').offset().top - 50
-                    }, 300);
-                }
-            });
-        });
-        </script>
+        <!-- Tab scripts will be moved to the main JS file -->
+        
     <?php endif; ?>
 </div>

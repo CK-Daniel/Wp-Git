@@ -55,6 +55,7 @@ class WP_GitHub_Sync_Admin {
         add_action('wp_ajax_wp_github_sync_oauth_connect', array($this, 'handle_ajax_oauth_connect'));
         add_action('wp_ajax_wp_github_sync_oauth_disconnect', array($this, 'handle_ajax_oauth_disconnect'));
         add_action('wp_ajax_wp_github_sync_initial_sync', array($this, 'handle_ajax_initial_sync'));
+        add_action('wp_ajax_wp_github_sync_full_sync', array($this, 'handle_ajax_full_sync'));
         
         // Handle OAuth callback
         add_action('admin_init', array($this, 'handle_oauth_callback'));
@@ -111,6 +112,7 @@ class WP_GitHub_Sync_Admin {
                     'confirmSwitchBranch' => __('Are you sure you want to switch branches? This will update your site files to match the selected branch.', 'wp-github-sync'),
                     'confirmRollback' => __('Are you sure you want to roll back to this commit? This will revert your site files to an earlier state.', 'wp-github-sync'),
                     'confirmRegenerateWebhook' => __('Are you sure you want to regenerate the webhook secret? You will need to update it in your GitHub repository settings.', 'wp-github-sync'),
+                    'confirmFullSync' => __('This will sync all your WordPress site files to GitHub. Continue?', 'wp-github-sync'),
                     'success' => __('Operation completed successfully.', 'wp-github-sync'),
                     'error' => __('An error occurred. Please try again.', 'wp-github-sync'),
                     'initialSyncNoRepo' => __('Please enter a repository name.', 'wp-github-sync'),
@@ -880,6 +882,53 @@ class WP_GitHub_Sync_Admin {
             } else {
                 wp_send_json_success(array('message' => __('Initial deployment completed successfully.', 'wp-github-sync')));
             }
+        }
+    }
+
+    /**
+     * Handle AJAX full sync request.
+     */
+    public function handle_ajax_full_sync() {
+        // Check permissions
+        if (!wp_github_sync_current_user_can()) {
+            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
+        }
+        
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
+            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
+        }
+        
+        // Ensure GitHub API is initialized
+        $this->github_api->initialize();
+        
+        // Get repository URL and check if it exists
+        $repo_url = get_option('wp_github_sync_repository', '');
+        
+        if (empty($repo_url)) {
+            wp_send_json_error(array('message' => __('No repository URL configured. Please enter a repository URL in the settings.', 'wp-github-sync')));
+            return;
+        }
+        
+        // Check if repository exists
+        $repo_exists = $this->github_api->repository_exists();
+        
+        if (is_wp_error($repo_exists) || !$repo_exists) {
+            $error_message = is_wp_error($repo_exists) ? $repo_exists->get_error_message() : __('Repository does not exist or is not accessible.', 'wp-github-sync');
+            wp_send_json_error(array('message' => sprintf(__('Error connecting to repository: %s', 'wp-github-sync'), $error_message)));
+            return;
+        }
+        
+        // Perform the full sync to GitHub
+        $result = $this->github_api->initial_sync();
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error(array('message' => sprintf(__('Full sync to GitHub failed: %s', 'wp-github-sync'), $result->get_error_message())));
+        } else {
+            // Update the sync time
+            update_option('wp_github_sync_last_deployment_time', time());
+            
+            wp_send_json_success(array('message' => __('Full sync to GitHub completed successfully.', 'wp-github-sync')));
         }
     }
 
