@@ -39,18 +39,19 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
         <p><?php _e('You\'ve configured GitHub Sync, but haven\'t performed your first synchronization yet. You can either connect to an existing repository or create a new one.', 'wp-github-sync'); ?></p>
         
         <div class="wp-github-sync-repo-creation">
-            <div>
+            <div class="wp-github-sync-toggle-option">
+                <input type="checkbox" id="create_new_repo" name="create_new_repo" value="1" class="wp-github-sync-toggle"/>
                 <label for="create_new_repo"><?php _e('Create a new GitHub repository for this WordPress site', 'wp-github-sync'); ?></label>
-                <input type="checkbox" id="create_new_repo" name="create_new_repo" value="1"/>
+                <div class="wp-github-sync-toggle-slider"></div>
             </div>
             
-            <div id="new_repo_options" style="display: none;">
+            <div id="new_repo_options" class="wp-github-sync-option-group" style="display: none;">
                 <label for="new_repo_name"><?php _e('Repository Name', 'wp-github-sync'); ?></label>
-                <input type="text" id="new_repo_name" name="new_repo_name" placeholder="<?php echo esc_attr($default_repo_name); ?>" />
+                <input type="text" id="new_repo_name" name="new_repo_name" class="wp-github-sync-text-input" placeholder="<?php echo esc_attr($default_repo_name); ?>" />
             </div>
         </div>
         
-        <button type="button" id="initial_sync_button" class="wp-github-sync-initial-sync-button">
+        <button type="button" id="initial_sync_button" class="wp-github-sync-button primary wp-github-sync-initial-sync-button">
             <span class="dashicons dashicons-update"></span>
             <?php _e('Start Initial Sync', 'wp-github-sync'); ?>
         </button>
@@ -360,11 +361,14 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
             let repoName = '';
             
             if (createNewRepo) {
-                repoName = $('#new_repo_name').val() || '<?php echo esc_js($default_repo_name); ?>';
+                // Use the entered value or the placeholder as fallback
+                const inputField = $('#new_repo_name');
+                repoName = inputField.val();
                 
-                if (!repoName) {
-                    alert('<?php _e('Please enter a repository name', 'wp-github-sync'); ?>');
-                    return;
+                // If empty, use the placeholder value
+                if (!repoName || repoName.trim() === '') {
+                    repoName = inputField.attr('placeholder') || '<?php echo esc_js($default_repo_name); ?>';
+                    console.log("Using placeholder as repo name:", repoName);
                 }
             }
             
@@ -512,6 +516,12 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
             } else {
                 $('#new_repo_options').slideUp();
             }
+        });
+        
+        // Toggle slider click handler
+        $('.wp-github-sync-toggle-slider').on('click', function() {
+            const checkbox = $(this).siblings('input[type="checkbox"]');
+            checkbox.prop('checked', !checkbox.prop('checked')).trigger('change');
         });
         
         // Handle tab state from URL hash

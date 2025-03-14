@@ -1,6 +1,19 @@
 /* Admin CSS for WordPress GitHub Sync plugin. */
 
 /* General Styles */
+:root {
+    --wp-github-sync-primary: #0073aa;
+    --wp-github-sync-primary-dark: #006291;
+    --wp-github-sync-light: #f9fafb;
+    --wp-github-sync-border: #e5e7eb;
+    --wp-github-sync-success: #10b981;
+    --wp-github-sync-info: #0284c7;
+    --wp-github-sync-warning: #f59e0b;
+    --wp-github-sync-error: #dc2626;
+    --wp-github-sync-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    --wp-github-sync-transition: all 0.2s ease;
+}
+
 .wp-github-sync-wrap {
     max-width: 1400px;
     margin: 20px auto;
@@ -633,4 +646,240 @@ mark {
 
 .wp-github-sync-logs-table tr {
     animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Initial Sync Card Styles */
+.wp-github-sync-initial-sync-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 30px;
+    box-shadow: var(--wp-github-sync-shadow);
+    border: 1px solid var(--wp-github-sync-border);
+    position: relative;
+    overflow: hidden;
+}
+
+.wp-github-sync-initial-sync-card h2 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 20px;
+    margin: 0 0 16px 0;
+    color: #1e293b;
+}
+
+.wp-github-sync-initial-sync-card h2 .dashicons {
+    color: var(--wp-github-sync-primary);
+    font-size: 24px;
+    width: 24px;
+    height: 24px;
+}
+
+.wp-github-sync-initial-sync-card p {
+    font-size: 15px;
+    line-height: 1.6;
+    margin-bottom: 24px;
+    color: #4b5563;
+}
+
+.wp-github-sync-repo-creation {
+    background: var(--wp-github-sync-light);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 24px;
+    border: 1px solid var(--wp-github-sync-border);
+}
+
+.wp-github-sync-toggle-option {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.wp-github-sync-toggle {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.wp-github-sync-toggle-slider {
+    position: relative;
+    display: inline-block;
+    width: 42px;
+    height: 22px;
+    background: #d1d5db;
+    border-radius: 34px;
+    margin-left: auto;
+    transition: var(--wp-github-sync-transition);
+    cursor: pointer;
+}
+
+.wp-github-sync-toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 2px;
+    bottom: 2px;
+    background: white;
+    border-radius: 50%;
+    transition: var(--wp-github-sync-transition);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.wp-github-sync-toggle:checked + label + .wp-github-sync-toggle-slider {
+    background: var(--wp-github-sync-primary);
+}
+
+.wp-github-sync-toggle:checked + label + .wp-github-sync-toggle-slider:before {
+    transform: translateX(20px);
+}
+
+.wp-github-sync-toggle:focus + label + .wp-github-sync-toggle-slider {
+    box-shadow: 0 0 0 2px rgba(0, 115, 170, 0.2);
+}
+
+.wp-github-sync-option-group {
+    padding: 16px 0 0;
+    animation: fadeIn 0.3s ease-in-out;
+    border-top: 1px solid var(--wp-github-sync-border);
+    margin-top: 16px;
+}
+
+.wp-github-sync-option-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #1e293b;
+}
+
+.wp-github-sync-text-input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--wp-github-sync-border);
+    background: #fff;
+    font-size: 14px;
+    transition: var(--wp-github-sync-transition);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.wp-github-sync-text-input:focus {
+    border-color: var(--wp-github-sync-primary);
+    box-shadow: 0 0 0 2px rgba(0, 115, 170, 0.2);
+    outline: none;
+}
+
+.wp-github-sync-initial-sync-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: var(--wp-github-sync-primary);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    font-size: 15px;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0, 115, 170, 0.2);
+    transition: var(--wp-github-sync-transition);
+}
+
+.wp-github-sync-initial-sync-button:hover {
+    background: var(--wp-github-sync-primary-dark);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 115, 170, 0.3);
+}
+
+.wp-github-sync-initial-sync-button:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgba(0, 115, 170, 0.2);
+}
+
+.wp-github-sync-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 14px;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-weight: 500;
+    transition: var(--wp-github-sync-transition);
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border: 1px solid transparent;
+    text-decoration: none;
+}
+
+.wp-github-sync-button.primary {
+    background: var(--wp-github-sync-primary);
+    color: white;
+    border-color: var(--wp-github-sync-primary);
+}
+
+.wp-github-sync-button.primary:hover {
+    background: var(--wp-github-sync-primary-dark);
+    border-color: var(--wp-github-sync-primary-dark);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 6px rgba(0, 115, 170, 0.2);
+}
+
+.wp-github-sync-button.secondary {
+    background: white;
+    color: #4b5563;
+    border-color: #e5e7eb;
+}
+
+.wp-github-sync-button.secondary:hover {
+    background: var(--wp-github-sync-light);
+    color: #1f2937;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Overlay and loader styles */
+.wp-github-sync-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    backdrop-filter: blur(2px);
+}
+
+.wp-github-sync-loader {
+    border: 3px solid rgba(255, 255, 255, 0.2);
+    border-top: 3px solid white;
+    border-radius: 50%;
+    width: 50px;
+    height: 50px;
+    animation: spin 1.5s linear infinite;
+    margin-bottom: 20px;
+}
+
+.wp-github-sync-loading-message {
+    color: white;
+    font-size: 20px;
+    font-weight: 500;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.wp-github-sync-loading-submessage {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 16px;
+    max-width: 80%;
+    text-align: center;
 }
