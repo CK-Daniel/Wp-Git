@@ -200,17 +200,55 @@ class Repository {
         $repo_info = $this->api_client->get_repository();
         if (is_wp_error($repo_info)) {
             $error_message = $repo_info->get_error_message();
-            // Check if this is an empty repository error
-            if (strpos($error_message, 'Git Repository is empty') !== false) {
-                wp_github_sync_log("Repository is empty, initializing it before proceeding", 'info');
+            
+            // Check if this is an empty repository error or any 404 error
+            if (strpos($error_message, 'Git Repository is empty') !== false || 
+                strpos($error_message, 'Not Found') !== false ||
+                strpos($error_message, '404') !== false) {
+                
+                wp_github_sync_log("Repository is empty or not initialized, initializing it before proceeding", 'info');
+                
+                // Try to initialize the repository
                 $init_result = $this->api_client->initialize_repository($branch);
                 
                 if (is_wp_error($init_result)) {
-                    wp_github_sync_log("Failed to initialize repository: " . $init_result->get_error_message(), 'error');
-                    return new \WP_Error('repo_init_failed', sprintf(__('Failed to initialize repository: %s', 'wp-github-sync'), $init_result->get_error_message()));
+                    wp_github_sync_log("Failed to initialize repository through API client: " . $init_result->get_error_message(), 'warning');
+                    
+                    // Try a different approach - direct initialization through repository uploader
+                    wp_github_sync_log("Attempting alternative initialization approach", 'info');
+                    $uploader = new Repository_Uploader($this->api_client);
+                    
+                    // Create test content
+                    $temp_dir = wp_tempnam('wp-github-sync-init-');
+                    @unlink($temp_dir); // Remove the file so we can create a directory
+                    
+                    if (wp_mkdir_p($temp_dir)) {
+                        // Create a basic README file
+                        $site_name = get_bloginfo('name');
+                        $site_url = get_bloginfo('url');
+                        $readme_content = "# {$site_name}\n\nWordPress site synced with GitHub.\n\nSite URL: {$site_url}\n\nInitialized by WordPress GitHub Sync plugin.\n";
+                        
+                        file_put_contents($temp_dir . '/README.md', $readme_content);
+                        
+                        // Upload this file to initialize the repo
+                        $alt_init_result = $uploader->upload_files_to_github($temp_dir, $branch, "Initialize repository for WordPress GitHub Sync");
+                        
+                        // Clean up temporary directory
+                        $this->recursive_rmdir($temp_dir);
+                        
+                        if (is_wp_error($alt_init_result)) {
+                            wp_github_sync_log("Alternative initialization also failed: " . $alt_init_result->get_error_message(), 'error');
+                            return new \WP_Error('repo_init_failed', sprintf(__('Failed to initialize repository: %s', 'wp-github-sync'), $alt_init_result->get_error_message()));
+                        }
+                        
+                        wp_github_sync_log("Repository initialized successfully through alternative method, continuing with sync", 'info');
+                    } else {
+                        wp_github_sync_log("Failed to create temporary directory for alternative initialization", 'error');
+                        return new \WP_Error('repo_init_failed', sprintf(__('Failed to initialize repository: %s. Could not create temporary directory.', 'wp-github-sync'), $init_result->get_error_message()));
+                    }
+                } else {
+                    wp_github_sync_log("Repository initialized successfully, continuing with sync", 'info');
                 }
-                
-                wp_github_sync_log("Repository initialized successfully, continuing with sync", 'info');
             } else {
                 wp_github_sync_log("Failed to access repository: " . $error_message, 'error');
                 return new \WP_Error('repo_access_failed', sprintf(__('Failed to access repository: %s', 'wp-github-sync'), $error_message));
@@ -418,17 +456,32 @@ class Repository {
         // Create wp-content directory in temp dir
         wp_mkdir_p($temp_dir . '/wp-content');
         
+        wp_github_sync_log("Preparing to sync files from {$wp_content_dir} to temporary directory", 'debug');
+        
         // Copy each path that's enabled
         foreach ($paths_to_sync as $path => $include) {
             if (!$include) {
+                wp_github_sync_log("Skipping path {$path} (disabled in config)", 'debug');
                 continue;
             }
             
-            $source_path = $abspath . '/' . $path;
+            // Using WP_CONTENT_DIR directly to make testing easier
+            if (strpos($path, 'wp-content/') === 0) {
+                $rel_path = substr($path, strlen('wp-content/'));
+                $source_path = rtrim($wp_content_dir, '/') . '/' . $rel_path;
+            } else {
+                $source_path = $abspath . '/' . $path;
+            }
+            
             $dest_path = $temp_dir . '/' . $path;
+            
+            wp_github_sync_log("Processing path {$path}", 'debug');
+            wp_github_sync_log("Source: {$source_path}", 'debug');
+            wp_github_sync_log("Destination: {$dest_path}", 'debug');
             
             // Make sure source path exists
             if (!file_exists($source_path)) {
+                wp_github_sync_log("Source path doesn't exist: {$source_path}, skipping", 'warning');
                 continue;
             }
             
@@ -436,10 +489,46 @@ class Repository {
             wp_mkdir_p(dirname($dest_path));
             
             // Copy directory
-            $this->copy_directory($source_path, $dest_path);
+            $copy_result = $this->copy_directory($source_path, $dest_path);
+            
+            if ($copy_result) {
+                wp_github_sync_log("Successfully copied {$path} to temporary directory", 'debug');
+            } else {
+                wp_github_sync_log("Failed to copy {$path} to temporary directory", 'error');
+            }
         }
         
+        // List files in temp directory to verify
+        $this->list_directory_recursive($temp_dir);
+        
         return true;
+    }
+    
+    /**
+     * List files in a directory recursively for debugging.
+     *
+     * @param string $dir The directory to list.
+     * @param string $prefix Prefix for indentation in recursive calls.
+     */
+    private function list_directory_recursive($dir, $prefix = '') {
+        if (!is_dir($dir)) {
+            return;
+        }
+        
+        $files = scandir($dir);
+        foreach ($files as $file) {
+            if ($file == '.' || $file == '..') {
+                continue;
+            }
+            
+            $path = $dir . '/' . $file;
+            if (is_dir($path)) {
+                wp_github_sync_log("{$prefix}[DIR] {$file}/", 'debug');
+                $this->list_directory_recursive($path, $prefix . '  ');
+            } else {
+                wp_github_sync_log("{$prefix}[FILE] {$file} (" . filesize($path) . " bytes)", 'debug');
+            }
+        }
     }
     
     /**

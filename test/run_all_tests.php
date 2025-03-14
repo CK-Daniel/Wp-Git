@@ -21,6 +21,9 @@ $tests = [
     'test_download_repository.php',  // Tests downloading a repository
     'test_repository_compare.php',   // Tests comparing repository versions
     'test_rollback.php',             // Tests basic rollback functionality
+    
+    // Added comprehensive test for initial sync with auto-initialization
+    'test_comprehensive_sync.php',   // Tests complete flow including auto-init for empty repo
 ];
 
 foreach ($tests as $index => $test) {

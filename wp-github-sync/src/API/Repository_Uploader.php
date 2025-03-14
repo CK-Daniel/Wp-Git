@@ -527,9 +527,27 @@ class Repository_Uploader {
         $max_files = 1000; // GitHub has limits on tree size
         $skipped_files = [];
         
+        // Log directory contents first
+        wp_github_sync_log("Scanning directory for files: {$directory}", 'debug');
+        $this->list_directory_recursive($directory);
+        
         // Recursive function to process directories
         $process_directory = function($dir, $base_path = '') use (&$process_directory, &$tree_items, &$files_processed, &$total_size, &$skipped_files, $upload_limit, $max_files) {
+            wp_github_sync_log("Processing directory: {$dir} (base path: {$base_path})", 'debug');
+            
+            if (!is_dir($dir)) {
+                wp_github_sync_log("Directory does not exist: {$dir}", 'error');
+                return;
+            }
+            
             $files = scandir($dir);
+            
+            if ($files === false) {
+                wp_github_sync_log("Failed to scan directory: {$dir}", 'error');
+                return;
+            }
+            
+            wp_github_sync_log("Found " . count($files) . " items in {$dir}", 'debug');
             
             foreach ($files as $file) {
                 if ($file === '.' || $file === '..') {
@@ -550,8 +568,11 @@ class Repository_Uploader {
                 
                 if (is_dir($path)) {
                     // For directories, recursively process them
+                    wp_github_sync_log("Recursing into directory: {$path}", 'debug');
                     $process_directory($path, $relative_path);
                 } else {
+                    wp_github_sync_log("Processing file: {$path}", 'debug');
+                    
                     // Check file limits
                     if ($files_processed >= $max_files) {
                         wp_github_sync_log("Reached max file limit ({$max_files}). Some files were not processed.", 'warning');
@@ -560,10 +581,14 @@ class Repository_Uploader {
                     
                     // Check if file is binary or text
                     $is_binary = false;
+                    $mime_type = '';
+                    
                     if (class_exists('\\finfo')) {
                         try {
                             $finfo = new \finfo(FILEINFO_MIME);
                             $mime_type = $finfo->file($path);
+                            wp_github_sync_log("MIME type for {$file}: {$mime_type}", 'debug');
+                            
                             $is_binary = (strpos($mime_type, 'text/') !== 0 && 
                                          strpos($mime_type, 'application/json') !== 0 &&
                                          strpos($mime_type, 'application/xml') !== 0);
@@ -580,6 +605,7 @@ class Repository_Uploader {
                     
                     // Get file size
                     $file_size = filesize($path);
+                    wp_github_sync_log("File size: " . round($file_size/1024, 2) . "KB, binary: " . ($is_binary ? "yes" : "no"), 'debug');
                     
                     // Skip if file is too large (GitHub API has a 100MB limit)
                     if ($file_size > 50 * 1024 * 1024) {
@@ -618,9 +644,26 @@ class Repository_Uploader {
                             continue;
                         }
                         
+                        // Common image formats should always be treated as binary
+                        $file_ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+                        $binary_extensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'ico', 'webp', 'svg'];
+                        
+                        if (in_array($file_ext, $binary_extensions)) {
+                            wp_github_sync_log("File {$file} has binary extension, treating as binary", 'debug');
+                            $is_binary = true;
+                        }
+                        
+                        // Always treat files that look like images as binary
+                        if (strpos($mime_type, 'image/') === 0) {
+                            wp_github_sync_log("File {$file} has image MIME type, treating as binary", 'debug');
+                            $is_binary = true;
+                        }
+                        
                         // Create blob based on file type
                         $blob_data = [];
+                        
                         if ($is_binary) {
+                            wp_github_sync_log("Using base64 encoding for binary file: {$file}", 'debug');
                             $blob_data = [
                                 'content' => base64_encode($content),
                                 'encoding' => 'base64'
@@ -628,12 +671,23 @@ class Repository_Uploader {
                         } else {
                             // Check for valid UTF-8 to prevent API errors
                             if (function_exists('mb_check_encoding') && mb_check_encoding($content, 'UTF-8')) {
-                                $blob_data = [
-                                    'content' => $content,
-                                    'encoding' => 'utf-8'
-                                ];
+                                // Safely handle potential null bytes in text files
+                                if (strpos($content, "\0") !== false) {
+                                    wp_github_sync_log("File {$relative_path} contains null bytes, treating as binary", 'debug');
+                                    $blob_data = [
+                                        'content' => base64_encode($content),
+                                        'encoding' => 'base64'
+                                    ];
+                                } else {
+                                    wp_github_sync_log("Using UTF-8 encoding for text file: {$file}", 'debug');
+                                    $blob_data = [
+                                        'content' => $content,
+                                        'encoding' => 'utf-8'
+                                    ];
+                                }
                             } else {
                                 // If not valid UTF-8 or mb_check_encoding not available, use base64 encoding instead
+                                wp_github_sync_log("File {$relative_path} is not valid UTF-8, using base64 encoding", 'debug');
                                 $blob_data = [
                                     'content' => base64_encode($content),
                                     'encoding' => 'base64'
@@ -641,6 +695,7 @@ class Repository_Uploader {
                             }
                         }
                         
+                        wp_github_sync_log("Creating blob for file: {$relative_path}", 'debug');
                         $blob = $this->api_client->request(
                             "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
                             'POST',
@@ -648,13 +703,49 @@ class Repository_Uploader {
                         );
                         
                         if (is_wp_error($blob)) {
-                            wp_github_sync_log("Failed to create blob for {$relative_path}: " . $blob->get_error_message(), 'error');
-                            $skipped_files[] = [
-                                'path' => $relative_path,
-                                'reason' => 'blob_creation_failed',
-                                'error' => $blob->get_error_message()
-                            ];
-                            continue;
+                            $error_message = $blob->get_error_message();
+                            wp_github_sync_log("Failed to create blob for {$relative_path}: " . $error_message, 'error');
+                            
+                            // Try once more with a different encoding
+                            if (strpos($error_message, 'encoding problem') !== false || 
+                                strpos($error_message, 'invalid encoding') !== false ||
+                                strpos($error_message, 'Bad Request') !== false ||
+                                $error_message === 'GitHub API error (400): Bad Request') {
+                                
+                                wp_github_sync_log("Retrying with base64 encoding due to encoding issue", 'debug');
+                                
+                                // Force base64 encoding for retry
+                                $retry_blob_data = [
+                                    'content' => base64_encode($content),
+                                    'encoding' => 'base64'
+                                ];
+                                
+                                $retry_blob = $this->api_client->request(
+                                    "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
+                                    'POST',
+                                    $retry_blob_data
+                                );
+                                
+                                if (!is_wp_error($retry_blob)) {
+                                    wp_github_sync_log("Retry successful with base64 encoding", 'info');
+                                    $blob = $retry_blob;
+                                } else {
+                                    wp_github_sync_log("Retry also failed: " . $retry_blob->get_error_message(), 'error');
+                                    $skipped_files[] = [
+                                        'path' => $relative_path,
+                                        'reason' => 'blob_creation_failed_on_retry',
+                                        'error' => $retry_blob->get_error_message()
+                                    ];
+                                    continue;
+                                }
+                            } else {
+                                $skipped_files[] = [
+                                    'path' => $relative_path,
+                                    'reason' => 'blob_creation_failed',
+                                    'error' => $error_message
+                                ];
+                                continue;
+                            }
                         }
                         
                         // Determine file mode (executable or regular file)
@@ -663,6 +754,7 @@ class Repository_Uploader {
                             $file_mode = '100755'; // Executable file
                         }
                         
+                        wp_github_sync_log("Adding tree item for {$relative_path} with SHA: {$blob['sha']}", 'debug');
                         $tree_items[] = [
                             'path' => $relative_path,
                             'mode' => $file_mode,
@@ -678,6 +770,7 @@ class Repository_Uploader {
                         }
                     } catch (\Exception $e) {
                         wp_github_sync_log("Error processing file {$relative_path}: " . $e->getMessage(), 'error');
+                        wp_github_sync_log("Exception stack trace: " . $e->getTraceAsString(), 'debug');
                         $skipped_files[] = [
                             'path' => $relative_path,
                             'reason' => 'exception',
@@ -691,6 +784,10 @@ class Repository_Uploader {
         
         // Process the directory
         $process_directory($directory);
+        
+        // Log summary of processed files
+        wp_github_sync_log("Total files processed: {$files_processed}, total size: " . round($total_size/1024/1024, 2) . "MB", 'info');
+        wp_github_sync_log("Tree items created: " . count($tree_items), 'info');
         
         // Log skipped files summary if any
         if (!empty($skipped_files)) {
@@ -716,6 +813,43 @@ class Repository_Uploader {
         }
         
         return $tree_items;
+    }
+    
+    /**
+     * List files in a directory recursively for debugging.
+     *
+     * @param string $dir The directory to list.
+     * @param string $prefix Prefix for indentation in recursive calls.
+     */
+    private function list_directory_recursive($dir, $prefix = '') {
+        if (!is_dir($dir)) {
+            wp_github_sync_log("Not a directory: {$dir}", 'warning');
+            return;
+        }
+        
+        $files = scandir($dir);
+        if ($files === false) {
+            wp_github_sync_log("Failed to scan directory: {$dir}", 'error');
+            return;
+        }
+        
+        wp_github_sync_log("{$prefix}Directory contents of {$dir}:", 'debug');
+        
+        foreach ($files as $file) {
+            if ($file == '.' || $file == '..') {
+                continue;
+            }
+            
+            $path = $dir . '/' . $file;
+            if (is_dir($path)) {
+                wp_github_sync_log("{$prefix}[DIR] {$file}/", 'debug');
+                $this->list_directory_recursive($path, $prefix . '  ');
+            } else {
+                $filesize = filesize($path);
+                $file_type = is_readable($path) ? "readable" : "not readable";
+                wp_github_sync_log("{$prefix}[FILE] {$file} ({$filesize} bytes, {$file_type})", 'debug');
+            }
+        }
     }
 
     /**

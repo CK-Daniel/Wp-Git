@@ -338,8 +338,8 @@ function run_initial_sync_test() {
     $wp_options = array();
     $wp_transients = array();
     
-    // Replace with your token and repo
-    $token = 'ghp_MOCK_TOKEN_FOR_TESTING_PURPOSES_ONLY_1234'; 
+    // Using the provided token and repo
+    $token = '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'; 
     $repo_url = 'https://github.com/CK-Daniel/kuper';
     $branch = 'main';
     

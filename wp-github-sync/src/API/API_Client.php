@@ -782,25 +782,38 @@ class API_Client {
         
         // Validate token format before attempting to use it
         $valid_token_format = false;
+        $token_type = 'unknown';
         
         if (strpos($this->token, 'github_pat_') === 0) {
             wp_github_sync_log("Token appears to be a fine-grained PAT", 'debug');
             $valid_token_format = true;
+            $token_type = 'fine_grained_pat';
         } else if (strpos($this->token, 'ghp_') === 0) {
             wp_github_sync_log("Token appears to be a classic PAT", 'debug');
             $valid_token_format = true;
+            $token_type = 'classic_pat';
         } else if (strpos($this->token, 'gho_') === 0) {
             wp_github_sync_log("Token appears to be an OAuth token", 'debug');
             $valid_token_format = true;
+            $token_type = 'oauth';
         } else if (strpos($this->token, 'ghs_') === 0) {
             wp_github_sync_log("Token appears to be a GitHub App token", 'debug');
             $valid_token_format = true;
+            $token_type = 'app_token';
         } else if (strlen($this->token) === 40 && ctype_xdigit($this->token)) {
             wp_github_sync_log("Token appears to be a classic PAT (40 char hex)", 'debug');
             $valid_token_format = true;
+            $token_type = 'classic_pat_hex';
         } else {
             wp_github_sync_log("Token format doesn't match known GitHub token patterns", 'warning');
             // Continue anyway, but log a warning - GitHub might accept other formats in the future
+        }
+        
+        // Clean the token of any potential whitespace or invisible characters
+        $cleaned_token = trim($this->token);
+        if ($cleaned_token !== $this->token) {
+            wp_github_sync_log("Token contained whitespace or invisible characters - cleaned", 'warning');
+            $this->token = $cleaned_token;
         }
         
         try {
@@ -932,7 +945,35 @@ class API_Client {
                     
                     wp_github_sync_log("Tried both 'Bearer' and 'token' auth formats - all failed", 'error');
                     
-                    return 'Invalid GitHub token (Bad credentials). Please check your token and make sure it has the necessary permissions. Ensure you\'re using a valid token format (e.g., github_pat_*, ghp_*, or a 40-character classic PAT).';
+                    // At this point all authorization formats have failed
+                    // Let's try once more with a new approach - try using just the token without any prefix
+                    wp_github_sync_log("Last attempt: trying with raw token, no prefix", 'debug');
+                    
+                    $raw_args = $args;
+                    $raw_args['headers']['Authorization'] = $this->token; // No Bearer or token prefix
+                    
+                    $raw_response = wp_remote_get($url, $raw_args);
+                    
+                    if (!is_wp_error($raw_response) && wp_remote_retrieve_response_code($raw_response) === 200) {
+                        wp_github_sync_log("Raw token auth succeeded!", 'info');
+                        $raw_data = json_decode(wp_remote_retrieve_body($raw_response), true);
+                        if (isset($raw_data['login'])) {
+                            wp_github_sync_log("Authenticated as: {$raw_data['login']}", 'info');
+                        }
+                        return true;
+                    } else {
+                        wp_github_sync_log("Raw token auth also failed", 'error');
+                    }
+                    
+                    // Check for token length issues
+                    if (strpos($this->token, 'ghp_') === 0) {
+                        $expected_length = 40;  // Classic PATs with ghp_ prefix should be around 40 chars
+                        if (strlen($this->token) > $expected_length + 5) {
+                            wp_github_sync_log("Token seems unusually long. May have extra characters.", 'warning');
+                        }
+                    }
+                    
+                    return 'Invalid GitHub token (Bad credentials). Please check your token and make sure it has the necessary permissions. Ensure you\'re using a valid token format (e.g., github_pat_*, ghp_*, or a 40-character classic PAT) and verify the token is valid by creating a new one with the "repo" scope in your GitHub settings.';
                 }
                 
                 return $error_message;
@@ -1305,13 +1346,29 @@ class API_Client {
         wp_github_sync_log("Initializing empty repository with README.md on branch: {$branch}", 'info');
         
         try {
+            // First check if repository and branch already exist
+            $repo_check = $this->get_repository();
+            if (!is_wp_error($repo_check)) {
+                wp_github_sync_log("Repository exists, checking if it's empty", 'debug');
+                
+                // Check if branch exists
+                $branch_check = $this->request("repos/{$this->owner}/{$this->repo}/branches/{$branch}");
+                
+                if (!is_wp_error($branch_check)) {
+                    wp_github_sync_log("Branch {$branch} already exists, no need to initialize", 'info');
+                    return $branch_check; // Branch exists, no need to initialize
+                }
+            }
+            
             // Create README content
             $site_name = get_bloginfo('name');
             $site_url = get_bloginfo('url');
             $readme_content = "# {$site_name}\n\nWordPress site synced with GitHub.\n\nSite URL: {$site_url}\n";
             
+            wp_github_sync_log("Creating README.md file to initialize repository", 'debug');
+            
             // Create README file using the contents API directly
-            return $this->request(
+            $result = $this->request(
                 "repos/{$this->owner}/{$this->repo}/contents/README.md",
                 'PUT',
                 [
@@ -1320,6 +1377,122 @@ class API_Client {
                     'branch' => $branch
                 ]
             );
+            
+            if (is_wp_error($result)) {
+                $error_message = $result->get_error_message();
+                wp_github_sync_log("Failed to create README.md: {$error_message}", 'error');
+                
+                // Try an alternative method if the direct approach fails
+                if (strpos($error_message, '404') !== false || 
+                    strpos($error_message, 'Not Found') !== false) {
+                    
+                    wp_github_sync_log("Trying alternative initialization method", 'info');
+                    
+                    // Try creating with Git Data API instead of Contents API
+                    // This follows GitHub's documented approach for creating a file in an empty repo
+                    
+                    // Step 1: Create a blob for README.md
+                    $blob = $this->request(
+                        "repos/{$this->owner}/{$this->repo}/git/blobs",
+                        'POST',
+                        [
+                            'content' => $readme_content,
+                            'encoding' => 'utf-8'
+                        ]
+                    );
+                    
+                    if (is_wp_error($blob)) {
+                        wp_github_sync_log("Failed to create blob: " . $blob->get_error_message(), 'error');
+                        
+                        // Try again with base64 encoding
+                        $blob = $this->request(
+                            "repos/{$this->owner}/{$this->repo}/git/blobs",
+                            'POST',
+                            [
+                                'content' => base64_encode($readme_content),
+                                'encoding' => 'base64'
+                            ]
+                        );
+                        
+                        if (is_wp_error($blob)) {
+                            wp_github_sync_log("Failed to create blob with base64 encoding: " . $blob->get_error_message(), 'error');
+                            return new \WP_Error('initialization_failed', __('Failed to initialize repository: could not create blob', 'wp-github-sync'));
+                        }
+                    }
+                    
+                    // Step 2: Create a tree with the blob
+                    $tree = $this->request(
+                        "repos/{$this->owner}/{$this->repo}/git/trees",
+                        'POST',
+                        [
+                            'tree' => [
+                                [
+                                    'path' => 'README.md',
+                                    'mode' => '100644',
+                                    'type' => 'blob',
+                                    'sha' => $blob['sha']
+                                ]
+                            ]
+                        ]
+                    );
+                    
+                    if (is_wp_error($tree)) {
+                        wp_github_sync_log("Failed to create tree: " . $tree->get_error_message(), 'error');
+                        return new \WP_Error('initialization_failed', __('Failed to initialize repository: could not create tree', 'wp-github-sync'));
+                    }
+                    
+                    // Step 3: Create a commit with the tree
+                    $commit = $this->request(
+                        "repos/{$this->owner}/{$this->repo}/git/commits",
+                        'POST',
+                        [
+                            'message' => 'Initial commit',
+                            'tree' => $tree['sha'],
+                            'parents' => [] // No parent for first commit
+                        ]
+                    );
+                    
+                    if (is_wp_error($commit)) {
+                        wp_github_sync_log("Failed to create commit: " . $commit->get_error_message(), 'error');
+                        return new \WP_Error('initialization_failed', __('Failed to initialize repository: could not create commit', 'wp-github-sync'));
+                    }
+                    
+                    // Step 4: Create or update the reference to the branch
+                    $reference = $this->request(
+                        "repos/{$this->owner}/{$this->repo}/git/refs/heads/{$branch}",
+                        'PATCH',
+                        [
+                            'sha' => $commit['sha'],
+                            'force' => true
+                        ]
+                    );
+                    
+                    // If the branch doesn't exist, PATCH will fail, so try creating it
+                    if (is_wp_error($reference)) {
+                        $reference = $this->request(
+                            "repos/{$this->owner}/{$this->repo}/git/refs",
+                            'POST',
+                            [
+                                'ref' => "refs/heads/{$branch}",
+                                'sha' => $commit['sha']
+                            ]
+                        );
+                    }
+                    
+                    if (is_wp_error($reference)) {
+                        wp_github_sync_log("Failed to create/update reference: " . $reference->get_error_message(), 'error');
+                        return new \WP_Error('initialization_failed', __('Failed to initialize repository: could not create branch reference', 'wp-github-sync'));
+                    }
+                    
+                    wp_github_sync_log("Repository initialization through Git Data API successful!", 'info');
+                    return $reference;
+                }
+                
+                return $result;
+            }
+            
+            wp_github_sync_log("Repository initialization successful!", 'info');
+            return $result;
         } catch (\Exception $e) {
             wp_github_sync_log("Exception during repository initialization: " . $e->getMessage(), 'error');
             return new \WP_Error('initialization_failed', __('Failed to initialize repository: ', 'wp-github-sync') . $e->getMessage());

@@ -236,8 +236,8 @@ function run_test() {
     // Reset global variables
     $wp_options = array();
     
-    // Set test configuration
-    $token = 'ghp_MOCK_TOKEN_FOR_TESTING_PURPOSES_ONLY_1234';
+    // Set test configuration with real token
+    $token = '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';
     $repo_url = 'https://github.com/CK-Daniel/kuper';
     
     // Setup options
