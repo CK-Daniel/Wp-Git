@@ -10,7 +10,7 @@
  */
 
 // Token to test - replace with your token
-$token = isset($argv[1]) ? $argv[1] : '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';
+$token = isset($argv[1]) ? $argv[1] : 'YOUR_GITHUB_TOKEN';
 $repo_url = isset($argv[2]) ? $argv[2] : 'https://github.com/CK-Daniel/kuper';
 
 echo "===== GitHub Token and Repository Test =====\n\n";

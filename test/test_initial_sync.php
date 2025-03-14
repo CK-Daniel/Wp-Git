@@ -339,7 +339,7 @@ function run_initial_sync_test() {
     $wp_transients = array();
     
     // Using the provided token and repo
-    $token = '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'; 
+    $token = 'YOUR_GITHUB_TOKEN'; // Replace with your token
     $repo_url = 'https://github.com/CK-Daniel/kuper';
     $branch = 'main';
     

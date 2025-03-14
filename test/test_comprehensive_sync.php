@@ -424,7 +424,7 @@ namespace {
         $wp_transients = array();
         
         // Test configuration
-        $token = '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';
+        $token = 'YOUR_GITHUB_TOKEN'; // Replace with your token
         $repo_url = 'https://github.com/CK-Daniel/kuper';
         $branch = 'main';
         

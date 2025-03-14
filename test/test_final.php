@@ -333,7 +333,7 @@ class GitHub_API_Client {
 // Main test function
 function run_test() {
     // Test configuration
-    $token = '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';  // Real token
+    $token = 'YOUR_GITHUB_TOKEN';  // Replace with your token
     $repo_url = 'https://github.com/CK-Daniel/kuper';    // Repository URL
     
     // Create the API client

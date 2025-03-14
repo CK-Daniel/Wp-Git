@@ -236,8 +236,8 @@ function run_test() {
     // Reset global variables
     $wp_options = array();
     
-    // Set test configuration with real token
-    $token = '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';
+    // Set test configuration
+    $token = 'YOUR_GITHUB_TOKEN'; // Replace with your token
     $repo_url = 'https://github.com/CK-Daniel/kuper';
     
     // Setup options
