@@ -1,86 +1,168 @@
-/* admin.css - Modern UI for WP GitHub Sync */
+/**
+ * WordPress GitHub Sync Admin Styles - Modern UI
+ * 
+ * A beautiful, modern dashboard for the GitHub Sync plugin
+ */
+
 :root {
+  /* Main Colors */
   --wp-github-primary: #2271b1;
-  --wp-github-secondary: #154973;
-  --wp-github-accent: #3498db;
+  --wp-github-secondary: #135e96;
+  --wp-github-accent: #3858e9;
   --wp-github-success: #00a32a;
   --wp-github-warning: #dba617;
   --wp-github-error: #d63638;
-  --wp-github-light: #f0f0f1;
-  --wp-github-border: #c3c4c7;
-  --wp-github-text: #1d2327;
+  --wp-github-text: #1e1e1e;
   --wp-github-text-light: #50575e;
-  --wp-github-card-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-  --wp-github-border-radius: 4px;
+  --wp-github-bg: #f0f0f1;
+  --wp-github-bg-dark: #1d2327;
+  --wp-github-card-bg: #fff;
+  --wp-github-border: #dcdcde;
+  
+  /* Specific Components */
+  --wp-github-button-hover: #135e96;
+  --wp-github-button-active: #0a4b78;
+  --wp-github-card-shadow: rgba(0, 0, 0, 0.04);
+  --wp-github-hover-bg: #f6f7f7;
+  --wp-github-border-radius: 8px;
+  
+  /* Transitions */
+  --wp-github-transition: all 0.2s ease-in-out;
 }
 
+/* Base Styles */
+.wp-github-sync,
 .wp-github-sync-wrap {
-  margin: 20px 20px 0 0;
+  margin: 20px 0;
+  color: var(--wp-github-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
   max-width: 1200px;
 }
 
+.wp-github-sync *,
+.wp-github-sync-wrap * {
+  box-sizing: border-box;
+}
+
+/* Header Styles */
 .wp-github-sync-header {
   display: flex;
   align-items: center;
-  margin-bottom: 20px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--wp-github-border);
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+  padding: 1.5rem;
+  background: linear-gradient(135deg, var(--wp-github-primary), var(--wp-github-secondary));
+  border-radius: var(--wp-github-border-radius);
+  color: white;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.wp-github-sync-header-content {
+  flex: 1;
 }
 
 .wp-github-sync-title {
-  font-size: 23px;
-  font-weight: 400;
   margin: 0;
-  padding: 0;
+  font-size: 1.8rem;
+  font-weight: 600;
+  color: white;
   line-height: 1.3;
 }
 
+.wp-github-sync-subtitle {
+  margin: 0.5rem 0 0;
+  font-size: 1rem;
+  opacity: 0.9;
+}
+
+.wp-github-sync-header-icon,
 .wp-github-sync-logo {
-  margin-right: 15px;
-  width: 40px;
-  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.15);
+  margin-left: 1.5rem;
+}
+
+.wp-github-sync-header-icon .dashicons,
+.wp-github-sync-logo .dashicons {
+  width: 30px;
+  height: 30px;
+  font-size: 30px;
 }
 
 .wp-github-sync-version {
-  color: var(--wp-github-text-light);
-  background: var(--wp-github-light);
-  padding: 3px 8px;
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  background-color: rgba(255, 255, 255, 0.2);
   border-radius: 3px;
-  font-size: 12px;
-  margin-left: 10px;
+  margin-left: 0.75rem;
+  color: white;
+}
+
+/* Layout */
+.wp-github-sync-content {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.wp-github-sync-sidebar {
+  flex: 0 0 300px;
+}
+
+.wp-github-sync-main {
+  flex: 1;
+}
+
+.wp-github-sync-settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
 }
 
 /* Card Component */
 .wp-github-sync-card {
-  background: #fff;
+  background-color: var(--wp-github-card-bg);
   border-radius: var(--wp-github-border-radius);
-  box-shadow: var(--wp-github-card-shadow);
-  margin-bottom: 20px;
+  box-shadow: 0 1px 3px var(--wp-github-card-shadow);
+  margin-bottom: 1.5rem;
   overflow: hidden;
+  transition: var(--wp-github-transition);
+}
+
+.wp-github-sync-card:hover {
+  box-shadow: 0 3px 8px var(--wp-github-card-shadow);
 }
 
 .wp-github-sync-card-header {
-  padding: 15px 20px;
+  padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--wp-github-border);
-  background: var(--wp-github-light);
 }
 
+.wp-github-sync-card-header h2,
 .wp-github-sync-card-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 1.2rem;
   font-weight: 600;
 }
 
 .wp-github-sync-card-content {
-  padding: 20px;
+  padding: 1.5rem;
 }
 
-.wp-github-sync-card-footer {
-  padding: 15px 20px;
-  border-top: 1px solid var(--wp-github-border);
-  background: var(--wp-github-light);
+.wp-github-sync-card-footer,
+.wp-github-sync-card-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 1rem 1.5rem;
+  background-color: var(--wp-github-bg);
+  border-top: 1px solid var(--wp-github-border);
 }
 
 /* Grid Layout */
@@ -90,32 +172,98 @@
   grid-gap: 20px;
 }
 
-/* Status Indicators */
-.wp-github-sync-status {
-  display: flex;
-  align-items: center;
-  padding: 10px 15px;
-  border-radius: var(--wp-github-border-radius);
-  margin-bottom: 15px;
+/* Help Card */
+.wp-github-sync-help-card {
+  background-color: #f8f9fa;
 }
 
-.wp-github-sync-status.success {
-  background-color: rgba(0, 163, 42, 0.1);
+.wp-github-sync-help-links {
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wp-github-sync-help-links li {
+  margin-bottom: 0.75rem;
+}
+
+.wp-github-sync-help-link {
+  display: flex;
+  align-items: center;
+  color: var(--wp-github-primary);
+  text-decoration: none;
+  font-weight: 500;
+  transition: var(--wp-github-transition);
+}
+
+.wp-github-sync-help-link:hover {
+  color: var(--wp-github-button-hover);
+}
+
+.wp-github-sync-help-link .dashicons {
+  margin-right: 0.5rem;
+}
+
+/* Status Card */
+.wp-github-sync-status-card .wp-github-sync-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Status Indicators */
+.wp-github-sync-status,
+.wp-github-sync-status-indicator {
+  display: flex;
+  align-items: center;
+  padding: 1rem;
+  border-radius: var(--wp-github-border-radius);
+  margin-bottom: 1rem;
+  font-weight: 500;
+}
+
+.wp-github-sync-status.success,
+.wp-github-sync-status-indicator.success {
+  background-color: #edfaef;
   color: var(--wp-github-success);
 }
 
-.wp-github-sync-status.error {
-  background-color: rgba(214, 54, 56, 0.1);
+.wp-github-sync-status.error,
+.wp-github-sync-status-indicator.error {
+  background-color: #fcf0f1;
   color: var(--wp-github-error);
 }
 
-.wp-github-sync-status.warning {
-  background-color: rgba(219, 166, 23, 0.1);
+.wp-github-sync-status.warning,
+.wp-github-sync-status-indicator.warning {
+  background-color: #fcf9e8;
   color: var(--wp-github-warning);
 }
 
-.wp-github-sync-status .dashicons {
-  margin-right: 10px;
+.wp-github-sync-status-indicator.pending {
+  background-color: #f0f6fc;
+  color: #72aee6;
+}
+
+.wp-github-sync-status-indicator.testing {
+  background-color: #f6f7f7;
+  color: var(--wp-github-text-light);
+}
+
+.wp-github-sync-status .dashicons,
+.wp-github-sync-status-indicator .dashicons {
+  margin-right: 0.75rem;
+  font-size: 24px;
+  width: 24px;
+  height: 24px;
+}
+
+.wp-github-sync-details {
+  margin-top: 1rem;
+}
+
+.wp-github-sync-details p {
+  margin: 0.5rem 0;
 }
 
 /* Button Styles */
@@ -123,89 +271,99 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 16px;
+  padding: 0.6rem 1.2rem;
   border-radius: var(--wp-github-border-radius);
-  border: 1px solid var(--wp-github-primary);
-  background: var(--wp-github-primary);
-  color: white;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 0.875rem;
+  font-weight: 500;
   text-decoration: none;
-  transition: all 0.2s ease;
+  cursor: pointer;
+  transition: var(--wp-github-transition);
 }
 
+.wp-github-sync-button.primary,
+.wp-github-sync-button {
+  background-color: var(--wp-github-primary);
+  color: white;
+  border: none;
+}
+
+.wp-github-sync-button.primary:hover,
 .wp-github-sync-button:hover {
-  background: var(--wp-github-secondary);
-  border-color: var(--wp-github-secondary);
+  background-color: var(--wp-github-button-hover);
   color: white;
+  text-decoration: none;
 }
 
+.wp-github-sync-button.primary:active,
+.wp-github-sync-button:active {
+  background-color: var(--wp-github-button-active);
+}
+
+.wp-github-sync-button.secondary,
 .wp-github-sync-button.outline {
-  background: transparent;
-  color: var(--wp-github-primary);
+  background-color: #f6f7f7;
+  color: var(--wp-github-text);
+  border: 1px solid var(--wp-github-border);
 }
 
+.wp-github-sync-button.secondary:hover,
 .wp-github-sync-button.outline:hover {
-  background: var(--wp-github-primary);
-  color: white;
+  background-color: #f0f0f1;
+  border-color: #c5c5c7;
+  color: var(--wp-github-text);
+}
+
+.wp-github-sync-button.secondary:active,
+.wp-github-sync-button.outline:active {
+  background-color: #eaeaeb;
+  border-color: #c5c5c7;
 }
 
 .wp-github-sync-button .dashicons {
-  margin-right: 5px;
-}
-
-/* Progress Bar */
-.wp-github-sync-progress {
-  height: 12px;
-  background: var(--wp-github-light);
-  border-radius: 6px;
-  overflow: hidden;
-  margin: 15px 0;
-}
-
-.wp-github-sync-progress-bar {
-  height: 100%;
-  background: var(--wp-github-primary);
-  transition: width 0.3s ease;
-}
-
-/* Commit List */
-.wp-github-sync-commits {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.wp-github-sync-commit {
-  padding: 15px 0;
-  border-bottom: 1px solid var(--wp-github-border);
-}
-
-.wp-github-sync-commit:last-child {
-  border-bottom: none;
-}
-
-.wp-github-sync-commit-message {
-  font-weight: 600;
-  margin-bottom: 5px;
-}
-
-.wp-github-sync-commit-meta {
-  display: flex;
-  font-size: 12px;
-  color: var(--wp-github-text-light);
-}
-
-.wp-github-sync-commit-author {
-  margin-right: 15px;
+  margin-right: 0.5rem;
+  font-size: 16px;
+  width: 16px;
+  height: 16px;
 }
 
 /* Tabs Component */
 .wp-github-sync-tabs {
-  margin-bottom: 20px;
+  display: flex;
+  border-bottom: 1px solid var(--wp-github-border);
+  margin: -1rem -1.5rem 1rem;
 }
 
+.wp-github-sync-tab {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 1.25rem;
+  font-weight: 500;
+  color: var(--wp-github-text-light);
+  cursor: pointer;
+  transition: var(--wp-github-transition);
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+}
+
+.wp-github-sync-tab:hover {
+  color: var(--wp-github-primary);
+  background-color: var(--wp-github-hover-bg);
+}
+
+.wp-github-sync-tab.active {
+  color: var(--wp-github-primary);
+  border-bottom-color: var(--wp-github-primary);
+  background-color: white;
+}
+
+.wp-github-sync-tab .dashicons {
+  margin-right: 0.5rem;
+  font-size: 16px;
+  width: 16px;
+  height: 16px;
+}
+
+/* Old Tabs - For backward compatibility */
 .wp-github-sync-tabs-nav {
   display: flex;
   border-bottom: 1px solid var(--wp-github-border);
@@ -233,71 +391,295 @@
   color: var(--wp-github-primary);
 }
 
+/* Tab Content */
+.wp-github-sync-tab-content,
+.tab-content,
 .wp-github-sync-tab-content {
   display: none;
-  padding: 20px 0;
 }
 
+.wp-github-sync-tab-content.active,
+.tab-content.active,
 .wp-github-sync-tab-content.active {
   display: block;
 }
 
-/* Timeline Component */
-.wp-github-sync-timeline {
-  margin: 30px 0;
-  position: relative;
+/* Progress Bar */
+.wp-github-sync-progress {
+  height: 8px;
+  background-color: #f0f0f1;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  overflow: hidden;
 }
 
-.wp-github-sync-timeline:before {
+.wp-github-sync-progress-bar {
+  height: 100%;
+  background-color: var(--wp-github-primary);
+  width: 0;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  animation: progress-animation 2s infinite ease-in-out;
+}
+
+.wp-github-sync-progress-message {
+  text-align: center;
+  color: var(--wp-github-text-light);
+  font-weight: 500;
+}
+
+@keyframes progress-animation {
+  0% {
+    width: 0%;
+  }
+  50% {
+    width: 70%;
+  }
+  100% {
+    width: 0%;
+  }
+}
+
+/* Form Styling */
+.wp-github-sync-settings-form {
+  margin: 0;
+}
+
+.wp-github-sync-settings-section {
+  margin-bottom: 2rem;
+}
+
+.wp-github-sync-settings-section h3 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--wp-github-border);
+}
+
+.wp-github-sync-field {
+  margin-bottom: 1.25rem;
+}
+
+.wp-github-sync-field label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.wp-github-sync-text-input,
+.wp-github-sync-select,
+.wp-github-sync-textarea {
+  width: 100%;
+  padding: 0.6rem;
+  border: 1px solid var(--wp-github-border);
+  border-radius: 4px;
+  font-size: 0.875rem;
+  transition: var(--wp-github-transition);
+}
+
+.wp-github-sync-text-input:focus,
+.wp-github-sync-select:focus,
+.wp-github-sync-textarea:focus {
+  border-color: var(--wp-github-primary);
+  box-shadow: 0 0 0 1px var(--wp-github-primary);
+  outline: none;
+}
+
+.wp-github-sync-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.wp-github-sync-radio-group label {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0;
+  cursor: pointer;
+}
+
+.wp-github-sync-radio-group input[type="radio"] {
+  margin-right: 0.5rem;
+}
+
+.wp-github-sync-checkbox {
+  margin-right: 0.5rem;
+}
+
+.wp-github-sync-textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.wp-github-sync-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--wp-github-border);
+}
+
+/* Toggle Switch */
+.wp-github-sync-toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 46px;
+  height: 24px;
+  margin-right: 0.75rem;
+}
+
+.wp-github-sync-toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.wp-github-sync-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 24px;
+}
+
+.wp-github-sync-toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+
+input:checked + .wp-github-sync-toggle-slider {
+  background-color: var(--wp-github-primary);
+}
+
+input:focus + .wp-github-sync-toggle-slider {
+  box-shadow: 0 0 1px var(--wp-github-primary);
+}
+
+input:checked + .wp-github-sync-toggle-slider:before {
+  transform: translateX(22px);
+}
+
+.wp-github-sync-toggle-option {
+  display: flex;
+  align-items: center;
+}
+
+/* Commit List */
+.wp-github-sync-commits {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wp-github-sync-commit {
+  padding: 15px 0;
+  border-bottom: 1px solid var(--wp-github-border);
+}
+
+.wp-github-sync-commit:last-child {
+  border-bottom: none;
+}
+
+.wp-github-sync-commit-message {
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+
+.wp-github-sync-commit-meta {
+  display: flex;
+  justify-content: space-between;
+  color: var(--wp-github-text-light);
+  font-size: 0.875rem;
+}
+
+.wp-github-sync-commit-author {
+  margin-right: 15px;
+}
+
+/* Timeline Component */
+.wp-github-sync-timeline {
+  position: relative;
+  padding-left: 2rem;
+}
+
+.wp-github-sync-timeline::before {
   content: '';
   position: absolute;
-  left: 20px;
   top: 0;
   bottom: 0;
+  left: 9px;
   width: 2px;
-  background: var(--wp-github-border);
+  background-color: var(--wp-github-border);
 }
 
 .wp-github-sync-timeline-item {
   position: relative;
-  margin-bottom: 30px;
-  padding-left: 60px;
+  margin-bottom: 1.5rem;
 }
 
 .wp-github-sync-timeline-dot {
   position: absolute;
-  left: 11px;
+  left: -2rem;
   top: 0;
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--wp-github-primary);
+  background-color: var(--wp-github-primary);
+  z-index: 1;
   border: 3px solid #fff;
   box-shadow: 0 0 0 1px var(--wp-github-border);
 }
 
 .wp-github-sync-timeline-dot.success {
-  background: var(--wp-github-success);
+  background-color: var(--wp-github-success);
 }
 
 .wp-github-sync-timeline-dot.error {
-  background: var(--wp-github-error);
+  background-color: var(--wp-github-error);
 }
 
 .wp-github-sync-timeline-content {
-  background: #fff;
-  padding: 15px;
-  border-radius: var(--wp-github-border-radius);
-  box-shadow: var(--wp-github-card-shadow);
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px var(--wp-github-card-shadow);
+  padding: 1rem;
 }
 
 .wp-github-sync-timeline-date {
-  font-size: 12px;
   color: var(--wp-github-text-light);
-  margin-bottom: 5px;
+  font-size: 0.875rem;
+  margin-bottom: 0.5rem;
 }
 
-/* Modal Component */
+.wp-github-sync-timeline-content h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+.wp-github-sync-timeline-content p {
+  margin: 0.5rem 0;
+}
+
+.wp-github-sync-timeline-actions {
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--wp-github-border);
+}
+
+/* Dialog / Modal */
+.wp-github-sync-dialog,
 .wp-github-sync-modal {
   display: none;
   position: fixed;
@@ -305,61 +687,60 @@
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 160000;
-  animation: wp-github-sync-fade-in 0.2s;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 9999;
+  justify-content: center;
+  align-items: center;
 }
 
+.wp-github-sync-dialog.open,
 .wp-github-sync-modal.active {
   display: flex;
 }
 
-.wp-github-sync-modal-backdrop {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-}
-
+.wp-github-sync-dialog-content,
 .wp-github-sync-modal-container {
-  position: relative;
-  margin: auto;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   width: 100%;
-  max-width: 600px;
+  max-width: 500px;
   max-height: 90vh;
-  background: #fff;
-  border-radius: var(--wp-github-border-radius);
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-  overflow: hidden;
+  overflow-y: auto;
+  animation: wp-github-sync-fade-in 0.2s;
   z-index: 160001;
 }
 
+.wp-github-sync-dialog-header,
 .wp-github-sync-modal-header {
-  padding: 15px 20px;
-  border-bottom: 1px solid var(--wp-github-border);
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--wp-github-border);
 }
 
+.wp-github-sync-dialog-header h3,
 .wp-github-sync-modal-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 1.2rem;
   font-weight: 600;
 }
 
+.wp-github-sync-dialog-close,
 .wp-github-sync-modal-close {
-  cursor: pointer;
-  border: none;
   background: none;
-  color: var(--wp-github-text-light);
-  font-size: 20px;
+  border: none;
+  cursor: pointer;
+  font-size: 1.5rem;
+  line-height: 1;
   padding: 0;
+  color: var(--wp-github-text-light);
 }
 
+.wp-github-sync-dialog-body,
 .wp-github-sync-modal-content {
-  padding: 20px;
+  padding: 1.5rem;
   max-height: calc(90vh - 130px);
   overflow-y: auto;
 }
@@ -376,25 +757,631 @@
   to { opacity: 1; }
 }
 
+/* Utility Classes */
+.wp-github-sync-info-box {
+  display: flex;
+  align-items: flex-start;
+  padding: 1rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+
+.wp-github-sync-info-box.info {
+  background-color: #f0f6fc;
+}
+
+.wp-github-sync-info-box.success {
+  background-color: #edfaef;
+}
+
+.wp-github-sync-info-box.warning {
+  background-color: #fcf9e8;
+}
+
+.wp-github-sync-info-box.error {
+  background-color: #fcf0f1;
+}
+
+.wp-github-sync-info-box-icon {
+  flex: 0 0 24px;
+  margin-right: 0.75rem;
+}
+
+.wp-github-sync-info-box-content {
+  flex: 1;
+}
+
+.wp-github-sync-info-box-title {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.wp-github-sync-info-box-message {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.wp-github-sync-spin {
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Empty State */
+.wp-github-sync-empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--wp-github-text-light);
+}
+
+.wp-github-sync-empty-state p {
+  margin: 0;
+}
+
+/* Initial Sync Card */
+.wp-github-sync-initial-sync-card {
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 1px 3px var(--wp-github-card-shadow);
+}
+
+.wp-github-sync-initial-sync-card h2 {
+  display: flex;
+  align-items: center;
+  margin: 0 0 1rem;
+  font-size: 1.2rem;
+}
+
+.wp-github-sync-initial-sync-card h2 .dashicons {
+  margin-right: 0.5rem;
+  color: var(--wp-github-primary);
+}
+
+.wp-github-sync-repo-creation {
+  margin: 1.5rem 0;
+}
+
+.wp-github-sync-option-group {
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: white;
+  border-radius: 6px;
+}
+
+.wp-github-sync-initial-sync-button {
+  margin-top: 1rem;
+}
+
+/* Actions list */
+.wp-github-sync-actions ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wp-github-sync-actions li {
+  margin-bottom: 0.75rem;
+}
+
+/* Enhanced Section Headers */
+.wp-github-sync-section-header {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--wp-github-border);
+}
+
+.wp-github-sync-section-header h3 {
+  display: flex;
+  align-items: center;
+  margin: 0 0 0.5rem;
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--wp-github-primary);
+}
+
+.wp-github-sync-section-header h3 .dashicons {
+  margin-right: 0.75rem;
+  width: 24px;
+  height: 24px;
+  font-size: 24px;
+}
+
+.wp-github-sync-section-description {
+  margin: 0.5rem 0 0;
+  color: var(--wp-github-text-light);
+  font-size: 0.95rem;
+}
+
+/* Field Groups and Grids */
+.wp-github-sync-field-group {
+  margin-bottom: 2rem;
+  padding: 0.5rem;
+  background-color: rgba(255, 255, 255, 0.5);
+  border-radius: var(--wp-github-border-radius);
+}
+
+.wp-github-sync-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+/* Enhanced Form Fields */
+.wp-github-sync-field {
+  margin-bottom: 1.5rem;
+  position: relative;
+}
+
+.wp-github-sync-field:last-child {
+  margin-bottom: 0;
+}
+
+.wp-github-sync-field.with-tooltip {
+  padding-right: 30px;
+}
+
+.wp-github-sync-label {
+  display: block;
+  margin-bottom: 0.6rem;
+  font-weight: 600;
+  color: var(--wp-github-text);
+}
+
+.wp-github-sync-label .required {
+  color: var(--wp-github-error);
+  margin-left: 0.25rem;
+}
+
+.wp-github-sync-input-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.wp-github-sync-input-wrapper {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background-color: white;
+  border: 1px solid var(--wp-github-border);
+  border-radius: 4px;
+  transition: var(--wp-github-transition);
+}
+
+.wp-github-sync-input-wrapper:focus-within {
+  border-color: var(--wp-github-primary);
+  box-shadow: 0 0 0 1px var(--wp-github-primary);
+}
+
+.wp-github-sync-input-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.5rem 0 0.75rem;
+  color: var(--wp-github-text-light);
+}
+
+.wp-github-sync-input-icon .dashicons {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+}
+
+.wp-github-sync-text-input,
+.wp-github-sync-number-input,
+.wp-github-sync-select {
+  flex: 1;
+  width: 100%;
+  padding: 0.75rem 0.5rem;
+  border: none;
+  background: transparent;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: var(--wp-github-text);
+  outline: none;
+}
+
+.wp-github-sync-input-wrapper.number {
+  max-width: 200px;
+}
+
+.wp-github-sync-input-suffix {
+  padding: 0 0.75rem 0 0.25rem;
+  color: var(--wp-github-text-light);
+  font-size: 0.8rem;
+}
+
+.wp-github-sync-textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--wp-github-border);
+  border-radius: 4px;
+  min-height: 100px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  transition: var(--wp-github-transition);
+}
+
+.wp-github-sync-textarea:focus {
+  border-color: var(--wp-github-primary);
+  box-shadow: 0 0 0 1px var(--wp-github-primary);
+  outline: none;
+}
+
+.wp-github-sync-field-description {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--wp-github-text-light);
+}
+
+.wp-github-sync-field-description.wp-github-sync-warning {
+  color: var(--wp-github-warning);
+  display: flex;
+  align-items: center;
+}
+
+.wp-github-sync-field-description.wp-github-sync-warning .dashicons {
+  margin-right: 0.5rem;
+  color: var(--wp-github-warning);
+}
+
+.wp-github-sync-warning-text {
+  color: var(--wp-github-warning);
+  font-weight: 500;
+}
+
+/* Password Visibility Toggle */
+.wp-github-sync-input-wrapper.password {
+  padding-right: 0;
+}
+
+.wp-github-sync-toggle-password {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem 0.75rem;
+  color: var(--wp-github-text-light);
+}
+
+.wp-github-sync-toggle-password:hover {
+  color: var(--wp-github-primary);
+}
+
+.wp-github-sync-toggle-password .dashicons {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+}
+
+/* Copy to Clipboard Button */
+.wp-github-sync-copy-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem 0.75rem;
+  color: var(--wp-github-text-light);
+}
+
+.wp-github-sync-copy-button:hover {
+  color: var(--wp-github-primary);
+}
+
+.wp-github-sync-copy-button .dashicons {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+}
+
+/* Toggle Switch */
+.wp-github-sync-toggle-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.wp-github-sync-toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 24px;
+}
+
+.wp-github-sync-toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.wp-github-sync-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 24px;
+}
+
+.wp-github-sync-toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+
+input:checked + .wp-github-sync-toggle-slider {
+  background-color: var(--wp-github-primary);
+}
+
+input:focus + .wp-github-sync-toggle-slider {
+  box-shadow: 0 0 1px var(--wp-github-primary);
+}
+
+input:checked + .wp-github-sync-toggle-slider:before {
+  transform: translateX(24px);
+}
+
+/* Toggle Tabs */
+.wp-github-sync-toggle-tabs {
+  display: flex;
+  border-radius: 4px;
+  border: 1px solid var(--wp-github-border);
+  overflow: hidden;
+  background-color: var(--wp-github-bg);
+}
+
+.wp-github-sync-toggle-tab {
+  flex: 1;
+  position: relative;
+  text-align: center;
+  transition: var(--wp-github-transition);
+}
+
+.wp-github-sync-toggle-tab input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.wp-github-sync-toggle-tab label {
+  display: block;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: var(--wp-github-transition);
+}
+
+.wp-github-sync-toggle-tab:not(:last-child) {
+  border-right: 1px solid var(--wp-github-border);
+}
+
+.wp-github-sync-toggle-tab:hover label {
+  background-color: var(--wp-github-hover-bg);
+  color: var(--wp-github-primary);
+}
+
+.wp-github-sync-toggle-tab.active {
+  background-color: var(--wp-github-primary);
+}
+
+.wp-github-sync-toggle-tab.active label {
+  color: white;
+  font-weight: 500;
+}
+
+/* Enhanced Tooltips */
+.wp-github-sync-tooltip {
+  position: relative;
+  margin-left: 0.75rem;
+  z-index: 10;
+}
+
+.wp-github-sync-tooltip .dashicons {
+  color: var(--wp-github-text-light);
+  cursor: pointer;
+  transition: var(--wp-github-transition);
+}
+
+.wp-github-sync-tooltip:hover .dashicons {
+  color: var(--wp-github-primary);
+}
+
+.wp-github-sync-tooltip-content {
+  display: none;
+  position: absolute;
+  top: -10px;
+  right: 30px;
+  min-width: 300px;
+  max-width: 400px;
+  background-color: white;
+  border-radius: 6px;
+  padding: 1rem;
+  box-shadow: 0 3px 15px rgba(0, 0, 0, 0.1);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--wp-github-text);
+  z-index: 100;
+}
+
+.wp-github-sync-tooltip:hover .wp-github-sync-tooltip-content {
+  display: block;
+  animation: tooltip-fade-in 0.2s ease-in-out;
+}
+
+.wp-github-sync-tooltip-content::after {
+  content: '';
+  position: absolute;
+  top: 15px;
+  right: -10px;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 10px 0 10px 10px;
+  border-color: transparent transparent transparent white;
+}
+
+.wp-github-sync-tooltip-content p {
+  margin: 0 0 0.75rem;
+}
+
+.wp-github-sync-tooltip-content p:last-child {
+  margin-bottom: 0;
+}
+
+.wp-github-sync-tooltip-content ol,
+.wp-github-sync-tooltip-content ul {
+  margin: 0.5rem 0 0.75rem 1.5rem;
+  padding: 0;
+}
+
+.wp-github-sync-tooltip-content li {
+  margin-bottom: 0.5rem;
+}
+
+@keyframes tooltip-fade-in {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Button Groups and Containers */
+.wp-github-sync-button-group {
+  margin-top: 1rem;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.wp-github-sync-button-container {
+  margin-top: 1.5rem;
+  display: flex;
+  justify-content: center;
+}
+
+/* Connection Test Styling */
+.wp-github-sync-connection-test {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--wp-github-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.wp-github-sync-connection-test-button {
+  min-width: 180px;
+}
+
+.wp-github-sync-connection-test-result {
+  width: 100%;
+  min-height: 44px;
+}
+
+/* Auth Method Fields */
+.wp-github-sync-auth-method-fields {
+  display: none;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background-color: rgba(255, 255, 255, 0.5);
+  border-radius: 6px;
+  border: 1px dashed var(--wp-github-border);
+}
+
+.wp-github-sync-auth-method-fields.active {
+  display: block;
+  animation: fade-in 0.3s ease-in-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Learn More Links */
+.wp-github-sync-learn-more {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.5rem;
+  color: var(--wp-github-primary);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+
+.wp-github-sync-learn-more:hover {
+  text-decoration: underline;
+}
+
+/* Regenerate Secret Button */
+.wp-github-sync-regenerate-button {
+  font-size: 0.8rem;
+  padding: 0.5rem 0.75rem;
+}
+
 /* Responsive Adjustments */
-@media screen and (max-width: 782px) {
+@media (max-width: 1200px) {
+  .wp-github-sync-content {
+    flex-direction: column;
+  }
+  
+  .wp-github-sync-sidebar {
+    flex: 0 0 auto;
+  }
+  
   .wp-github-sync-grid {
     grid-template-columns: 1fr;
   }
-  
+}
+
+@media (max-width: 782px) {
   .wp-github-sync-header {
     flex-direction: column;
-    align-items: flex-start;
+    text-align: center;
   }
   
+  .wp-github-sync-header-icon,
   .wp-github-sync-logo {
-    margin-bottom: 10px;
+    margin: 1rem auto 0;
   }
-
+  
+  .wp-github-sync-tabs {
+    flex-wrap: wrap;
+  }
+  
+  .wp-github-sync-tab {
+    flex: 1 0 auto;
+    padding: 0.6rem;
+    justify-content: center;
+  }
+  
   .wp-github-sync-tabs-nav {
     flex-wrap: wrap;
   }
-
+  
+  .wp-github-sync-form-actions {
+    flex-direction: column;
+  }
+  
+  .wp-github-sync-form-actions .wp-github-sync-button {
+    width: 100%;
+  }
+  
   .wp-github-sync-timeline:before {
     left: 15px;
   }

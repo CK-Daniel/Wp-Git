@@ -32,7 +32,7 @@
             });
             
             // Test connection button
-            $('.js-test-connection').on('click', function(e) {
+            $('.js-test-connection, #connection-test-button').on('click', function(e) {
                 e.preventDefault();
                 WpGitHubSync.testConnection();
             });
@@ -58,6 +58,110 @@
                 $('.wp-github-sync-advanced-settings').slideToggle();
                 $(this).find('.dashicons').toggleClass('dashicons-arrow-down dashicons-arrow-up');
             });
+            
+            // Toggle conditional fields based on checkboxes
+            $('#auto_sync').on('change', function() {
+                if ($(this).is(':checked')) {
+                    $('#sync_interval_container, #auto_deploy_container').slideDown(300);
+                } else {
+                    $('#sync_interval_container, #auto_deploy_container').slideUp(300);
+                }
+            });
+            
+            $('#auto_backup').on('change', function() {
+                if ($(this).is(':checked')) {
+                    $('#backup-options-container').slideDown(300);
+                } else {
+                    $('#backup-options-container').slideUp(300);
+                }
+            });
+            
+            $('#webhook_sync').on('change', function() {
+                if ($(this).is(':checked')) {
+                    $('#webhook-settings-container').slideDown(300);
+                } else {
+                    $('#webhook-settings-container').slideUp(300);
+                }
+            });
+            
+            // Authentication method tabs
+            $('.wp-github-sync-toggle-tab').on('click', function() {
+                var method = $(this).data('method');
+                
+                // Update active tab
+                $('.wp-github-sync-toggle-tab').removeClass('active');
+                $(this).addClass('active');
+                
+                // Show selected auth method fields
+                $('.wp-github-sync-auth-method-fields').removeClass('active');
+                $('.wp-github-sync-auth-method-fields.' + method).addClass('active');
+                
+                // Check the radio button
+                $(this).find('input[type="radio"]').prop('checked', true);
+            });
+            
+            // Password visibility toggle
+            $('.wp-github-sync-toggle-password').on('click', function() {
+                var $input = $(this).siblings('input');
+                var type = $input.attr('type') === 'password' ? 'text' : 'password';
+                $input.attr('type', type);
+                
+                // Toggle icon
+                $(this).find('.dashicons')
+                    .toggleClass('dashicons-visibility')
+                    .toggleClass('dashicons-hidden');
+            });
+            
+            // Copy to clipboard functionality
+            $('.wp-github-sync-copy-button').on('click', function() {
+                var targetId = $(this).data('clipboard-target');
+                var $target = $(targetId);
+                
+                if ($target.length > 0) {
+                    // Select the text
+                    $target.select();
+                    $target[0].setSelectionRange(0, 99999); // For mobile devices
+                    
+                    // Copy to clipboard
+                    document.execCommand('copy');
+                    
+                    // Visual feedback
+                    var $icon = $(this).find('.dashicons');
+                    $icon.removeClass('dashicons-clipboard').addClass('dashicons-yes');
+                    
+                    // Change back after 2 seconds
+                    setTimeout(function() {
+                        $icon.removeClass('dashicons-yes').addClass('dashicons-clipboard');
+                    }, 2000);
+                }
+            });
+            
+            // Generate new webhook secret
+            $('#regenerate-webhook-secret').on('click', function() {
+                // Generate a random string (16 bytes hex = 32 characters)
+                var randomBytes = new Uint8Array(16);
+                window.crypto.getRandomValues(randomBytes);
+                var secret = Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+                
+                // Set the value in the input field
+                $('#webhook_secret').val(secret);
+                
+                // Show the secret (change to text type)
+                $('#webhook_secret').attr('type', 'text');
+                $('#webhook_secret').siblings('.wp-github-sync-toggle-password')
+                    .find('.dashicons')
+                    .removeClass('dashicons-visibility')
+                    .addClass('dashicons-hidden');
+                
+                // Visual feedback
+                var $button = $(this);
+                $button.addClass('disabled').prop('disabled', true);
+                
+                // Re-enable after 2 seconds
+                setTimeout(function() {
+                    $button.removeClass('disabled').prop('disabled', false);
+                }, 2000);
+            });
         },
         
         initComponents: function() {
@@ -76,6 +180,7 @@
         },
         
         initTabs: function() {
+            // Legacy tabs support
             $('.wp-github-sync-tabs-nav a').on('click', function(e) {
                 e.preventDefault();
                 
@@ -95,13 +200,41 @@
                 }
             });
             
-            // Check for hash in URL
-            var hash = window.location.hash;
-            if (hash && $(hash).length > 0 && $(hash).hasClass('wp-github-sync-tab-content')) {
+            // Modern tabs support (used in settings page)
+            $('.wp-github-sync-tab').on('click', function() {
+                var tab = $(this).data('tab');
+                
+                // Update active tab
+                $('.wp-github-sync-tab').removeClass('active');
+                $(this).addClass('active');
+                
+                // Show/hide tab content
+                $('.tab-content').removeClass('active');
+                $('.tab-content[data-tab="' + tab + '"]').addClass('active');
+                
+                // Update URL hash
+                window.location.hash = tab;
+            });
+            
+            // Check for hash in URL for both tab styles
+            var hash = window.location.hash.replace('#', '');
+            
+            // Try modern tabs first
+            if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
+                $('.wp-github-sync-tab[data-tab="' + hash + '"]').trigger('click');
+            } 
+            // Try legacy tabs
+            else if (hash && $(hash).length > 0 && $(hash).hasClass('wp-github-sync-tab-content')) {
                 $('.wp-github-sync-tabs-nav a[href="' + hash + '"]').trigger('click');
-            } else {
-                // Activate first tab by default
-                $('.wp-github-sync-tabs-nav a:first').trigger('click');
+            } 
+            // Default behavior
+            else {
+                // Activate first tab by default (try both styles)
+                if ($('.wp-github-sync-tab').length) {
+                    $('.wp-github-sync-tab:first').trigger('click');
+                } else if ($('.wp-github-sync-tabs-nav a').length) {
+                    $('.wp-github-sync-tabs-nav a:first').trigger('click');
+                }
             }
         },
         
