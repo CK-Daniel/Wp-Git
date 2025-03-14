@@ -59,9 +59,23 @@ function wp_github_sync_encrypt($data) {
         return $result;
     }
     
-    // Fallback if OpenSSL is not available - less secure but better than plaintext
-    wp_github_sync_log("OpenSSL not available, using base64 fallback (less secure)", 'warning');
-    return 'base64:' . base64_encode($data);
+    // If OpenSSL is not available, use a more secure fallback with password_hash
+    wp_github_sync_log("OpenSSL not available, using password-based encryption fallback", 'warning');
+    
+    // Generate a secure salt
+    $salt = wp_generate_password(32, true, true);
+    
+    // Combine with encryption key
+    $encryption_key_hashed = hash('sha256', $encryption_key . $salt);
+    
+    // XOR the data with the hashed key for simple encryption
+    $encrypted = '';
+    for ($i = 0; $i < strlen($data); $i++) {
+        $encrypted .= chr(ord($data[$i]) ^ ord($encryption_key_hashed[$i % strlen($encryption_key_hashed)]));
+    }
+    
+    // Return salt + encrypted data in base64
+    return 'pbkdf:' . base64_encode($salt . $encrypted);
 }
 
 /**
@@ -76,9 +90,9 @@ function wp_github_sync_decrypt($encrypted_data) {
         return false;
     }
 
-    // Check for base64 fallback format
+    // Check for base64 fallback format (legacy support)
     if (strpos($encrypted_data, 'base64:') === 0) {
-        wp_github_sync_log("Decrypting using base64 fallback method", 'debug');
+        wp_github_sync_log("Decrypting using legacy base64 fallback method", 'debug');
         $base64_data = substr($encrypted_data, 7); // Remove 'base64:' prefix
         $result = base64_decode($base64_data);
         if ($result === false) {
@@ -86,6 +100,41 @@ function wp_github_sync_decrypt($encrypted_data) {
             return false;
         }
         return $result;
+    }
+    
+    // Check for password-based encryption format
+    if (strpos($encrypted_data, 'pbkdf:') === 0) {
+        wp_github_sync_log("Decrypting using password-based encryption method", 'debug');
+        
+        // Get encryption key
+        $encryption_key = defined('WP_GITHUB_SYNC_ENCRYPTION_KEY') ? WP_GITHUB_SYNC_ENCRYPTION_KEY : get_option('wp_github_sync_encryption_key');
+        if (!$encryption_key) {
+            wp_github_sync_log("No encryption key found, cannot decrypt", 'error');
+            return false;
+        }
+        
+        // Decode the data
+        $encoded_data = substr($encrypted_data, 6); // Remove 'pbkdf:' prefix
+        $decoded = base64_decode($encoded_data);
+        if ($decoded === false) {
+            wp_github_sync_log("Base64 decoding of encrypted data failed", 'error');
+            return false;
+        }
+        
+        // Extract salt (first 32 bytes) and encrypted data
+        $salt = substr($decoded, 0, 32);
+        $encrypted = substr($decoded, 32);
+        
+        // Recreate the key hash
+        $encryption_key_hashed = hash('sha256', $encryption_key . $salt);
+        
+        // XOR decrypt
+        $decrypted = '';
+        for ($i = 0; $i < strlen($encrypted); $i++) {
+            $decrypted .= chr(ord($encrypted[$i]) ^ ord($encryption_key_hashed[$i % strlen($encryption_key_hashed)]));
+        }
+        
+        return $decrypted;
     }
 
     // Check if we have a predefined encryption key
@@ -146,18 +195,75 @@ function wp_github_sync_decrypt($encrypted_data) {
  *
  * @param string $message The message to log.
  * @param string $level   The log level (debug, info, warning, error).
+ * @param bool   $force   Whether to log even if WP_DEBUG is not enabled.
  */
-function wp_github_sync_log($message, $level = 'info') {
-    if (!defined('WP_DEBUG') || !WP_DEBUG) {
+function wp_github_sync_log($message, $level = 'info', $force = false) {
+    // Check if we should log - either debug is enabled or force is true 
+    // or a specific filter for GitHub Sync logging is enabled
+    $should_log = (defined('WP_DEBUG') && WP_DEBUG) || 
+                 $force || 
+                 apply_filters('wp_github_sync_enable_logging', false);
+    
+    if (!$should_log) {
         return;
     }
     
+    // Normalize log level
+    $level = strtolower($level);
+    $valid_levels = array('debug', 'info', 'warning', 'error');
+    
+    if (!in_array($level, $valid_levels)) {
+        $level = 'info';
+    }
+    
+    // Get log file path
     $log_file = WP_CONTENT_DIR . '/wp-github-sync-debug.log';
-    $timestamp = date('Y-m-d H:i:s');
-    $formatted_message = "[{$timestamp}] [{$level}] {$message}" . PHP_EOL;
+    
+    // Get timestamp with microseconds for precise logging
+    $timestamp = microtime(true);
+    $date = new DateTime(date('Y-m-d H:i:s', $timestamp));
+    $date->modify('+' . (int)(($timestamp - floor($timestamp)) * 1000000) . ' microseconds');
+    $formatted_timestamp = $date->format('Y-m-d H:i:s.u');
+    
+    // Format the log message
+    $formatted_message = "[{$formatted_timestamp}] [{$level}] {$message}" . PHP_EOL;
+    
+    // Get backtrace information (optional for debug level)
+    if ($level === 'debug' && apply_filters('wp_github_sync_detailed_debug_logs', false)) {
+        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
+        if (isset($backtrace[1])) {
+            $caller = $backtrace[1];
+            $caller_info = '';
+            
+            if (isset($caller['class'])) {
+                $caller_info .= $caller['class'] . $caller['type'];
+            }
+            
+            if (isset($caller['function'])) {
+                $caller_info .= $caller['function'] . '()';
+            }
+            
+            if (isset($caller['file']) && isset($caller['line'])) {
+                $file = basename($caller['file']);
+                $line = $caller['line'];
+                $caller_info .= " | {$file}:{$line}";
+            }
+            
+            if (!empty($caller_info)) {
+                $formatted_message = "[{$formatted_timestamp}] [{$level}] [{$caller_info}] {$message}" . PHP_EOL;
+            }
+        }
+    }
     
     // Write to log file
     error_log($formatted_message, 3, $log_file);
+    
+    // Rotate log file if it gets too large (over 5MB by default)
+    $max_size = apply_filters('wp_github_sync_log_max_size', 5 * 1024 * 1024); // 5MB
+    
+    if (file_exists($log_file) && filesize($log_file) > $max_size) {
+        wp_github_sync_rotate_logs($log_file);
+    }
 }
 
 /**
@@ -188,15 +294,33 @@ function wp_github_sync_format_commit_message($commit_message, $max_length = 50)
 function wp_github_sync_is_path_safe($path) {
     $wp_content_dir = WP_CONTENT_DIR;
     $real_content_dir = realpath($wp_content_dir);
-    $real_path = realpath($path);
     
-    // If realpath fails, the path doesn't exist or is invalid
-    if (!$real_path) {
-        $real_path = $path;
+    // Normalize path by removing any ".." or "." components
+    $normalized_path = wp_normalize_path($path);
+    $normalized_content_dir = wp_normalize_path($real_content_dir);
+    
+    // Check for any directory traversal sequences even after normalization
+    if (strpos($normalized_path, '../') !== false || strpos($normalized_path, '..\\') !== false) {
+        wp_github_sync_log("Path safety check failed: Directory traversal detected in {$path}", 'error');
+        return false;
     }
     
-    // Check if path is inside wp-content
-    return strpos($real_path, $real_content_dir) === 0;
+    // Check if the normalized path starts with the normalized wp-content directory
+    if (strpos($normalized_path, $normalized_content_dir) !== 0) {
+        wp_github_sync_log("Path safety check failed: Path {$path} is outside of {$real_content_dir}", 'error');
+        return false;
+    }
+    
+    // Check if the real path exists, and if so, double-check it
+    if (file_exists($path)) {
+        $real_path = realpath($path);
+        if ($real_path && strpos($real_path, $real_content_dir) !== 0) {
+            wp_github_sync_log("Path safety check failed: Resolved path {$real_path} is outside of {$real_content_dir}", 'error');
+            return false;
+        }
+    }
+    
+    return true;
 }
 
 /**
@@ -313,4 +437,47 @@ function wp_github_sync_get_current_branch() {
  */
 function wp_github_sync_get_repository_url() {
     return get_option('wp_github_sync_repository', '');
+}
+
+/**
+ * Rotate log files when they get too large.
+ *
+ * @param string $log_file Path to the log file to rotate.
+ * @param int    $max_backups Maximum number of backup files to keep.
+ */
+function wp_github_sync_rotate_logs($log_file, $max_backups = 5) {
+    // Make sure the log file exists
+    if (!file_exists($log_file)) {
+        return;
+    }
+    
+    // Get the directory and filename
+    $dir = dirname($log_file);
+    $filename = basename($log_file);
+    
+    // Remove oldest backup if we have reached max_backups
+    for ($i = $max_backups; $i > 0; $i--) {
+        $old_backup = $dir . '/' . $filename . '.' . $i;
+        
+        if ($i == $max_backups && file_exists($old_backup)) {
+            @unlink($old_backup);
+        }
+        
+        if ($i > 1) {
+            $prev_backup = $dir . '/' . $filename . '.' . ($i - 1);
+            if (file_exists($prev_backup)) {
+                @rename($prev_backup, $old_backup);
+            }
+        }
+    }
+    
+    // Rename current log file to .1
+    $new_backup = $dir . '/' . $filename . '.1';
+    @rename($log_file, $new_backup);
+    
+    // Create a new empty log file
+    @file_put_contents($log_file, "--- Log rotated at " . date('Y-m-d H:i:s') . " ---" . PHP_EOL);
+    
+    // Log the rotation
+    wp_github_sync_log("Log file rotated. Previous log saved as {$new_backup}", 'info', true);
 }

@@ -342,7 +342,7 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                     action: 'wp_github_sync_initial_sync',
                     create_new_repo: createNewRepo ? 1 : 0,
                     repo_name: repoName,
-                    nonce: '<?php echo wp_create_nonce('wp_github_sync_initial_sync'); ?>'
+                    nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce provided by the Admin class
                 },
                 success: function(response) {
                     if (response.success) {

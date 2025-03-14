@@ -136,7 +136,7 @@
                     action: 'wp_github_sync_initial_sync',
                     create_new_repo: createNewRepo ? 1 : 0,
                     repo_name: repoName,
-                    nonce: wpGitHubSync.nonce
+                    nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce for initial sync
                 },
                 success: function(response) {
                     if (response.success) {

@@ -85,7 +85,14 @@ class API_Client {
                         $this->token = $decrypted;
                         wp_github_sync_log("Successfully decrypted PAT token", 'debug');
                     } else {
-                        wp_github_sync_log("Failed to decrypt PAT token", 'error');
+                        wp_github_sync_log("Failed to decrypt PAT token, clearing invalid token", 'error');
+                        // Clear the invalid token to force re-authentication
+                        update_option('wp_github_sync_access_token', '');
+                        add_action('admin_notices', function() {
+                            echo '<div class="notice notice-error is-dismissible">';
+                            echo '<p>' . esc_html__('GitHub Sync token could not be decrypted. Please re-enter your GitHub token in the settings.', 'wp-github-sync') . '</p>';
+                            echo '</div>';
+                        });
                     }
                 } else {
                     wp_github_sync_log("No PAT token found in options", 'error');
@@ -99,7 +106,14 @@ class API_Client {
                         $this->token = $decrypted;
                         wp_github_sync_log("Successfully decrypted OAuth token", 'debug');
                     } else {
-                        wp_github_sync_log("Failed to decrypt OAuth token", 'error');
+                        wp_github_sync_log("Failed to decrypt OAuth token, clearing invalid token", 'error');
+                        // Clear the invalid token to force re-authentication
+                        update_option('wp_github_sync_oauth_token', '');
+                        add_action('admin_notices', function() {
+                            echo '<div class="notice notice-error is-dismissible">';
+                            echo '<p>' . esc_html__('GitHub Sync OAuth token could not be decrypted. Please reconnect your GitHub account in the settings.', 'wp-github-sync') . '</p>';
+                            echo '</div>';
+                        });
                     }
                 } else {
                     wp_github_sync_log("No OAuth token found in options", 'error');
@@ -197,6 +211,26 @@ class API_Client {
             return new \WP_Error('github_api_no_token', __('No GitHub authentication token available. Please check your settings.', 'wp-github-sync'));
         }
         
+        // Check rate limits before making a request (except for rate_limit endpoint itself)
+        if ($endpoint !== 'rate_limit') {
+            $rate_limit_wait = $this->check_rate_limits();
+            if ($rate_limit_wait) {
+                // If we're too close to the limit, either wait or return an error
+                if ($rate_limit_wait > 60) {
+                    // If wait time is too long, just return an error
+                    $reset_time = date('H:i:s', time() + $rate_limit_wait);
+                    return new \WP_Error(
+                        'github_api_rate_limit',
+                        sprintf(__('GitHub API rate limit reached. Please try again after %s.', 'wp-github-sync'), $reset_time)
+                    );
+                } else {
+                    // For shorter wait times, pause before continuing
+                    wp_github_sync_log("Pausing for {$rate_limit_wait} seconds to avoid rate limits", 'info');
+                    sleep(min(5, $rate_limit_wait)); // Wait up to 5 seconds maximum
+                }
+            }
+        }
+        
         // Check if this endpoint requires owner/repo information
         if (strpos($endpoint, 'repos/') === 0 && (empty($this->owner) || empty($this->repo))) {
             wp_github_sync_log("API request failed: Missing owner/repo for endpoint: {$endpoint}", 'error');
@@ -242,16 +276,35 @@ class API_Client {
         $response_body = wp_remote_retrieve_body($response);
         $response_data = json_decode($response_body, true);
         
-        // Log rate limit information
+        // Handle and log rate limit information
         $rate_limit_remaining = wp_remote_retrieve_header($response, 'x-ratelimit-remaining');
+        $rate_limit_reset = wp_remote_retrieve_header($response, 'x-ratelimit-reset');
+        
         if ($rate_limit_remaining !== '') {
-            wp_github_sync_log(
-                sprintf(
-                    'GitHub API rate limit: %s remaining',
-                    $rate_limit_remaining
-                ),
-                'debug'
-            );
+            // Store the rate limit info
+            update_option('wp_github_sync_rate_limit_remaining', $rate_limit_remaining);
+            
+            $rate_limit_message = sprintf('GitHub API rate limit: %s remaining', $rate_limit_remaining);
+            
+            // If rate limit is getting low, log at warning level
+            if ($rate_limit_remaining < 10) {
+                wp_github_sync_log($rate_limit_message, 'warning');
+                
+                // Also log when the rate limit will reset
+                if ($rate_limit_reset !== '') {
+                    $reset_time = date('Y-m-d H:i:s', (int)$rate_limit_reset);
+                    wp_github_sync_log(sprintf('Rate limit will reset at: %s', $reset_time), 'warning');
+                }
+                
+                // If very low, pause for a while to avoid hitting limits
+                if ($rate_limit_remaining < 3 && $endpoint !== 'rate_limit') {
+                    $sleep_seconds = 2;
+                    wp_github_sync_log(sprintf('Rate limit critical, pausing requests for %d seconds', $sleep_seconds), 'warning');
+                    sleep($sleep_seconds);
+                }
+            } else {
+                wp_github_sync_log($rate_limit_message, 'debug');
+            }
         }
         
         // Check for API errors
@@ -304,9 +357,12 @@ class API_Client {
      * @param int    $count  The number of commits to fetch.
      * @return array|\WP_Error List of commits or WP_Error on failure.
      */
-    public function get_commits($branch = 'main', $count = 10) {
+    public function get_commits($branch = '', $count = 10) {
+        // Use provided branch or get default branch
+        $branchToUse = !empty($branch) ? $branch : $this->get_default_branch();
+        
         return $this->request("repos/{$this->owner}/{$this->repo}/commits", 'GET', [
-            'sha' => $branch,
+            'sha' => $branchToUse,
             'per_page' => $count,
         ]);
     }
@@ -317,7 +373,7 @@ class API_Client {
      * @param string $branch The branch name.
      * @return array|\WP_Error Commit data or WP_Error on failure.
      */
-    public function get_latest_commit($branch = 'main') {
+    public function get_latest_commit($branch = '') {
         $commits = $this->get_commits($branch, 1);
         
         if (is_wp_error($commits)) {
@@ -338,9 +394,12 @@ class API_Client {
      * @param string $ref  The branch or commit reference.
      * @return array|\WP_Error File contents or WP_Error on failure.
      */
-    public function get_contents($path, $ref = 'main') {
+    public function get_contents($path, $ref = '') {
+        // Use provided ref or get default branch
+        $refToUse = !empty($ref) ? $ref : $this->get_default_branch();
+        
         return $this->request("repos/{$this->owner}/{$this->repo}/contents/{$path}", 'GET', [
-            'ref' => $ref,
+            'ref' => $refToUse,
         ]);
     }
 
@@ -350,8 +409,11 @@ class API_Client {
      * @param string $ref The branch or commit reference.
      * @return string The download URL.
      */
-    public function get_archive_url($ref = 'main') {
-        return "https://api.github.com/repos/{$this->owner}/{$this->repo}/zipball/{$ref}";
+    public function get_archive_url($ref = '') {
+        // Use provided ref or get default branch
+        $refToUse = !empty($ref) ? $ref : $this->get_default_branch();
+        
+        return "https://api.github.com/repos/{$this->owner}/{$this->repo}/zipball/{$refToUse}";
     }
 
     /**
@@ -473,7 +535,9 @@ class API_Client {
      * @param string $default_branch Optional. The default branch name. Default 'main'.
      * @return array|\WP_Error Repository data or WP_Error on failure.
      */
-    public function create_repository($repo_name, $description = '', $private = false, $auto_init = true, $default_branch = 'main') {
+    public function create_repository($repo_name, $description = '', $private = false, $auto_init = true, $default_branch = '') {
+        // If default_branch is empty, use a common default
+        $default_branch = !empty($default_branch) ? $default_branch : 'main';
         if (empty($this->token)) {
             return new \WP_Error('github_api_not_configured', __('GitHub API token is not configured.', 'wp-github-sync'));
         }
@@ -544,5 +608,68 @@ class API_Client {
      */
     public function get_repo() {
         return $this->repo;
+    }
+    
+    /**
+     * Check if we're close to hitting rate limits and should wait before making more requests.
+     * 
+     * @return bool|int False if rate limits are fine, or seconds to wait if limits are low
+     */
+    public function check_rate_limits() {
+        // First check if we have rate limit info cached
+        $rate_limit_remaining = get_option('wp_github_sync_rate_limit_remaining', false);
+        $rate_limit_reset = get_option('wp_github_sync_rate_limit_reset', false);
+        
+        // If we don't have cached info or we need fresh data
+        if ($rate_limit_remaining === false || $rate_limit_remaining < 5) {
+            // Make a direct request to get rate limit info
+            $result = $this->request('rate_limit');
+            
+            if (!is_wp_error($result) && isset($result['resources']['core'])) {
+                $rate_limit_remaining = $result['resources']['core']['remaining'];
+                $rate_limit_reset = $result['resources']['core']['reset'];
+                
+                // Update our cached values
+                update_option('wp_github_sync_rate_limit_remaining', $rate_limit_remaining);
+                update_option('wp_github_sync_rate_limit_reset', $rate_limit_reset);
+            }
+        }
+        
+        // If rate limit is critically low, calculate wait time
+        if ($rate_limit_remaining !== false && $rate_limit_remaining < 3) {
+            wp_github_sync_log("Rate limit critically low: {$rate_limit_remaining} remaining", 'warning');
+            
+            // If we have reset time, calculate how long to wait
+            if ($rate_limit_reset !== false) {
+                $now = time();
+                $wait_time = $rate_limit_reset - $now;
+                
+                // If reset is in the future, suggest waiting
+                if ($wait_time > 0) {
+                    wp_github_sync_log("Rate limit will reset in {$wait_time} seconds", 'warning');
+                    return $wait_time;
+                }
+            }
+            
+            // Default wait time if we can't determine exact time
+            return 60;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Get the default branch for a repository.
+     *
+     * @return string The default branch (e.g., 'main' or 'master').
+     */
+    public function get_default_branch() {
+        $repo_info = $this->get_repository();
+        
+        if (is_wp_error($repo_info) || !isset($repo_info['default_branch'])) {
+            return 'main'; // Default fallback
+        }
+        
+        return $repo_info['default_branch'];
     }
 }

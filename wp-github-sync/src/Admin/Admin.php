@@ -110,6 +110,7 @@ class Admin {
                 'ajaxUrl' => admin_url('admin-ajax.php'),
                 'adminUrl' => admin_url(),
                 'nonce' => wp_create_nonce('wp_github_sync_nonce'),
+                'initialSyncNonce' => wp_create_nonce('wp_github_sync_initial_sync'), // Added specific nonce for initial sync
                 'strings' => array(
                     'confirmDeploy' => __('Are you sure you want to deploy the latest changes from GitHub? This will update your site files.', 'wp-github-sync'),
                     'confirmSwitchBranch' => __('Are you sure you want to switch branches? This will update your site files to match the selected branch.', 'wp-github-sync'),
@@ -166,6 +167,16 @@ class Admin {
             'manage_options',
             'wp-github-sync-history',
             array($this, 'display_history_page')
+        );
+        
+        // Logs submenu
+        add_submenu_page(
+            'wp-github-sync',
+            __('Logs', 'wp-github-sync'),
+            __('Logs', 'wp-github-sync'),
+            'manage_options',
+            'wp-github-sync-logs',
+            array($this, 'display_logs_page')
         );
     }
 
@@ -241,6 +252,333 @@ class Admin {
         }
         
         include WP_GITHUB_SYNC_DIR . 'admin/templates/history-page.php';
+    }
+    
+    /**
+     * Display the logs page.
+     */
+    public function display_logs_page() {
+        // Check if wp_github_sync_log function exists
+        if (!function_exists('wp_github_sync_log')) {
+            wp_die(__('Required functions are missing. Please make sure the plugin is correctly installed.', 'wp-github-sync'));
+        }
+        
+        // Verify user has permission
+        if (!wp_github_sync_current_user_can()) {
+            wp_die(__('You do not have sufficient permissions to access this page.', 'wp-github-sync'));
+        }
+        
+        // Handle log actions
+        $this->handle_log_actions();
+        
+        // Get log file path
+        $log_file = WP_CONTENT_DIR . '/wp-github-sync-debug.log';
+        $logs = array();
+        $log_file_size = 0;
+        $log_level_filter = isset($_GET['level']) ? sanitize_text_field($_GET['level']) : '';
+        $search_query = isset($_GET['search']) ? sanitize_text_field($_GET['search']) : '';
+        
+        // Validate log level filter if provided
+        $valid_levels = array('debug', 'info', 'warning', 'error');
+        if (!empty($log_level_filter) && !in_array($log_level_filter, $valid_levels)) {
+            $log_level_filter = '';
+        }
+        
+        // Check if log file exists and is readable
+        if (file_exists($log_file) && is_readable($log_file)) {
+            // Get file size
+            $file_size = filesize($log_file);
+            $log_file_size = size_format($file_size);
+            
+            // Check if file is too large to process entirely
+            $max_size = apply_filters('wp_github_sync_max_log_size', 5 * 1024 * 1024); // 5MB default
+            
+            try {
+                if ($file_size > $max_size) {
+                    // For large files, read only the last portion
+                    $log_content = $this->read_last_lines($log_file, 1000);
+                    
+                    // Add a notice that we're only showing partial logs
+                    add_settings_error(
+                        'wp_github_sync',
+                        'logs_truncated',
+                        sprintf(__('Log file is large (%s). Only showing the last 1000 entries.', 'wp-github-sync'), $log_file_size),
+                        'info'
+                    );
+                } else {
+                    // Read the entire log file
+                    $log_content = file_get_contents($log_file);
+                }
+                
+                // Parse log entries
+                if (!empty($log_content)) {
+                    $log_lines = explode(PHP_EOL, $log_content);
+                    
+                    // Process each log line
+                    foreach ($log_lines as $line) {
+                        if (empty(trim($line))) {
+                            continue;
+                        }
+                        
+                        // Parse log entry
+                        // Format: [2023-01-01 12:00:00] [level] Message
+                        if (preg_match('/\[(.*?)\] \[(.*?)\] (.*)/', $line, $matches)) {
+                            $timestamp = $matches[1];
+                            $level = strtolower($matches[2]);
+                            $message = $matches[3];
+                            
+                            // Validate log level
+                            if (!in_array($level, $valid_levels)) {
+                                $level = 'info'; // Default to info for invalid levels
+                            }
+                            
+                            // Apply filters
+                            if (!empty($log_level_filter) && $level !== $log_level_filter) {
+                                continue;
+                            }
+                            
+                            if (!empty($search_query) && stripos($message, $search_query) === false) {
+                                continue;
+                            }
+                            
+                            // Add to logs array with sanitized values
+                            $logs[] = array(
+                                'timestamp' => $timestamp,
+                                'level' => $level,
+                                'message' => $message,
+                            );
+                        }
+                    }
+                    
+                    // Reverse array to show newest logs first
+                    $logs = array_reverse($logs);
+                }
+            } catch (Exception $e) {
+                // Log the error and show a message
+                error_log('WP GitHub Sync: Error reading log file - ' . $e->getMessage());
+                add_settings_error(
+                    'wp_github_sync',
+                    'logs_error',
+                    __('Error reading log file. Check PHP error log for details.', 'wp-github-sync'),
+                    'error'
+                );
+            }
+        }
+        
+        include WP_GITHUB_SYNC_DIR . 'admin/templates/logs-page.php';
+    }
+    
+    /**
+     * Read the last N lines of a file.
+     * 
+     * @param string $file_path Path to the file
+     * @param int    $lines     Number of lines to read from end
+     * @return string The last N lines of the file
+     */
+    private function read_last_lines($file_path, $lines = 100) {
+        if (!file_exists($file_path) || !is_readable($file_path)) {
+            return '';
+        }
+        
+        // Try to use SplFileObject which is more efficient
+        try {
+            $file = new \SplFileObject($file_path, 'r');
+            $file->seek(PHP_INT_MAX);
+            $total_lines = $file->key();
+            
+            // Calculate starting position
+            $start = max(0, $total_lines - $lines);
+            
+            // Read the desired lines
+            $file->seek($start);
+            $content = '';
+            
+            while (!$file->eof()) {
+                $content .= $file->fgets();
+            }
+            
+            return $content;
+        } catch (Exception $e) {
+            // Fallback to a simpler implementation
+            $content = file_get_contents($file_path);
+            $content_lines = explode(PHP_EOL, $content);
+            $content_lines = array_slice($content_lines, -$lines);
+            return implode(PHP_EOL, $content_lines);
+        }
+    }
+    
+    /**
+     * Handle log-related actions.
+     */
+    private function handle_log_actions() {
+        if (!isset($_GET['action'])) {
+            return;
+        }
+        
+        // Check permissions
+        if (!wp_github_sync_current_user_can()) {
+            wp_die(__('You do not have sufficient permissions to perform this action.', 'wp-github-sync'));
+        }
+        
+        $action = sanitize_text_field($_GET['action']);
+        $log_file = WP_CONTENT_DIR . '/wp-github-sync-debug.log';
+        
+        // Verify the log file path is within WordPress content directory
+        if (!$this->is_path_in_wp_content($log_file)) {
+            wp_die(__('Invalid log file path.', 'wp-github-sync'));
+        }
+        
+        switch ($action) {
+            case 'clear_logs':
+                // Verify nonce
+                if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_clear_logs')) {
+                    wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
+                }
+                
+                try {
+                    // Check if the log file exists
+                    if (file_exists($log_file)) {
+                        // Check if the file is writable
+                        if (!is_writable($log_file)) {
+                            // Try to make it writable
+                            if (!@chmod($log_file, 0644)) {
+                                throw new \Exception(__('Log file is not writable.', 'wp-github-sync'));
+                            }
+                        }
+                        
+                        // Clear log file
+                        if (file_put_contents($log_file, '') === false) {
+                            throw new \Exception(__('Failed to clear log file.', 'wp-github-sync'));
+                        }
+                    } else {
+                        // If file doesn't exist, create an empty one
+                        if (file_put_contents($log_file, '') === false) {
+                            throw new \Exception(__('Failed to create log file.', 'wp-github-sync'));
+                        }
+                    }
+                    
+                    // Add success message
+                    add_settings_error(
+                        'wp_github_sync',
+                        'logs_cleared',
+                        __('Logs cleared successfully.', 'wp-github-sync'),
+                        'success'
+                    );
+                } catch (\Exception $e) {
+                    add_settings_error(
+                        'wp_github_sync',
+                        'logs_clear_error',
+                        sprintf(__('Error clearing logs: %s', 'wp-github-sync'), $e->getMessage()),
+                        'error'
+                    );
+                }
+                break;
+                
+            case 'download_logs':
+                // Verify nonce
+                if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_download_logs')) {
+                    wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
+                }
+                
+                // Check if log file exists and is readable
+                if (!file_exists($log_file)) {
+                    wp_die(__('Log file not found.', 'wp-github-sync'));
+                }
+                
+                if (!is_readable($log_file)) {
+                    wp_die(__('Log file is not readable.', 'wp-github-sync'));
+                }
+                
+                // Set the downloaded file name
+                $download_name = 'wp-github-sync-logs-' . date('Y-m-d') . '.log';
+                
+                // Set headers for download
+                nocache_headers(); // Disable caching
+                header('Content-Description: File Transfer');
+                header('Content-Type: text/plain');
+                header('Content-Disposition: attachment; filename=' . $download_name);
+                header('Expires: 0');
+                header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+                header('Pragma: public');
+                
+                // Get file size
+                $file_size = filesize($log_file);
+                header('Content-Length: ' . $file_size);
+                
+                // Check if we need to limit the download size
+                $max_download_size = apply_filters('wp_github_sync_max_download_size', 15 * 1024 * 1024); // 15MB default
+                
+                if ($file_size > $max_download_size) {
+                    // Read and output only the last portion of the file
+                    $fp = fopen($log_file, 'rb');
+                    if ($fp) {
+                        fseek($fp, -$max_download_size, SEEK_END);
+                        // Add header indicating truncation
+                        echo "--- Log file was too large. Showing only the last " . size_format($max_download_size) . " ---\n\n";
+                        // Output file content
+                        fpassthru($fp);
+                        fclose($fp);
+                    } else {
+                        wp_die(__('Failed to open log file.', 'wp-github-sync'));
+                    }
+                } else {
+                    // Read and output the entire file
+                    readfile($log_file);
+                }
+                exit;
+                
+            case 'test_log':
+                // Verify nonce
+                if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_test_log')) {
+                    wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
+                }
+                
+                try {
+                    // Create test log entries for each log level
+                    if (!function_exists('wp_github_sync_log')) {
+                        throw new \Exception(__('Logging function not available.', 'wp-github-sync'));
+                    }
+                    
+                    // Add some useful context to the test logs
+                    $site_name = get_bloginfo('name');
+                    $time = date('H:i:s');
+                    
+                    // Create test log entries for each log level with force=true to ensure they're written
+                    wp_github_sync_log("This is a test DEBUG message. Site: '{$site_name}', Time: {$time}", 'debug', true);
+                    wp_github_sync_log("This is a test INFO message. Site: '{$site_name}', Time: {$time}", 'info', true);
+                    wp_github_sync_log("This is a test WARNING message. Site: '{$site_name}', Time: {$time}", 'warning', true);
+                    wp_github_sync_log("This is a test ERROR message. Site: '{$site_name}', Time: {$time}", 'error', true);
+                    
+                    // Add success message
+                    add_settings_error(
+                        'wp_github_sync',
+                        'logs_created',
+                        __('Test log entries created. You can now see how different log levels are displayed.', 'wp-github-sync'),
+                        'success'
+                    );
+                } catch (\Exception $e) {
+                    add_settings_error(
+                        'wp_github_sync',
+                        'logs_test_error',
+                        sprintf(__('Error creating test logs: %s', 'wp-github-sync'), $e->getMessage()),
+                        'error'
+                    );
+                }
+                break;
+        }
+    }
+    
+    /**
+     * Checks if a path is within the WordPress content directory.
+     *
+     * @param string $path The path to check.
+     * @return bool True if the path is inside wp-content, false otherwise.
+     */
+    private function is_path_in_wp_content($path) {
+        $wp_content_dir = wp_normalize_path(WP_CONTENT_DIR);
+        $path = wp_normalize_path($path);
+        
+        return strpos($path, $wp_content_dir) === 0;
     }
 
     /**
@@ -646,8 +984,10 @@ class Admin {
             wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
         }
         
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_initial_sync')) {
+        // Verify nonce - accept both the specific initial sync nonce and the general plugin nonce
+        if (!isset($_POST['nonce']) || 
+            (!wp_verify_nonce($_POST['nonce'], 'wp_github_sync_initial_sync') && 
+             !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce'))) {
             wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
         }
         

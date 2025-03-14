@@ -357,17 +357,67 @@ class Sync_Manager {
      * @return \WP_REST_Response The response object.
      */
     public function handle_webhook($request) {
+        // Check request method
+        if ($request->get_method() !== 'POST') {
+            wp_github_sync_log('Webhook received non-POST request', 'error');
+            return new \WP_REST_Response(
+                array('message' => 'Method not allowed'),
+                405
+            );
+        }
+        
+        // Verify User-Agent
+        $user_agent = $request->get_header('user-agent');
+        if (empty($user_agent) || strpos($user_agent, 'GitHub-Hookshot/') !== 0) {
+            wp_github_sync_log('Webhook received invalid User-Agent: ' . $user_agent, 'error');
+            return new \WP_REST_Response(
+                array('message' => 'Invalid User-Agent'),
+                403
+            );
+        }
+        
+        // Get the event type
+        $event_type = $request->get_header('x-github-event');
+        if (empty($event_type)) {
+            wp_github_sync_log('Webhook missing X-GitHub-Event header', 'error');
+            return new \WP_REST_Response(
+                array('message' => 'Missing event type'),
+                400
+            );
+        }
+        
         // Get the raw payload
         $payload = $request->get_body();
+        if (empty($payload)) {
+            wp_github_sync_log('Webhook received empty payload', 'error');
+            return new \WP_REST_Response(
+                array('message' => 'Empty payload'),
+                400
+            );
+        }
         
         // Get the signature header
         $signature = $request->get_header('x-hub-signature-256');
         if (empty($signature)) {
             $signature = $request->get_header('x-hub-signature');
+            if (empty($signature)) {
+                wp_github_sync_log('Webhook missing signature header', 'error');
+                return new \WP_REST_Response(
+                    array('message' => 'Missing signature'),
+                    401
+                );
+            }
         }
         
         // Get the webhook secret from options
         $secret = get_option('wp_github_sync_webhook_secret', '');
+        if (empty($secret)) {
+            wp_github_sync_log('Webhook secret not configured', 'error');
+            return new \WP_REST_Response(
+                array('message' => 'Webhook not configured'),
+                500
+            );
+        }
         
         // Verify the signature
         if (!wp_github_sync_verify_webhook_signature($payload, $signature, $secret)) {
@@ -377,6 +427,9 @@ class Sync_Manager {
                 401
             );
         }
+        
+        // Log successful webhook verification
+        wp_github_sync_log('Webhook signature verified successfully', 'info');
         
         // Decode the payload
         $data = json_decode($payload, true);
