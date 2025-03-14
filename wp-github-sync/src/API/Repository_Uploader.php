@@ -583,24 +583,59 @@ class Repository_Uploader {
                     $is_binary = false;
                     $mime_type = '';
                     
-                    if (class_exists('\\finfo')) {
-                        try {
-                            $finfo = new \finfo(FILEINFO_MIME);
-                            $mime_type = $finfo->file($path);
-                            wp_github_sync_log("MIME type for {$file}: {$mime_type}", 'debug');
-                            
-                            $is_binary = (strpos($mime_type, 'text/') !== 0 && 
-                                         strpos($mime_type, 'application/json') !== 0 &&
-                                         strpos($mime_type, 'application/xml') !== 0);
-                        } catch (\Exception $e) {
-                            // Fall back to a simple check if finfo fails
-                            wp_github_sync_log("finfo failed, falling back to simple binary check: " . $e->getMessage(), 'debug');
+                    // Get file extension
+                    $file_ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+                    
+                    // Define known binary extensions list
+                    $binary_extensions = [
+                        // Images
+                        'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'svg', 'tif', 'tiff',
+                        // Compressed files
+                        'zip', 'gz', 'tar', 'rar', '7z', 'bz2', 'xz',
+                        // Executables
+                        'exe', 'dll', 'so', 'dylib', 
+                        // Documents
+                        'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx',
+                        // Audio/Video
+                        'mp3', 'mp4', 'avi', 'mov', 'wav', 'ogg', 'webm',
+                        // Fonts
+                        'ttf', 'otf', 'woff', 'woff2', 'eot'
+                    ];
+                    
+                    // Check if it's a known binary extension first
+                    if (in_array($file_ext, $binary_extensions)) {
+                        wp_github_sync_log("File {$file} has known binary extension, treating as binary", 'debug');
+                        $is_binary = true;
+                    } else {
+                        // Try finfo if available for other files
+                        if (class_exists('\\finfo')) {
+                            try {
+                                $finfo = new \finfo(FILEINFO_MIME);
+                                $mime_type = $finfo->file($path);
+                                wp_github_sync_log("MIME type for {$file}: {$mime_type}", 'debug');
+                                
+                                // Check if it's a text MIME type
+                                $is_binary = (strpos($mime_type, 'text/') !== 0 && 
+                                             strpos($mime_type, 'application/json') !== 0 &&
+                                             strpos($mime_type, 'application/xml') !== 0 &&
+                                             strpos($mime_type, 'application/javascript') !== 0 &&
+                                             strpos($mime_type, 'application/x-php') !== 0);
+                                
+                                // If detected as image, force binary
+                                if (strpos($mime_type, 'image/') === 0) {
+                                    wp_github_sync_log("File {$file} has image MIME type, forcing binary", 'debug');
+                                    $is_binary = true;
+                                }
+                            } catch (\Exception $e) {
+                                // Fall back to a simple check if finfo fails
+                                wp_github_sync_log("finfo failed, falling back to simple binary check: " . $e->getMessage(), 'debug');
+                                $is_binary = $this->is_binary_file($path);
+                            }
+                        } else {
+                            // If finfo class is not available, fallback to a simple check
+                            wp_github_sync_log("finfo class not available, falling back to simple binary check", 'debug');
                             $is_binary = $this->is_binary_file($path);
                         }
-                    } else {
-                        // If finfo class is not available, fallback to a simple check
-                        wp_github_sync_log("finfo class not available, falling back to simple binary check", 'debug');
-                        $is_binary = $this->is_binary_file($path);
                     }
                     
                     // Get file size
@@ -663,31 +698,51 @@ class Repository_Uploader {
                         $blob_data = [];
                         
                         if ($is_binary) {
+                            // Use base64 for all binary files
                             wp_github_sync_log("Using base64 encoding for binary file: {$file}", 'debug');
                             $blob_data = [
                                 'content' => base64_encode($content),
                                 'encoding' => 'base64'
                             ];
                         } else {
-                            // Check for valid UTF-8 to prevent API errors
-                            if (function_exists('mb_check_encoding') && mb_check_encoding($content, 'UTF-8')) {
-                                // Safely handle potential null bytes in text files
-                                if (strpos($content, "\0") !== false) {
-                                    wp_github_sync_log("File {$relative_path} contains null bytes, treating as binary", 'debug');
-                                    $blob_data = [
-                                        'content' => base64_encode($content),
-                                        'encoding' => 'base64'
-                                    ];
-                                } else {
-                                    wp_github_sync_log("Using UTF-8 encoding for text file: {$file}", 'debug');
+                            // For text files, try to detect the best encoding
+                            // First check for null bytes which indicate binary content
+                            if (strpos($content, "\0") !== false) {
+                                wp_github_sync_log("File {$relative_path} contains null bytes, treating as binary", 'debug');
+                                $blob_data = [
+                                    'content' => base64_encode($content),
+                                    'encoding' => 'base64'
+                                ];
+                            } 
+                            // Check if content is valid UTF-8
+                            else if (function_exists('mb_check_encoding') && mb_check_encoding($content, 'UTF-8')) {
+                                wp_github_sync_log("Using UTF-8 encoding for text file: {$file}", 'debug');
+                                $blob_data = [
+                                    'content' => $content,
+                                    'encoding' => 'utf-8'
+                                ];
+                            } 
+                            // If mb_check_encoding isn't available, try another approach
+                            else if (function_exists('json_encode') && function_exists('json_last_error')) {
+                                // Test if we can JSON encode it (which requires valid UTF-8)
+                                json_encode($content);
+                                if (json_last_error() === JSON_ERROR_NONE) {
+                                    wp_github_sync_log("JSON encode test passed, using UTF-8 for: {$file}", 'debug');
                                     $blob_data = [
                                         'content' => $content,
                                         'encoding' => 'utf-8'
                                     ];
+                                } else {
+                                    wp_github_sync_log("JSON encode test failed, using base64 for: {$file}", 'debug');
+                                    $blob_data = [
+                                        'content' => base64_encode($content),
+                                        'encoding' => 'base64'
+                                    ];
                                 }
-                            } else {
-                                // If not valid UTF-8 or mb_check_encoding not available, use base64 encoding instead
-                                wp_github_sync_log("File {$relative_path} is not valid UTF-8, using base64 encoding", 'debug');
+                            } 
+                            // Default to base64 for safety
+                            else {
+                                wp_github_sync_log("Unable to verify encoding, using base64 for safety: {$file}", 'debug');
                                 $blob_data = [
                                     'content' => base64_encode($content),
                                     'encoding' => 'base64'
@@ -706,15 +761,18 @@ class Repository_Uploader {
                             $error_message = $blob->get_error_message();
                             wp_github_sync_log("Failed to create blob for {$relative_path}: " . $error_message, 'error');
                             
-                            // Try once more with a different encoding
-                            if (strpos($error_message, 'encoding problem') !== false || 
-                                strpos($error_message, 'invalid encoding') !== false ||
+                            // Enhanced retry strategy with more robust error detection
+                            // Check for encoding errors, bad requests, or any 400-level errors
+                            if (strpos($error_message, 'encoding') !== false ||
+                                strpos($error_message, 'encode') !== false ||
+                                strpos($error_message, '400') !== false ||
                                 strpos($error_message, 'Bad Request') !== false ||
-                                $error_message === 'GitHub API error (400): Bad Request') {
+                                strpos($error_message, 'Unprocessable') !== false ||
+                                strpos($error_message, '422') !== false) {
                                 
-                                wp_github_sync_log("Retrying with base64 encoding due to encoding issue", 'debug');
+                                wp_github_sync_log("Retrying with forced base64 encoding due to API error", 'debug');
                                 
-                                // Force base64 encoding for retry
+                                // Force base64 encoding for retry - this is the most reliable format
                                 $retry_blob_data = [
                                     'content' => base64_encode($content),
                                     'encoding' => 'base64'
@@ -730,15 +788,44 @@ class Repository_Uploader {
                                     wp_github_sync_log("Retry successful with base64 encoding", 'info');
                                     $blob = $retry_blob;
                                 } else {
-                                    wp_github_sync_log("Retry also failed: " . $retry_blob->get_error_message(), 'error');
-                                    $skipped_files[] = [
-                                        'path' => $relative_path,
-                                        'reason' => 'blob_creation_failed_on_retry',
-                                        'error' => $retry_blob->get_error_message()
+                                    // Try one more time with a short pause and slight modification
+                                    wp_github_sync_log("First retry failed, pausing and trying again with additional encoding sanitization", 'debug');
+                                    sleep(1); // Brief pause to avoid rate limiting
+                                    
+                                    // Additional sanitization to handle special cases
+                                    if (function_exists('mb_convert_encoding')) {
+                                        $sanitized_content = base64_encode(mb_convert_encoding($content, 'UTF-8', 'UTF-8'));
+                                    } else {
+                                        // Basic sanitization fallback if mb_convert_encoding is not available
+                                        $sanitized_content = base64_encode($content);
+                                    }
+                                    
+                                    $final_retry_blob_data = [
+                                        'content' => $sanitized_content,
+                                        'encoding' => 'base64'
                                     ];
-                                    continue;
+                                    
+                                    $final_retry_blob = $this->api_client->request(
+                                        "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
+                                        'POST',
+                                        $final_retry_blob_data
+                                    );
+                                    
+                                    if (!is_wp_error($final_retry_blob)) {
+                                        wp_github_sync_log("Final retry successful with sanitized base64 encoding", 'info');
+                                        $blob = $final_retry_blob;
+                                    } else {
+                                        wp_github_sync_log("All retries failed: " . $final_retry_blob->get_error_message(), 'error');
+                                        $skipped_files[] = [
+                                            'path' => $relative_path,
+                                            'reason' => 'blob_creation_failed_on_multiple_retries',
+                                            'error' => $final_retry_blob->get_error_message()
+                                        ];
+                                        continue;
+                                    }
                                 }
                             } else {
+                                // Non-encoding errors (e.g., permissions, rate limits)
                                 $skipped_files[] = [
                                     'path' => $relative_path,
                                     'reason' => 'blob_creation_failed',

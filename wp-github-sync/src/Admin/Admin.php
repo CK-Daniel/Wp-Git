@@ -1247,17 +1247,28 @@ class Admin {
                             // Before attempting sync, check if we need to initialize an empty repository
                             try {
                                 $repo_info = $this->github_api->get_repository();
-                                if (is_wp_error($repo_info) && strpos($repo_info->get_error_message(), 'Git Repository is empty') !== false) {
+                                
+                                // Check for various empty repository error messages
+                                if (is_wp_error($repo_info) && 
+                                    (strpos($repo_info->get_error_message(), 'Git Repository is empty') !== false ||
+                                     strpos($repo_info->get_error_message(), 'Not Found') !== false ||
+                                     strpos($repo_info->get_error_message(), '404') !== false)) {
+                                    
                                     wp_github_sync_log("Empty repository detected before sync, initializing", 'info');
+                                    
+                                    // Try to initialize the repository
                                     $init_result = $this->github_api->initialize_repository($branch);
+                                    
                                     if (is_wp_error($init_result)) {
                                         wp_github_sync_log("Failed to initialize repository: " . $init_result->get_error_message(), 'error');
+                                        wp_github_sync_log("Will continue with sync as Repository class has robust initialization handling", 'info');
                                     } else {
                                         wp_github_sync_log("Repository successfully initialized before sync", 'info');
                                     }
                                 }
                             } catch (\Exception $e) {
                                 wp_github_sync_log("Exception checking repository before sync: " . $e->getMessage(), 'error');
+                                wp_github_sync_log("Continuing with sync as Repository handles initialization", 'info');
                             }
                             
                             // Create Repository instance with the API client
@@ -1371,17 +1382,30 @@ class Admin {
         // First check for empty repository and initialize if needed
         try {
             $repo_info = $this->github_api->get_repository();
-            if (is_wp_error($repo_info) && strpos($repo_info->get_error_message(), 'Git Repository is empty') !== false) {
+            
+            // Check for various empty repository error messages
+            if (is_wp_error($repo_info) && 
+                (strpos($repo_info->get_error_message(), 'Git Repository is empty') !== false ||
+                 strpos($repo_info->get_error_message(), 'Not Found') !== false ||
+                 strpos($repo_info->get_error_message(), '404') !== false)) {
+                
                 wp_github_sync_log("Empty repository detected during full sync, initializing first", 'info');
+                
+                // Try multiple initialization methods
                 $init_result = $this->github_api->initialize_repository($branch);
+                
                 if (is_wp_error($init_result)) {
                     wp_github_sync_log("Failed to initialize repository: " . $init_result->get_error_message(), 'error');
+                    wp_github_sync_log("Will still attempt sync as Repository class has its own initialization logic", 'info');
                 } else {
                     wp_github_sync_log("Repository successfully initialized", 'info');
                 }
+            } else {
+                wp_github_sync_log("Repository exists and is accessible", 'info');
             }
         } catch (\Exception $e) {
             wp_github_sync_log("Exception checking repository status: " . $e->getMessage(), 'error');
+            wp_github_sync_log("Will attempt sync anyway as Repository has robust error handling", 'info');
         }
         
         // Create Repository instance with the API client
