@@ -333,8 +333,14 @@ class GitHub_API_Client {
 // Main test function
 function run_test() {
     // Test configuration
-    $token = 'YOUR_GITHUB_TOKEN';  // Replace with your token
+    $token = ''; // Add your GitHub token here
     $repo_url = 'https://github.com/CK-Daniel/kuper';    // Repository URL
+    
+    // Check if token is empty
+    if (empty($token)) {
+        echo "ERROR: No GitHub token provided. Please add your token to the script.\n";
+        return;
+    }
     
     // Create the API client
     $api = new GitHub_API_Client($token, $repo_url);

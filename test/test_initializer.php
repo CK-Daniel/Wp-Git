@@ -237,8 +237,14 @@ function run_test() {
     $wp_options = array();
     
     // Set test configuration
-    $token = 'YOUR_GITHUB_TOKEN'; // Replace with your token
+    $token = ''; // Add your GitHub token here
     $repo_url = 'https://github.com/CK-Daniel/kuper';
+    
+    // Check if token is empty
+    if (empty($token)) {
+        echo "ERROR: No GitHub token provided. Please add your token to the script.\n";
+        return;
+    }
     
     // Setup options
     $wp_options['wp_github_sync_repository'] = $repo_url;

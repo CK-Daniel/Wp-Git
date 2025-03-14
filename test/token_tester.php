@@ -9,9 +9,16 @@
  * 4. Ability to create files in repo
  */
 
-// Token to test - replace with your token
-$token = isset($argv[1]) ? $argv[1] : 'YOUR_GITHUB_TOKEN';
+// Token to test - provide as command line argument
+$token = isset($argv[1]) ? $argv[1] : '';  // GitHub token should be provided as argument
 $repo_url = isset($argv[2]) ? $argv[2] : 'https://github.com/CK-Daniel/kuper';
+
+// Check if token is empty
+if (empty($token)) {
+    echo "ERROR: No GitHub token provided. Please provide a token as the first command line argument.\n";
+    echo "Usage: php token_tester.php YOUR_GITHUB_TOKEN [REPOSITORY_URL]\n";
+    exit(1);
+}
 
 echo "===== GitHub Token and Repository Test =====\n\n";
 echo "Testing with:\n";
