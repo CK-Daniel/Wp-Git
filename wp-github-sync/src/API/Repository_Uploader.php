@@ -590,14 +590,17 @@ class Repository_Uploader {
         wp_github_sync_log("Scanning directory for files: {$directory}", 'debug');
         $this->list_directory_recursive($directory);
         
+        // Create a reference to $this for use in the closure
+        $self = $this;
+        
         // Recursive function to process directories
-        $process_directory = function($dir, $base_path = '') use (&$process_directory, &$tree_items, &$files_processed, &$total_size, &$skipped_files, $upload_limit, $max_files, &$this) {
+        $process_directory = function($dir, $base_path = '') use (&$process_directory, &$tree_items, &$files_processed, &$total_size, &$skipped_files, $upload_limit, $max_files, $self) {
             wp_github_sync_log("Processing directory: {$dir} (base path: {$base_path})", 'debug');
             
             // Update directory processing progress
-            $this->file_stats['total_files'] = max($this->file_stats['total_files'], $files_processed + 10); // Estimate
-            $this->file_stats['processed_files'] = $files_processed;
-            $this->update_progress(2, "Processing directory: " . basename($dir));
+            $self->file_stats['total_files'] = max($self->file_stats['total_files'], $files_processed + 10); // Estimate
+            $self->file_stats['processed_files'] = $files_processed;
+            $self->update_progress(2, "Processing directory: " . basename($dir));
             
             if (!is_dir($dir)) {
                 wp_github_sync_log("Directory does not exist: {$dir}", 'error');
@@ -693,12 +696,12 @@ class Repository_Uploader {
                             } catch (\Exception $e) {
                                 // Fall back to a simple check if finfo fails
                                 wp_github_sync_log("finfo failed, falling back to simple binary check: " . $e->getMessage(), 'debug');
-                                $is_binary = $this->is_binary_file($path);
+                                $is_binary = $self->is_binary_file($path);
                             }
                         } else {
                             // If finfo class is not available, fallback to a simple check
                             wp_github_sync_log("finfo class not available, falling back to simple binary check", 'debug');
-                            $is_binary = $this->is_binary_file($path);
+                            $is_binary = $self->is_binary_file($path);
                         }
                     }
                     
@@ -763,9 +766,9 @@ class Repository_Uploader {
                             $is_binary = true;
                             
                             // Track file types for progress reporting
-                            $this->file_stats['binary_files']++;
+                            $self->file_stats['binary_files']++;
                         } else {
-                            $this->file_stats['text_files']++;
+                            $self->file_stats['text_files']++;
                         }
                         
                         // Always treat files that look like images as binary
@@ -831,14 +834,14 @@ class Repository_Uploader {
                         }
                         
                         // Update progress before blob creation
-                        $this->file_stats['processed_files'] = $files_processed;
+                        $self->file_stats['processed_files'] = $files_processed;
                         if ($files_processed % 5 == 0 || $file_ext === 'po') { // Update more frequently for translation files
-                            $this->update_progress(3, "Processing file: {$relative_path} ({$files_processed}/{$this->file_stats['total_files']})");
+                            $self->update_progress(3, "Processing file: {$relative_path} ({$files_processed}/{$self->file_stats['total_files']})");
                         }
                         
                         wp_github_sync_log("Creating blob for file: {$relative_path}", 'debug');
-                        $blob = $this->api_client->request(
-                            "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
+                        $blob = $self->api_client->request(
+                            "repos/{$self->api_client->get_owner()}/{$self->api_client->get_repo()}/git/blobs",
                             'POST',
                             $blob_data
                         );
@@ -867,11 +870,11 @@ class Repository_Uploader {
                                 
                                 // For .po files or 412 errors, add a status update
                                 if ($file_ext === 'po' || strpos($error_message, '412') !== false) {
-                                    $this->update_progress(3, "Special retry for translation file: {$relative_path}");
+                                    $self->update_progress(3, "Special retry for translation file: {$relative_path}");
                                 }
                                 
-                                $retry_blob = $this->api_client->request(
-                                    "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
+                                $retry_blob = $self->api_client->request(
+                                    "repos/{$self->api_client->get_owner()}/{$self->api_client->get_repo()}/git/blobs",
                                     'POST',
                                     $retry_blob_data
                                 );
@@ -885,15 +888,15 @@ class Repository_Uploader {
                                          function_exists('mb_convert_encoding')) {
                                     // Second retry attempt with sanitized content for .po files with 412 errors
                                     wp_github_sync_log("Translation file still failing, trying with sanitized content: {$relative_path}", 'warning');
-                                    $this->update_progress(3, "Final retry with sanitized content: {$relative_path}");
+                                    $self->update_progress(3, "Final retry with sanitized content: {$relative_path}");
                                     
                                     // Sanitize content using MB functions
                                     $sanitized_content = mb_convert_encoding($content, 'UTF-8', 'UTF-8');
                                     // Also strip NUL bytes which can cause issues
                                     $sanitized_content = str_replace("\0", "", $sanitized_content);
                                     
-                                    $final_retry_blob = $this->api_client->request(
-                                        "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
+                                    $final_retry_blob = $self->api_client->request(
+                                        "repos/{$self->api_client->get_owner()}/{$self->api_client->get_repo()}/git/blobs",
                                         'POST',
                                         [
                                             'content' => base64_encode($sanitized_content),
@@ -905,10 +908,10 @@ class Repository_Uploader {
                                         wp_github_sync_log("Final retry successful with sanitized content", 'info');
                                         $blob = $final_retry_blob;
                                         // Track successful retry
-                                        $this->file_stats['blobs_created']++;
+                                        $self->file_stats['blobs_created']++;
                                     } else {
                                         wp_github_sync_log("Final retry also failed for {$relative_path}", 'error');
-                                        $this->file_stats['failures']++;
+                                        $self->file_stats['failures']++;
                                     }
                                 } else {
                                     // Try one more time with a short pause and slight modification
@@ -928,8 +931,8 @@ class Repository_Uploader {
                                         'encoding' => 'base64'
                                     ];
                                     
-                                    $final_retry_blob = $this->api_client->request(
-                                        "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
+                                    $final_retry_blob = $self->api_client->request(
+                                        "repos/{$self->api_client->get_owner()}/{$self->api_client->get_repo()}/git/blobs",
                                         'POST',
                                         $final_retry_blob_data
                                     );
@@ -996,9 +999,9 @@ class Repository_Uploader {
         $process_directory($directory);
         
         // Update final processing stats and progress
-        $this->file_stats['total_files'] = $files_processed;
-        $this->file_stats['processed_files'] = $files_processed;
-        $this->update_progress(4, "File processing complete: {$files_processed} files, " . 
+        $self->file_stats['total_files'] = $files_processed;
+        $self->file_stats['processed_files'] = $files_processed;
+        $self->update_progress(4, "File processing complete: {$files_processed} files, " . 
             round($total_size/1024/1024, 2) . "MB, " . count($tree_items) . " tree items");
         
         // Log summary of processed files
@@ -1028,7 +1031,7 @@ class Repository_Uploader {
             set_transient('wp_github_sync_skipped_files', $skipped_files, HOUR_IN_SECONDS);
             
             // Update progress with skipped files information
-            $this->update_progress(4, "Warning: {$skipped_count} files were skipped during processing");
+            $self->update_progress(4, "Warning: {$skipped_count} files were skipped during processing");
         }
         
         return $tree_items;
