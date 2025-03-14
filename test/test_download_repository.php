@@ -488,7 +488,7 @@ function run_download_repository_test() {
     $wp_transients = array();
     
     // Replace with your token and repo
-    $token = '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'; 
+    $token = 'ghp_MOCK_TOKEN_FOR_TESTING_PURPOSES_ONLY_1234'; 
     $repo_url = 'https://github.com/CK-Daniel/kuper';
     $branch = 'main';
     
