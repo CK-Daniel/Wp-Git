@@ -328,21 +328,40 @@
 
 /* Tabs Component */
 .wp-github-sync-tabs {
+  margin: -1rem -1.5rem 1rem;
+}
+
+.wp-github-sync-tabs-wrapper {
   display: flex;
   border-bottom: 1px solid var(--wp-github-border);
-  margin: -1rem -1.5rem 1rem;
+  position: relative;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; /* Firefox */
+}
+
+.wp-github-sync-tabs-wrapper::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Edge */
 }
 
 .wp-github-sync-tab {
   display: flex;
   align-items: center;
-  padding: 0.75rem 1.25rem;
+  justify-content: center;
+  padding: 0.85rem 1.5rem;
   font-weight: 500;
+  font-size: 14px;
   color: var(--wp-github-text-light);
   cursor: pointer;
   transition: var(--wp-github-transition);
+  border: none;
   border-bottom: 3px solid transparent;
   margin-bottom: -1px;
+  background-color: transparent;
+  white-space: nowrap;
+  position: relative;
+  outline: none;
+  flex-shrink: 0;
 }
 
 .wp-github-sync-tab:hover {
@@ -353,7 +372,7 @@
 .wp-github-sync-tab.active {
   color: var(--wp-github-primary);
   border-bottom-color: var(--wp-github-primary);
-  background-color: white;
+  background-color: rgba(255, 255, 255, 0.5);
 }
 
 .wp-github-sync-tab .dashicons {
@@ -361,6 +380,28 @@
   font-size: 16px;
   width: 16px;
   height: 16px;
+  transition: transform 0.2s ease;
+}
+
+.wp-github-sync-tab:hover .dashicons {
+  transform: translateY(-1px);
+}
+
+/* Active tab indicator animation */
+.wp-github-sync-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: -3px;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background-color: var(--wp-github-primary);
+  animation: tabActivate 0.3s ease-in-out;
+}
+
+@keyframes tabActivate {
+  0% { transform: scaleX(0); }
+  100% { transform: scaleX(1); }
 }
 
 /* Old Tabs - For backward compatibility */
@@ -524,9 +565,10 @@
 .wp-github-sync-toggle-switch {
   position: relative;
   display: inline-block;
-  width: 46px;
-  height: 24px;
+  width: 52px;
+  height: 26px;
   margin-right: 0.75rem;
+  vertical-align: middle;
 }
 
 .wp-github-sync-toggle-switch input {
@@ -543,20 +585,22 @@
   right: 0;
   bottom: 0;
   background-color: #ccc;
-  transition: .4s;
-  border-radius: 24px;
+  transition: .3s;
+  border-radius: 34px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .wp-github-sync-toggle-slider:before {
   position: absolute;
   content: "";
-  height: 18px;
-  width: 18px;
+  height: 20px;
+  width: 20px;
   left: 3px;
   bottom: 3px;
   background-color: white;
-  transition: .4s;
+  transition: .3s;
   border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 input:checked + .wp-github-sync-toggle-slider {
@@ -564,16 +608,36 @@ input:checked + .wp-github-sync-toggle-slider {
 }
 
 input:focus + .wp-github-sync-toggle-slider {
-  box-shadow: 0 0 1px var(--wp-github-primary);
+  box-shadow: 0 0 0 2px rgba(30, 140, 190, 0.2);
 }
 
 input:checked + .wp-github-sync-toggle-slider:before {
-  transform: translateX(22px);
+  transform: translateX(26px);
+}
+
+/* Add on/off label inside toggle */
+.wp-github-sync-toggle-slider:after {
+  content: "OFF";
+  position: absolute;
+  right: 8px;
+  top: 5px;
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+input:checked + .wp-github-sync-toggle-slider:after {
+  content: "ON";
+  left: 8px;
+  right: auto;
 }
 
 .wp-github-sync-toggle-option {
   display: flex;
   align-items: center;
+  margin-bottom: 10px;
+  cursor: pointer;
 }
 
 /* Commit List */
@@ -687,28 +751,40 @@ input:checked + .wp-github-sync-toggle-slider:before {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
-  z-index: 9999;
+  background-color: rgba(0, 0, 0, 0.6);
+  z-index: 99999;
   justify-content: center;
   align-items: center;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  transition: all 0.3s ease;
 }
 
 .wp-github-sync-dialog.open,
 .wp-github-sync-modal.active {
   display: flex;
+  animation: dialog-backdrop-in 0.3s forwards;
 }
 
 .wp-github-sync-dialog-content,
 .wp-github-sync-modal-container {
   background-color: white;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
   width: 100%;
-  max-width: 500px;
+  max-width: 550px;
   max-height: 90vh;
   overflow-y: auto;
-  animation: wp-github-sync-fade-in 0.2s;
+  transform: scale(0.95);
+  opacity: 0;
+  animation: dialog-content-in 0.3s forwards;
   z-index: 160001;
+}
+
+.wp-github-sync-dialog.open .wp-github-sync-dialog-content,
+.wp-github-sync-modal.active .wp-github-sync-modal-container {
+  transform: scale(1);
+  opacity: 1;
 }
 
 .wp-github-sync-dialog-header,
@@ -716,15 +792,19 @@ input:checked + .wp-github-sync-toggle-slider:before {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 1.5rem;
+  padding: 1.2rem 1.5rem;
   border-bottom: 1px solid var(--wp-github-border);
+  background-color: #f8f9fa;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
 }
 
 .wp-github-sync-dialog-header h3,
 .wp-github-sync-modal-title {
   margin: 0;
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   font-weight: 600;
+  color: var(--wp-github-primary);
 }
 
 .wp-github-sync-dialog-close,
@@ -732,29 +812,62 @@ input:checked + .wp-github-sync-toggle-slider:before {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1.5rem;
-  line-height: 1;
-  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s ease;
   color: var(--wp-github-text-light);
+  padding: 0;
+}
+
+.wp-github-sync-dialog-close:hover,
+.wp-github-sync-modal-close:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+  color: var(--wp-github-primary);
+}
+
+.wp-github-sync-dialog-close .dashicons,
+.wp-github-sync-modal-close .dashicons {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
 }
 
 .wp-github-sync-dialog-body,
 .wp-github-sync-modal-content {
-  padding: 1.5rem;
+  padding: 1.8rem;
   max-height: calc(90vh - 130px);
   overflow-y: auto;
 }
 
 .wp-github-sync-modal-footer {
-  padding: 15px 20px;
+  padding: 1.2rem 1.5rem;
   border-top: 1px solid var(--wp-github-border);
   display: flex;
   justify-content: flex-end;
+  gap: 0.75rem;
+  background-color: #f8f9fa;
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
 }
 
-@keyframes wp-github-sync-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+@keyframes dialog-backdrop-in {
+  from { background-color: rgba(0, 0, 0, 0); }
+  to { background-color: rgba(0, 0, 0, 0.6); }
+}
+
+@keyframes dialog-content-in {
+  from { 
+    transform: scale(0.95); 
+    opacity: 0; 
+  }
+  to { 
+    transform: scale(1); 
+    opacity: 1; 
+  }
 }
 
 /* Utility Classes */

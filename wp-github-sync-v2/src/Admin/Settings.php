@@ -37,7 +37,33 @@ class Settings {
      * Register all settings for the plugin.
      */
     public function register_settings() {
-        // Register the settings
+        // Register the main settings group
+        register_setting(
+            'wp_github_sync_settings',
+            'wp_github_sync_settings',
+            array(
+                'sanitize_callback' => array($this, 'sanitize_settings'),
+                'default' => array(
+                    'repo_url' => '',
+                    'sync_branch' => 'main',
+                    'auth_method' => 'pat',
+                    'access_token' => '',
+                    'oauth_token' => '',
+                    'auto_backup' => false,
+                    'backup_themes' => true,
+                    'backup_plugins' => true,
+                    'backup_uploads' => false,
+                    'backup_config' => false,
+                    'max_backups' => 5,
+                    'maintenance_mode' => false,
+                    'delete_removed' => false,
+                    'debug_mode' => false,
+                    'log_retention' => 30,
+                ),
+            )
+        );
+        
+        // For backwards compatibility
         register_setting(
             'wp_github_sync_settings',
             'wp_github_sync_repository',
@@ -62,10 +88,93 @@ class Settings {
                 'sanitize_callback' => array($this, 'sanitize_token'),
             )
         );
-
-        // Add more settings registration as needed...
     }
 
+    /**
+     * Sanitize settings array.
+     *
+     * @param array $input The settings array to sanitize.
+     * @return array The sanitized settings array.
+     */
+    public function sanitize_settings($input) {
+        $sanitized = array();
+        $current_settings = get_option('wp_github_sync_settings', array());
+
+        // Repository URL
+        $sanitized['repo_url'] = isset($input['repo_url']) ? sanitize_text_field($input['repo_url']) : '';
+        
+        // Branch
+        $sanitized['sync_branch'] = isset($input['sync_branch']) ? sanitize_text_field($input['sync_branch']) : 'main';
+        
+        // Auth method
+        $sanitized['auth_method'] = isset($input['auth_method']) && in_array($input['auth_method'], array('pat', 'oauth')) 
+            ? $input['auth_method'] 
+            : 'pat';
+        
+        // Access token (PAT)
+        if (isset($input['access_token'])) {
+            if ($input['access_token'] === '********' && isset($current_settings['access_token'])) {
+                $sanitized['access_token'] = $current_settings['access_token'];
+            } else {
+                $sanitized['access_token'] = $this->sanitize_token($input['access_token']);
+            }
+        } else {
+            $sanitized['access_token'] = isset($current_settings['access_token']) ? $current_settings['access_token'] : '';
+        }
+        
+        // OAuth token
+        if (isset($input['oauth_token'])) {
+            if ($input['oauth_token'] === '********' && isset($current_settings['oauth_token'])) {
+                $sanitized['oauth_token'] = $current_settings['oauth_token'];
+            } else {
+                $sanitized['oauth_token'] = $this->sanitize_token($input['oauth_token']);
+            }
+        } else {
+            $sanitized['oauth_token'] = isset($current_settings['oauth_token']) ? $current_settings['oauth_token'] : '';
+        }
+        
+        // Boolean settings
+        $boolean_settings = array(
+            'auto_backup',
+            'backup_themes',
+            'backup_plugins',
+            'backup_uploads',
+            'backup_config',
+            'maintenance_mode',
+            'delete_removed',
+            'debug_mode'
+        );
+        
+        foreach ($boolean_settings as $key) {
+            $sanitized[$key] = isset($input[$key]) && $input[$key] ? true : false;
+        }
+        
+        // Numeric settings
+        $numeric_settings = array(
+            'max_backups' => 5,    // Default: 5
+            'log_retention' => 30  // Default: 30 days
+        );
+        
+        foreach ($numeric_settings as $key => $default) {
+            $sanitized[$key] = isset($input[$key]) ? absint($input[$key]) : $default;
+        }
+        
+        // For backward compatibility, also update individual options
+        if (isset($sanitized['repo_url'])) {
+            update_option('wp_github_sync_repository', $sanitized['repo_url']);
+        }
+        
+        if (isset($sanitized['sync_branch'])) {
+            update_option('wp_github_sync_branch', $sanitized['sync_branch']);
+        }
+        
+        if (isset($sanitized['access_token']) && $sanitized['access_token']) {
+            update_option('wp_github_sync_access_token', $sanitized['access_token']);
+        }
+        
+        return $sanitized;
+    }
+    
     /**
      * Sanitize token input.
      *

@@ -88,31 +88,23 @@ class Tabs {
         
         $html = '<div id="' . esc_attr( $this->id ) . '" class="' . esc_attr( $classes ) . '">';
         
-        // Tabs navigation
-        $html .= '<ul class="wp-github-sync-tabs-nav">';
+        // Modern tabs design
+        $html .= '<div class="wp-github-sync-tabs-wrapper">';
         
         $first_tab = true;
         foreach ( $this->tabs as $id => $tab ) {
             $active_class = $first_tab ? ' active' : '';
-            $html .= '<li class="wp-github-sync-tabs-nav-item">';
-            $html .= '<a href="#' . esc_attr( $this->id . '-' . $id ) . '" class="wp-github-sync-tabs-nav-link' . esc_attr( $active_class ) . '">';
+            $html .= '<button type="button" class="wp-github-sync-tab' . esc_attr( $active_class ) . '" data-tab="' . esc_attr( $id ) . '">';
+            $html .= '<span class="dashicons dashicons-admin-generic"></span> ';
             $html .= esc_html( $tab['title'] );
-            $html .= '</a>';
-            $html .= '</li>';
+            $html .= '</button>';
             $first_tab = false;
         }
         
-        $html .= '</ul>';
+        $html .= '</div>';
         
-        // Tabs content
-        $first_tab = true;
-        foreach ( $this->tabs as $id => $tab ) {
-            $active_class = $first_tab ? ' active' : '';
-            $html .= '<div id="' . esc_attr( $this->id . '-' . $id ) . '" class="wp-github-sync-tab-content' . esc_attr( $active_class ) . '">';
-            $html .= $tab['content']; // Not escaped as it may contain HTML
-            $html .= '</div>';
-            $first_tab = false;
-        }
+        // We're not including tab content here since it's handled in the template
+        // This allows for better separation and more flexible layouts
         
         $html .= '</div>';
         
