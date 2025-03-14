@@ -130,20 +130,22 @@ class Sync_Manager {
     public function check_for_updates() {
         // Don't check if we're in the middle of a deployment
         if ($this->is_deployment_in_progress()) {
-            wp_github_sync_log('Skipping update check because a deployment is in progress', 'info');
+            wp_github_sync_log('Auto update check: Skipping because a deployment is in progress', 'info');
             return;
         }
         
-        wp_github_sync_log('Checking for updates from GitHub', 'info');
+        wp_github_sync_log('Auto update check: Checking for updates from GitHub', 'info');
         
         // Get the current branch
         $branch = wp_github_sync_get_current_branch();
+        wp_github_sync_log("Auto update check: Current branch is '{$branch}'", 'debug');
         
         // Get the latest commit on this branch
         $latest_commit = $this->github_api->get_latest_commit($branch);
         
         if (is_wp_error($latest_commit)) {
-            wp_github_sync_log('Error checking for updates: ' . $latest_commit->get_error_message(), 'error');
+            $error_message = $latest_commit->get_error_message();
+            wp_github_sync_log("Auto update check: Error checking for updates - {$error_message}", 'error');
             return;
         }
         
@@ -152,20 +154,28 @@ class Sync_Manager {
         
         // If the latest commit hash is different from the last deployed commit
         if (isset($latest_commit['sha']) && $latest_commit['sha'] !== $last_deployed_commit) {
+            $latest_sha = $latest_commit['sha'];
+            $latest_short_sha = substr($latest_sha, 0, 8);
+            $commit_message = isset($latest_commit['commit']['message']) ? $latest_commit['commit']['message'] : 'No commit message';
+            $commit_author = isset($latest_commit['commit']['author']['name']) ? $latest_commit['commit']['author']['name'] : 'Unknown';
+            
             wp_github_sync_log(
                 sprintf(
-                    'New commit found: %s (Last deployed: %s)',
-                    $latest_commit['sha'],
-                    $last_deployed_commit ?: 'none'
+                    'Auto update check: New commit found: %s by %s (Last deployed: %s)',
+                    $latest_short_sha,
+                    $commit_author,
+                    $last_deployed_commit ? substr($last_deployed_commit, 0, 8) : 'none'
                 ),
                 'info'
             );
             
+            wp_github_sync_log("Auto update check: Commit message: {$commit_message}", 'debug');
+            
             // Update the latest commit in options for UI display
             update_option('wp_github_sync_latest_commit', array(
-                'sha' => $latest_commit['sha'],
-                'message' => isset($latest_commit['commit']['message']) ? $latest_commit['commit']['message'] : '',
-                'author' => isset($latest_commit['commit']['author']['name']) ? $latest_commit['commit']['author']['name'] : '',
+                'sha' => $latest_sha,
+                'message' => $commit_message,
+                'author' => $commit_author,
                 'date' => isset($latest_commit['commit']['author']['date']) ? $latest_commit['commit']['author']['date'] : '',
                 'timestamp' => time(),
             ));
@@ -174,20 +184,23 @@ class Sync_Manager {
             $auto_deploy = get_option('wp_github_sync_auto_deploy', false);
             
             if ($auto_deploy) {
+                wp_github_sync_log("Auto update check: Auto-deploy is enabled, initiating deployment of {$latest_short_sha}", 'info');
                 // If so, deploy the new commit
-                $this->deploy($latest_commit['sha']);
+                $this->deploy($latest_sha);
             } else {
+                wp_github_sync_log("Auto update check: Auto-deploy is disabled, marking update as available", 'info');
                 // Otherwise, set a flag to show there's an update pending
                 update_option('wp_github_sync_update_available', true);
                 
                 // Send notification if enabled
                 $notify_updates = get_option('wp_github_sync_notify_updates', false);
                 if ($notify_updates) {
+                    wp_github_sync_log("Auto update check: Sending email notification about available update", 'info');
                     $this->send_update_notification($latest_commit);
                 }
             }
         } else {
-            wp_github_sync_log('No new commits found', 'info');
+            wp_github_sync_log('Auto update check: No new commits found', 'info');
         }
     }
 
@@ -200,13 +213,13 @@ class Sync_Manager {
     public function deploy($ref) {
         // Check if we're in the middle of a deployment
         if ($this->is_deployment_in_progress()) {
-            return new \WP_Error(
-                'deployment_in_progress',
-                __('A deployment is already in progress. Please wait until it completes.', 'wp-github-sync')
-            );
+            $error_message = __('A deployment is already in progress. Please wait until it completes.', 'wp-github-sync');
+            wp_github_sync_log("Deploy: {$error_message}", 'error');
+            return new \WP_Error('deployment_in_progress', $error_message);
         }
         
-        wp_github_sync_log("Starting deployment of {$ref}", 'info');
+        $ref_display = (strlen($ref) > 8) ? substr($ref, 0, 8) : $ref;
+        wp_github_sync_log("Deploy: Starting deployment of {$ref_display}", 'info');
         
         // Set deployment in progress flag
         $this->set_deployment_in_progress(true);
@@ -218,16 +231,23 @@ class Sync_Manager {
         $backup_path = '';
         
         if ($create_backup) {
+            wp_github_sync_log("Deploy: Creating backup before deployment", 'info');
             $backup_path = $this->create_backup();
             if (is_wp_error($backup_path)) {
+                $error_message = $backup_path->get_error_message();
+                wp_github_sync_log("Deploy: Backup creation failed - {$error_message}", 'error');
                 $this->set_deployment_in_progress(false);
                 return $backup_path;
             }
+            wp_github_sync_log("Deploy: Backup created successfully at {$backup_path}", 'info');
+        } else {
+            wp_github_sync_log("Deploy: Backup creation is disabled", 'debug');
         }
         
         // Enable maintenance mode if configured
         $maintenance_mode = get_option('wp_github_sync_maintenance_mode', true);
         if ($maintenance_mode) {
+            wp_github_sync_log("Deploy: Enabling maintenance mode", 'info');
             wp_github_sync_maintenance_mode(true);
         }
         
@@ -236,25 +256,31 @@ class Sync_Manager {
         
         // Clean up temp directory if it exists
         if (file_exists($temp_dir)) {
+            wp_github_sync_log("Deploy: Cleaning up temporary directory: {$temp_dir}", 'debug');
             $this->recursive_rmdir($temp_dir);
         }
         
         // Create temp directory
+        wp_github_sync_log("Deploy: Creating temporary download directory", 'debug');
         wp_mkdir_p($temp_dir);
         
         // Download repository to temp directory
+        wp_github_sync_log("Deploy: Downloading repository content for {$ref_display}", 'info');
         $download_result = $this->repository->download_repository($ref, $temp_dir);
         
         if (is_wp_error($download_result)) {
-            wp_github_sync_log('Download failed: ' . $download_result->get_error_message(), 'error');
+            $error_message = $download_result->get_error_message();
+            wp_github_sync_log("Deploy: Download failed - {$error_message}", 'error');
             
             // Restore from backup if we created one
             if ($create_backup && $backup_path && file_exists($backup_path)) {
+                wp_github_sync_log("Deploy: Restoring from backup after download failure", 'info');
                 $this->restore_from_backup($backup_path);
             }
             
             // Disable maintenance mode
             if ($maintenance_mode) {
+                wp_github_sync_log("Deploy: Disabling maintenance mode after download failure", 'info');
                 wp_github_sync_maintenance_mode(false);
             }
             
@@ -262,22 +288,28 @@ class Sync_Manager {
             return $download_result;
         }
         
+        wp_github_sync_log("Deploy: Repository successfully downloaded, syncing files to wp-content", 'info');
+        
         // Sync files from temp directory to wp-content
         $sync_result = $this->sync_files($temp_dir, WP_CONTENT_DIR);
         
         // Clean up temp directory
+        wp_github_sync_log("Deploy: Cleaning up temporary directory", 'debug');
         $this->recursive_rmdir($temp_dir);
         
         // Disable maintenance mode
         if ($maintenance_mode) {
+            wp_github_sync_log("Deploy: Disabling maintenance mode", 'info');
             wp_github_sync_maintenance_mode(false);
         }
         
         if (is_wp_error($sync_result)) {
-            wp_github_sync_log('Sync failed: ' . $sync_result->get_error_message(), 'error');
+            $error_message = $sync_result->get_error_message();
+            wp_github_sync_log("Deploy: File sync failed - {$error_message}", 'error');
             
             // Restore from backup if we created one
             if ($create_backup && $backup_path && file_exists($backup_path)) {
+                wp_github_sync_log("Deploy: Restoring from backup after sync failure", 'info');
                 $this->restore_from_backup($backup_path);
             }
             
@@ -285,15 +317,24 @@ class Sync_Manager {
             return $sync_result;
         }
         
+        wp_github_sync_log("Deploy: File synchronization completed successfully", 'info');
+        
         // Update last deployed commit
         if (strlen($ref) === 40) {
             // If $ref is a commit SHA (40 chars), store it directly
             update_option('wp_github_sync_last_deployed_commit', $ref);
+            wp_github_sync_log("Deploy: Updated last deployed commit to {$ref_display}", 'info');
         } else {
             // If $ref is a branch, store the latest commit SHA for that branch
+            wp_github_sync_log("Deploy: Fetching latest commit SHA for branch '{$ref}'", 'debug');
             $latest_commit = $this->github_api->get_latest_commit($ref);
             if (!is_wp_error($latest_commit) && isset($latest_commit['sha'])) {
-                update_option('wp_github_sync_last_deployed_commit', $latest_commit['sha']);
+                $commit_sha = $latest_commit['sha'];
+                $commit_short_sha = substr($commit_sha, 0, 8);
+                update_option('wp_github_sync_last_deployed_commit', $commit_sha);
+                wp_github_sync_log("Deploy: Updated last deployed commit to {$commit_short_sha} from branch '{$ref}'", 'info');
+            } else {
+                wp_github_sync_log("Deploy: Could not fetch latest commit SHA for branch '{$ref}'", 'warning');
             }
         }
         
@@ -306,7 +347,7 @@ class Sync_Manager {
         // Set deployment completed
         $this->set_deployment_in_progress(false);
         
-        wp_github_sync_log("Deployment of {$ref} completed successfully", 'info');
+        wp_github_sync_log("Deploy: Deployment of {$ref_display} completed successfully", 'info');
         
         // Action hook for after successful deployment
         do_action('wp_github_sync_after_deploy', $ref, true);
@@ -324,18 +365,26 @@ class Sync_Manager {
         // Save current branch for rollback if needed
         $current_branch = wp_github_sync_get_current_branch();
         
+        wp_github_sync_log("Switch Branch: Attempting to switch from '{$current_branch}' to '{$branch}'", 'info');
+        
         // Update the branch setting
         update_option('wp_github_sync_branch', $branch);
         
         // Deploy the branch
+        wp_github_sync_log("Switch Branch: Deploying content from branch '{$branch}'", 'info');
         $result = $this->deploy($branch);
         
         if (is_wp_error($result)) {
+            $error_message = $result->get_error_message();
+            wp_github_sync_log("Switch Branch: Failed to switch to branch '{$branch}' - {$error_message}", 'error');
+            
             // Switch back to the previous branch in settings
+            wp_github_sync_log("Switch Branch: Reverting branch setting back to '{$current_branch}'", 'info');
             update_option('wp_github_sync_branch', $current_branch);
             return $result;
         }
         
+        wp_github_sync_log("Switch Branch: Successfully switched to branch '{$branch}'", 'info');
         return true;
     }
 
@@ -346,8 +395,31 @@ class Sync_Manager {
      * @return bool|\WP_Error True on success or WP_Error on failure.
      */
     public function rollback($commit_sha) {
+        $commit_short = substr($commit_sha, 0, 8);
+        wp_github_sync_log("Rollback: Initiating rollback to commit '{$commit_short}'", 'info');
+        
+        // Get the current deployed commit for logging
+        $current_commit = get_option('wp_github_sync_last_deployed_commit', '');
+        $current_short = $current_commit ? substr($current_commit, 0, 8) : 'unknown';
+        
+        if ($current_commit == $commit_sha) {
+            wp_github_sync_log("Rollback: Already at commit '{$commit_short}', no rollback needed", 'warning');
+            return true;
+        }
+        
+        wp_github_sync_log("Rollback: Rolling back from '{$current_short}' to '{$commit_short}'", 'info');
+        
         // Deploy the specific commit
-        return $this->deploy($commit_sha);
+        $result = $this->deploy($commit_sha);
+        
+        if (is_wp_error($result)) {
+            $error_message = $result->get_error_message();
+            wp_github_sync_log("Rollback: Failed to rollback to commit '{$commit_short}' - {$error_message}", 'error');
+            return $result;
+        }
+        
+        wp_github_sync_log("Rollback: Successfully rolled back to commit '{$commit_short}'", 'info');
+        return true;
     }
 
     /**

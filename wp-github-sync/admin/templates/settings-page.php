@@ -85,17 +85,39 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                 <div id="wp-github-sync-tab-content-container">
                     <!-- General tab content -->
                     <div id="general-tab-content" class="wp-github-sync-tab-content active" data-tab="general">
-                        <?php 
-                        // General repository settings
-                        settings_fields('wp_github_sync_settings');
-                        do_settings_sections('wp_github_sync_settings');
-                        ?>
+                        <h3><?php _e('Repository Settings', 'wp-github-sync'); ?></h3>
+                        <p><?php _e('Configure your GitHub repository connection settings.', 'wp-github-sync'); ?></p>
+                        
+                        <?php settings_fields('wp_github_sync_settings'); ?>
+                        
+                        <table class="form-table" role="presentation">
+                            <tbody>
+                                <tr>
+                                    <th scope="row"><?php _e('GitHub Repository URL', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $repository = get_option('wp_github_sync_repository', ''); ?>
+                                        <input type="text" name="wp_github_sync_repository" value="<?php echo esc_attr($repository); ?>" class="regular-text">
+                                        <p class="description"><?php _e('Enter the GitHub repository URL (e.g., https://github.com/username/repository).', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php _e('Branch', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $branch = get_option('wp_github_sync_branch', 'main'); ?>
+                                        <input type="text" name="wp_github_sync_branch" value="<?php echo esc_attr($branch); ?>" class="regular-text">
+                                        <p class="description"><?php _e('Enter the branch to sync with (e.g., main).', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                     
                     <!-- Authentication tab content -->
                     <div id="authentication-tab-content" class="wp-github-sync-tab-content" data-tab="authentication">
                         <h3><?php _e('Authentication Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure your GitHub authentication credentials.', 'wp-github-sync'); ?></p>
+                        
+                        <?php settings_fields('wp_github_sync_settings'); ?>
                         
                         <table class="form-table" role="presentation">
                             <tbody>
@@ -133,6 +155,8 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                     <div id="sync-tab-content" class="wp-github-sync-tab-content" data-tab="sync">
                         <h3><?php _e('Synchronization Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure how and when your WordPress site checks for updates from GitHub.', 'wp-github-sync'); ?></p>
+                        
+                        <?php settings_fields('wp_github_sync_settings'); ?>
                         
                         <table class="form-table" role="presentation">
                             <tbody>
@@ -213,6 +237,8 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                     <div id="advanced-tab-content" class="wp-github-sync-tab-content" data-tab="advanced">
                         <h3><?php _e('Advanced Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure advanced deployment options.', 'wp-github-sync'); ?></p>
+                        
+                        <?php settings_fields('wp_github_sync_settings'); ?>
                         
                         <table class="form-table" role="presentation">
                             <tbody>
@@ -310,6 +336,24 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
     
     <script>
     jQuery(document).ready(function($) {
+        // Tab switching functionality
+        $('.wp-github-sync-tab').on('click', function() {
+            // Remove active class from all tabs
+            $('.wp-github-sync-tab').removeClass('active');
+            
+            // Add active class to clicked tab
+            $(this).addClass('active');
+            
+            // Get the tab ID
+            const tabId = $(this).data('tab');
+            
+            // Hide all tab content
+            $('.wp-github-sync-tab-content').removeClass('active');
+            
+            // Show the content for the active tab
+            $('#' + tabId + '-tab-content').addClass('active');
+        });
+        
         // Initial sync button click handler
         $('#initial_sync_button').on('click', function() {
             const createNewRepo = $('#create_new_repo').is(':checked');
@@ -363,7 +407,12 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                         }, 3000);
                     }
                 },
-                error: function() {
+                error: function(xhr, status, error) {
+                    console.error("AJAX Error:", status, error);
+                    if (xhr.responseText) {
+                        console.error("Response:", xhr.responseText);
+                    }
+                    
                     $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
                     $('.wp-github-sync-loading-submessage').text('<?php _e('An unexpected error occurred. Please try again.', 'wp-github-sync'); ?>');
                     
@@ -464,6 +513,20 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                 $('#new_repo_options').slideUp();
             }
         });
+        
+        // Handle tab state from URL hash
+        function handleTabFromHash() {
+            const hash = window.location.hash.substr(1);
+            if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
+                $('.wp-github-sync-tab[data-tab="' + hash + '"]').click();
+            }
+        }
+        
+        // Handle hash changes
+        $(window).on('hashchange', handleTabFromHash);
+        
+        // Initial hash check
+        handleTabFromHash();
     });
     </script>
 </div>
