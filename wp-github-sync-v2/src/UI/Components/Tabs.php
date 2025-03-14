@@ -64,12 +64,14 @@ class Tabs {
      * @param string $id      Tab ID.
      * @param string $title   Tab title.
      * @param string $content Tab content.
+     * @param string $icon    Optional dashicon name (without dashicons- prefix).
      * @return $this For method chaining.
      */
-    public function add_tab( $id, $title, $content ) {
+    public function add_tab( $id, $title, $content, $icon = 'admin-generic' ) {
         $this->tabs[ preg_replace('/[^a-z0-9_-]/', '', strtolower($id)) ] = [
             'title'   => $title,
             'content' => $content,
+            'icon'    => sanitize_html_class($icon),
         ];
         return $this;
     }
@@ -95,7 +97,7 @@ class Tabs {
         foreach ( $this->tabs as $id => $tab ) {
             $active_class = $first_tab ? ' active' : '';
             $html .= '<button type="button" class="wp-github-sync-tab' . esc_attr( $active_class ) . '" data-tab="' . esc_attr( $id ) . '">';
-            $html .= '<span class="dashicons dashicons-admin-generic"></span> ';
+            $html .= '<span class="dashicons dashicons-' . esc_attr($tab['icon']) . '"></span> ';
             $html .= esc_html( $tab['title'] );
             $html .= '</button>';
             $first_tab = false;

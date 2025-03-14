@@ -88,13 +88,22 @@ if ( ! current_user_can( 'manage_options' ) ) {
                         <div class="wp-github-sync-tab-content">
                             <!-- Tabs content will be dynamically shown/hidden via JavaScript -->
                             <div class="tab-content active" data-tab="general">
-                                <?php echo $general_settings; ?>
+                                <?php 
+                                // General settings content
+                                echo $general_settings; 
+                                ?>
                             </div>
                             <div class="tab-content" data-tab="backup">
-                                <?php echo $backup_settings; ?>
+                                <?php 
+                                // Backup settings content
+                                echo $backup_settings; 
+                                ?>
                             </div>
                             <div class="tab-content" data-tab="advanced">
-                                <?php echo $advanced_settings; ?>
+                                <?php 
+                                // Advanced settings content
+                                echo $advanced_settings; 
+                                ?>
                             </div>
                         </div>
                         <div class="wp-github-sync-form-actions">

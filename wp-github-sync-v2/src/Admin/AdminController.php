@@ -381,19 +381,15 @@ class AdminController {
         // Create tabs
         $tabs = new Tabs( 'settings-tabs' );
         
-        // General settings tab
+        // Generate tab content for all settings sections
         $general_settings = $this->render_general_settings( $settings );
-        
-        // Backup settings tab
         $backup_settings = $this->render_backup_settings( $settings );
-        
-        // Advanced settings tab
         $advanced_settings = $this->render_advanced_settings( $settings );
         
-        // Add tabs
-        $tabs->add_tab( 'general', __( 'General', 'wp-github-sync' ), $general_settings );
-        $tabs->add_tab( 'backup', __( 'Backup', 'wp-github-sync' ), $backup_settings );
-        $tabs->add_tab( 'advanced', __( 'Advanced', 'wp-github-sync' ), $advanced_settings );
+        // Add tab navigation with custom icons (content is rendered directly in template)
+        $tabs->add_tab( 'general', __( 'General', 'wp-github-sync' ), '', 'admin-generic' );
+        $tabs->add_tab( 'backup', __( 'Backup', 'wp-github-sync' ), '', 'backup' );
+        $tabs->add_tab( 'advanced', __( 'Advanced', 'wp-github-sync' ), '', 'admin-tools' );
         
         // Render the page
         include WP_GITHUB_SYNC_DIR . 'templates/settings.php';
