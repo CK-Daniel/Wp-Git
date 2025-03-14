@@ -1079,7 +1079,20 @@ class Admin {
         'step' => 0,
         'detail' => '',
         'status' => 'pending',
-        'timestamp' => 0
+        'timestamp' => 0,
+        'subStep' => null
+    ];
+    
+    /**
+     * Store file processing statistics
+     */
+    private $file_processing_stats = [
+        'total_files' => 0,
+        'processed_files' => 0,
+        'binary_files' => 0,
+        'text_files' => 0,
+        'blobs_created' => 0,
+        'failures' => 0
     ];
     
     /**
@@ -1088,18 +1101,45 @@ class Admin {
      * @param int $step The current step number
      * @param string $detail Detailed status message
      * @param string $status Status ('pending', 'error', 'complete')
+     * @param int|null $subStep Optional sub-step for granular progress tracking
      */
-    private function update_sync_progress($step, $detail = '', $status = 'pending') {
+    private function update_sync_progress($step, $detail = '', $status = 'pending', $subStep = null) {
         $this->sync_progress = [
             'step' => $step,
             'detail' => $detail,
             'status' => $status,
-            'timestamp' => time()
+            'timestamp' => time(),
+            'subStep' => $subStep
         ];
+        
+        // For step 5 (Creating initial commit), include file processing stats
+        if ($step === 5) {
+            $this->sync_progress['stats'] = $this->file_processing_stats;
+            
+            // Calculate overall progress for file processing
+            if ($this->file_processing_stats['total_files'] > 0) {
+                $this->sync_progress['fileProgress'] = round(
+                    ($this->file_processing_stats['processed_files'] / $this->file_processing_stats['total_files']) * 100
+                );
+            }
+        }
         
         // Store progress in transient for AJAX polling
         set_transient('wp_github_sync_progress', $this->sync_progress, 3600);
-        wp_github_sync_log("Sync progress updated: Step {$step} - {$detail}", 'debug');
+        wp_github_sync_log("Sync progress updated: Step {$step}" . ($subStep !== null ? ", Sub-step {$subStep}" : "") . " - {$detail}", 'debug');
+    }
+    
+    /**
+     * Update file processing stats
+     * 
+     * @param array $stats The stats to update
+     */
+    private function update_file_stats($stats) {
+        foreach ($stats as $key => $value) {
+            if (isset($this->file_processing_stats[$key])) {
+                $this->file_processing_stats[$key] = $value;
+            }
+        }
     }
     
     /**
@@ -1344,8 +1384,18 @@ class Admin {
                             }
                             
                             // Create Repository instance with the API client
-                            $this->update_sync_progress(5, "Starting file upload to GitHub");
+                            $this->update_sync_progress(5, "Starting file upload to GitHub", 'pending', 0);
+                            
+                            // Create a progress callback for the repository class
+                            $progress_callback = function($subStep, $detail, $stats = []) {
+                                if (!empty($stats)) {
+                                    $this->update_file_stats($stats);
+                                }
+                                $this->update_sync_progress(5, $detail, 'pending', $subStep);
+                            };
+                            
                             $repository = new \WPGitHubSync\API\Repository($this->github_api);
+                            $repository->set_progress_callback($progress_callback);
                             $sync_result = $repository->initial_sync($branch);
                             
                             if (is_wp_error($sync_result)) {

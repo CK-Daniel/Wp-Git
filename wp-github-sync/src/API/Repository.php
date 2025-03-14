@@ -23,6 +23,20 @@ class Repository {
      * @var API_Client
      */
     private $api_client;
+    
+    /**
+     * Progress callback function
+     * 
+     * @var callable|null
+     */
+    private $progress_callback = null;
+    
+    /**
+     * Repository uploader instance
+     * 
+     * @var Repository_Uploader|null
+     */
+    private $uploader = null;
 
     /**
      * Initialize the Repository class.
@@ -31,6 +45,33 @@ class Repository {
      */
     public function __construct($api_client) {
         $this->api_client = $api_client;
+        $this->uploader = new Repository_Uploader($api_client);
+    }
+    
+    /**
+     * Set a progress callback function
+     * 
+     * @param callable $callback Function that takes ($subStep, $detail, $stats)
+     * @return void
+     */
+    public function set_progress_callback($callback) {
+        $this->progress_callback = $callback;
+        if ($this->uploader) {
+            $this->uploader->set_progress_callback($callback);
+        }
+    }
+    
+    /**
+     * Update progress via callback
+     * 
+     * @param int $subStep Sub-step number
+     * @param string $detail Progress detail message
+     * @param array $stats Optional stats array
+     */
+    private function update_progress($subStep, $detail, $stats = []) {
+        if (is_callable($this->progress_callback)) {
+            call_user_func($this->progress_callback, $subStep, $detail, $stats);
+        }
     }
 
     /**
@@ -190,13 +231,17 @@ class Repository {
      */
     public function initial_sync($branch = 'main') {
         // First verify authentication is working
+        $this->update_progress(0, "Verifying authentication");
         $auth_test = $this->api_client->test_authentication();
         if ($auth_test !== true) {
             wp_github_sync_log("Initial sync authentication test failed: " . $auth_test, 'error');
+            $this->update_progress(0, "Authentication failed: " . $auth_test);
             return new \WP_Error('github_auth_failed', sprintf(__('GitHub authentication failed: %s', 'wp-github-sync'), $auth_test));
         }
+        $this->update_progress(1, "Authentication verified successfully");
         
         // Verify repository exists and initialize it if needed
+        $this->update_progress(2, "Verifying repository access");
         $repo_info = $this->api_client->get_repository();
         if (is_wp_error($repo_info)) {
             $error_message = $repo_info->get_error_message();
@@ -207,8 +252,10 @@ class Repository {
                 strpos($error_message, '404') !== false) {
                 
                 wp_github_sync_log("Repository is empty or not initialized, initializing it before proceeding", 'info');
+                $this->update_progress(2, "Repository is empty, performing initialization");
                 
                 // Try to initialize the repository
+                $this->update_progress(3, "Creating initial repository structure");
                 $init_result = $this->api_client->initialize_repository($branch);
                 
                 if (is_wp_error($init_result)) {
@@ -310,9 +357,11 @@ class Repository {
                 ]);
                 
                 wp_github_sync_log("Preparing files for initial sync", 'info');
+                $this->update_progress(4, "Analyzing content folders to sync");
                 
                 // Prepare files to sync
                 try {
+                    $this->update_progress(4, "Collecting files from WordPress content directory");
                     $result = $this->prepare_files_for_initial_sync($temp_dir, $paths_to_sync);
                     
                     if (is_wp_error($result)) {

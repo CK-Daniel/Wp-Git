@@ -1,102 +1,67 @@
-/**
- * Admin JavaScript for WordPress GitHub Sync plugin.
- *
- * @package WPGitHubSync
- */
 (function($) {
     'use strict';
-    
-    // Initialize on document ready
+
     $(document).ready(function() {
-        // Tab functionality for all pages
+        
+        /**
+         * Show the loading overlay
+         */
+        function showOverlay(message, submessage) {
+            var $overlay = $('.wp-github-sync-overlay');
+            if (message) {
+                $('.wp-github-sync-loading-message').text(message);
+            }
+            if (submessage) {
+                $('.wp-github-sync-loading-submessage').text(submessage);
+            }
+            $overlay.fadeIn(200);
+        }
+        
+        /**
+         * Hide the loading overlay
+         */
+        function hideOverlay() {
+            $('.wp-github-sync-overlay').fadeOut(200);
+        }
+        
+        /**
+         * Initialize tabs
+         */
         function initializeTabs() {
-            // Remove any existing handlers to prevent duplicates (important for PJAX or Turbo sites)
-            $('.wp-github-sync-tab').off('click.wp-github-sync');
-            $('.wp-github-sync-tab-link').off('click.wp-github-sync');
+            // Get the tab hash
+            function getCurrentTab() {
+                var hash = window.location.hash;
+                if (hash && hash.indexOf('#tab-') === 0) {
+                    return hash.substring(5);
+                }
+                return 'dashboard';
+            }
             
-            // Tab click handler with namespace to allow later removal if needed
-            $('.wp-github-sync-tab').on('click.wp-github-sync', function(e) {
-                e.preventDefault();
-                
-                // Get active tab info before changing
-                var previousTab = $('.wp-github-sync-tab.active').data('tab');
-                
-                // Update tab state
+            // Show a specific tab
+            function showTab(tabId) {
+                // Hide all tabs
+                $('.wp-github-sync-tab-content').hide();
                 $('.wp-github-sync-tab').removeClass('active');
-                $(this).addClass('active');
                 
-                var tab = $(this).data('tab');
+                // Show selected tab
+                $('#tab-' + tabId).show();
+                $('.wp-github-sync-tab[data-tab="' + tabId + '"]').addClass('active');
                 
-                // Validate tab name to prevent XSS
-                if (!tab || typeof tab !== 'string' || !tab.match(/^[a-zA-Z0-9_-]+$/)) {
-                    console.error('Invalid tab name');
-                    return;
-                }
-                
-                // Hide all tab content
-                $('.wp-github-sync-tab-content').removeClass('active');
-                
-                // Find the right tab content using both methods
-                var $tabContent = $('#' + tab + '-tab-content');
-                if ($tabContent.length === 0) {
-                    $tabContent = $('.wp-github-sync-tab-content[data-tab="' + tab + '"]');
-                }
-                
-                // If tab content exists, show it
-                if ($tabContent.length > 0) {
-                    $tabContent.addClass('active');
-                    
-                    // Update URL hash, but only if it changed (avoids duplicate history entries)
-                    if (previousTab !== tab) {
-                        // Use history API instead of directly setting location.hash to avoid page scroll
-                        if (history.pushState) {
-                            history.pushState(null, null, '#' + tab);
-                        } else {
-                            window.location.hash = tab;
-                        }
-                    }
-                    
-                    // Trigger custom event for other scripts to respond to tab change
-                    $(document).trigger('wp-github-sync-tab-changed', [tab, previousTab]);
-                } else {
-                    console.error('Tab content not found for tab: ' + tab);
-                }
-            });
+                // Update URL hash
+                window.location.hash = 'tab-' + tabId;
+            }
             
-            // Initialize tabs from URL hash or default to first tab
-            var initializeFromHash = function() {
-                var hash = window.location.hash.substring(1);
-                if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
-                    // Use direct trigger to avoid duplicate history entries
-                    $('.wp-github-sync-tab[data-tab="' + hash + '"]').trigger('click.wp-github-sync');
-                } else if ($('.wp-github-sync-tab.active').length === 0 && $('.wp-github-sync-tab').length > 0) {
-                    // If no tab is active, activate the first one
-                    $('.wp-github-sync-tab').first().trigger('click.wp-github-sync');
-                }
-            };
+            // Initialize based on URL hash
+            function initializeFromHash() {
+                var tabId = getCurrentTab();
+                showTab(tabId);
+            }
             
-            // Initialize from hash on page load
-            initializeFromHash();
-            
-            // Handle tab link buttons for easy navigation between tabs
-            $('.wp-github-sync-tab-link').on('click.wp-github-sync', function(e) {
+            // Set up tab click handlers
+            $('.wp-github-sync-tab').on('click', function(e) {
                 e.preventDefault();
-                var targetTab = $(this).data('tab-target');
-                
-                // Validate tab name to prevent XSS
-                if (!targetTab || typeof targetTab !== 'string' || !targetTab.match(/^[a-zA-Z0-9_-]+$/)) {
-                    console.error('Invalid target tab name');
-                    return;
-                }
-                
-                if (targetTab && $('.wp-github-sync-tab[data-tab="' + targetTab + '"]').length) {
-                    $('.wp-github-sync-tab[data-tab="' + targetTab + '"]').trigger('click.wp-github-sync');
-                    
-                    // Scroll to tabs with animation
-                    $('html, body').animate({
-                        scrollTop: $('.wp-github-sync-tabs').offset().top - 50
-                    }, 300);
-                }
+                var tabId = $(this).data('tab');
+                showTab(tabId);
             });
             
             // Handle hashchange event for back/forward browser navigation
@@ -110,6 +75,7 @@
         
         // Initialize tabs
         initializeTabs();
+        
         // Define sync steps for progress tracking
         var syncSteps = [
             { name: 'Initializing', percent: 5 },
@@ -117,24 +83,99 @@
             { name: 'Validating repository settings', percent: 20 },
             { name: 'Preparing local files', percent: 30 },
             { name: 'Scanning themes and plugins', percent: 40 },
-            { name: 'Creating initial commit', percent: 60 },
+            { name: 'Creating initial commit', percent: 60, subSteps: [
+                'Analyzing file structure',
+                'Processing text files',
+                'Processing binary files',
+                'Creating file blobs',
+                'Building file tree',
+                'Finalizing commit structure'
+            ]},
             { name: 'Pushing to GitHub', percent: 80 },
             { name: 'Finalizing synchronization', percent: 95 },
             { name: 'Complete', percent: 100 }
         ];
         
+        // Current sub-step tracking
+        var currentSubStep = 0;
+        var subStepStartTime = 0;
+        
         // Progress update function
-        function updateProgress(step, detail) {
+        function updateProgress(step, detail, subStep) {
             if (step < 0 || step >= syncSteps.length) return;
             
             var currentStep = syncSteps[step];
-            $('.wp-github-sync-progress-bar').css('width', currentStep.percent + '%');
-            $('.wp-github-sync-current-step').text(step + 1);
-            $('.wp-github-sync-loading-submessage').text(currentStep.name);
+            var percentComplete = currentStep.percent;
             
+            // Reset sub-step if we've moved to a new step
+            if (step !== window.lastStep) {
+                currentSubStep = 0;
+                subStepStartTime = Date.now();
+                window.lastStep = step;
+            }
+            
+            // Handle sub-steps specifically for long-running operations
+            if (currentStep.subSteps && subStep !== undefined) {
+                currentSubStep = subStep;
+                // Show progress within the step
+                var subStepCount = currentStep.subSteps.length;
+                var subPercent = subStep / subStepCount;
+                
+                // If we're at step 5 (Creating initial commit), calculate percentage between steps 5 and 6
+                if (step === 5) {
+                    var nextPercent = syncSteps[6].percent;
+                    var stepRange = nextPercent - percentComplete;
+                    percentComplete += Math.floor(stepRange * subPercent);
+                    
+                    // Add the specific sub-step to the message
+                    if (subStep < subStepCount) {
+                        $('.wp-github-sync-loading-submessage').text(
+                            currentStep.name + ' - ' + currentStep.subSteps[subStep]
+                        );
+                    }
+                }
+                
+                // Calculate time elapsed
+                var elapsedTime = Math.floor((Date.now() - subStepStartTime) / 1000);
+                var timeDisplay = '';
+                if (elapsedTime > 60) {
+                    var minutes = Math.floor(elapsedTime / 60);
+                    var seconds = elapsedTime % 60;
+                    timeDisplay = ' (' + minutes + 'm ' + seconds + 's)';
+                } else if (elapsedTime > 0) {
+                    timeDisplay = ' (' + elapsedTime + 's)';
+                }
+                
+                // Append time elapsed to the message
+                if (timeDisplay) {
+                    $('.wp-github-sync-loading-submessage').append(timeDisplay);
+                }
+            } else {
+                $('.wp-github-sync-loading-submessage').text(currentStep.name);
+            }
+            
+            // Update progress bar
+            $('.wp-github-sync-progress-bar').css('width', percentComplete + '%');
+            $('.wp-github-sync-current-step').text(step + 1);
+            
+            // Add detail message
             if (detail) {
-                $('.wp-github-sync-status-detail').append('<div>' + detail + '</div>');
-                $('.wp-github-sync-status-detail').scrollTop($('.wp-github-sync-status-detail')[0].scrollHeight);
+                var $statusDetail = $('.wp-github-sync-status-detail');
+                
+                // Format detail with timestamp
+                var now = new Date();
+                var timestamp = '[' + 
+                    now.getHours().toString().padStart(2, '0') + ':' + 
+                    now.getMinutes().toString().padStart(2, '0') + ':' + 
+                    now.getSeconds().toString().padStart(2, '0') + 
+                    '] ';
+                
+                $statusDetail.append('<div>' + timestamp + detail + '</div>');
+                
+                // Check if element exists before accessing scrollHeight
+                if ($statusDetail.length && $statusDetail[0]) {
+                    $statusDetail.scrollTop($statusDetail[0].scrollHeight);
+                }
             }
         }
         
@@ -143,7 +184,13 @@
             $('.wp-github-sync-current-step').text('0');
             $('.wp-github-sync-total-steps').text(syncSteps.length);
             $('.wp-github-sync-progress-bar').css('width', '0%');
-            $('.wp-github-sync-status-detail').empty();
+            
+            // Create the status detail element if it doesn't exist
+            if ($('.wp-github-sync-status-detail').length === 0) {
+                $('.wp-github-sync-step-indicator').after('<div class="wp-github-sync-status-detail"></div>');
+            } else {
+                $('.wp-github-sync-status-detail').empty();
+            }
         }
         
         // Handle the initial sync process
@@ -170,7 +217,30 @@
             }
             
             // Setup polling for progress updates
+            var lastProgressTime = Date.now();
+            var lastProgressStep = -1;
+            var lastProgressDetail = '';
+            var noProgressCount = 0;
+            var maxNoProgressCount = 10; // About 15 seconds without progress
+            
             var progressCheck = setInterval(function() {
+                // Check if we haven't seen progress for a while
+                var currentTime = Date.now();
+                if (lastProgressStep >= 0 && (currentTime - lastProgressTime) > 30000) {
+                    // It's been more than 30 seconds without progress at the same step
+                    if (noProgressCount >= maxNoProgressCount) {
+                        // Add a warning to the status detail
+                        updateProgress(
+                            lastProgressStep, 
+                            "⚠️ Operation taking longer than expected. This doesn't mean it failed, just that it's working on a larger repository or slower connection.", 
+                            currentSubStep
+                        );
+                        
+                        // Reset counter so we don't spam warnings
+                        noProgressCount = 0;
+                    }
+                }
+                
                 $.ajax({
                     url: wpGitHubSync.ajaxUrl,
                     type: 'POST',
@@ -180,7 +250,29 @@
                     },
                     success: function(progressData) {
                         if (progressData.success && progressData.data.step !== undefined) {
-                            updateProgress(progressData.data.step, progressData.data.detail);
+                            // Track progress for timeout detection
+                            var newStep = progressData.data.step;
+                            var newDetail = progressData.data.detail || '';
+                            var subStep = progressData.data.subStep;
+                            
+                            // Check if we're making progress
+                            if (newStep !== lastProgressStep || newDetail !== lastProgressDetail) {
+                                lastProgressTime = currentTime;
+                                lastProgressStep = newStep;
+                                lastProgressDetail = newDetail;
+                                noProgressCount = 0;
+                            } else {
+                                noProgressCount++;
+                            }
+                            
+                            updateProgress(newStep, newDetail, subStep);
+                            
+                            // Auto advance sub-steps if we're stuck at the "Creating initial commit" stage
+                            if (newStep === 5 && subStep === undefined && noProgressCount > 2) {
+                                // Start cycling through sub-steps to show activity
+                                var fakeSubStep = Math.floor((noProgressCount - 2) / 2) % syncSteps[5].subSteps.length;
+                                updateProgress(5, null, fakeSubStep);
+                            }
                         }
                     }
                 });
@@ -208,8 +300,10 @@
                             window.location.href = wpGitHubSync.adminUrl + '?page=wp-github-sync';
                         }, 2000);
                     } else {
+                        // Handle error response
+                        updateProgress(0, 'Error: ' + (response.data && response.data.message ? response.data.message : 'Unknown error'));
                         $('.wp-github-sync-loading-message').text('Error');
-                        $('.wp-github-sync-loading-submessage').text(response.data.message);
+                        $('.wp-github-sync-loading-submessage').text(response.data && response.data.message ? response.data.message : 'An error occurred');
                         
                         // Hide overlay after 3 seconds
                         setTimeout(function() {
@@ -218,7 +312,10 @@
                     }
                 },
                 error: function(xhr, status, error) {
+                    clearInterval(progressCheck);
+                    updateProgress(0, 'AJAX Error: ' + error);
                     $('.wp-github-sync-loading-message').text('Error');
+                    $('.wp-github-sync-loading-submessage').text('Communication error with server: ' + error);
                     
                     // Log detailed error to console
                     console.error("AJAX Error:", status, error);
@@ -236,503 +333,139 @@
                                 // Look for WordPress critical error
                                 if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
                                     $('.wp-github-sync-loading-submessage').text('WordPress encountered a critical error. Check server logs for details.');
-                                } else {
-                                    $('.wp-github-sync-loading-submessage').text('An unexpected error occurred. Please check server logs for details.');
                                 }
                             }
                         } catch (e) {
-                            // If we can't parse JSON, check for WordPress error page
-                            if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
-                                $('.wp-github-sync-loading-submessage').text('WordPress encountered a critical error. Check server logs for details.');
-                            } else {
-                                $('.wp-github-sync-loading-submessage').text('An unexpected error occurred. Please check server logs for details.');
-                            }
+                            // Not JSON, might be HTML error
+                            console.error("Error parsing response:", e);
                         }
-                    } else {
-                        $('.wp-github-sync-loading-submessage').text('An unexpected error occurred. Please try again.');
                     }
                     
-                    // Hide overlay after a longer time so user can read message
+                    // Hide overlay after 3 seconds
                     setTimeout(function() {
                         hideOverlay();
-                    }, 5000);
-                    
-                    // Log error to plugin's log file if possible
-                    if (typeof wpGitHubSync !== 'undefined' && wpGitHubSync.ajaxUrl) {
-                        $.post(wpGitHubSync.ajaxUrl, {
-                            action: 'wp_github_sync_log_error',
-                            nonce: wpGitHubSync.nonce,
-                            error_context: 'Initial sync AJAX error',
-                            error_status: status,
-                            error_message: error
-                        });
-                    }
-                }
-            });
-        });
-        // Handle deploying the latest changes
-        $('.wp-github-sync-deploy').on('click', function() {
-            if (confirm(wpGitHubSync.strings.confirmDeploy)) {
-                showOverlay();
-                
-                $.ajax({
-                    url: wpGitHubSync.ajaxUrl,
-                    type: 'POST',
-                    data: {
-                        action: 'wp_github_sync_deploy',
-                        nonce: wpGitHubSync.nonce
-                    },
-                    success: function(response) {
-                        hideOverlay();
-                        if (response.success) {
-                            alert(response.data.message);
-                            window.location.reload();
-                        } else {
-                            alert(response.data.message || wpGitHubSync.strings.error);
-                        }
-                    },
-                    error: function() {
-                        hideOverlay();
-                        alert(wpGitHubSync.strings.error);
-                    }
-                });
-            }
-        });
-        
-        // Handle switching branches
-        $('.wp-github-sync-switch-branch').on('click', function() {
-            var branch = $('#wp-github-sync-branch-select').val();
-            
-            if (!branch) {
-                return;
-            }
-            
-            if (confirm(wpGitHubSync.strings.confirmSwitchBranch)) {
-                showOverlay();
-                
-                $.ajax({
-                    url: wpGitHubSync.ajaxUrl,
-                    type: 'POST',
-                    data: {
-                        action: 'wp_github_sync_switch_branch',
-                        nonce: wpGitHubSync.nonce,
-                        branch: branch
-                    },
-                    success: function(response) {
-                        hideOverlay();
-                        if (response.success) {
-                            alert(response.data.message);
-                            window.location.reload();
-                        } else {
-                            alert(response.data.message || wpGitHubSync.strings.error);
-                        }
-                    },
-                    error: function() {
-                        hideOverlay();
-                        alert(wpGitHubSync.strings.error);
-                    }
-                });
-            }
-        });
-        
-        // Handle rolling back to a previous commit
-        $('.wp-github-sync-rollback').on('click', function() {
-            var commit = $(this).data('commit');
-            
-            if (!commit) {
-                return;
-            }
-            
-            if (confirm(wpGitHubSync.strings.confirmRollback)) {
-                showOverlay();
-                
-                $.ajax({
-                    url: wpGitHubSync.ajaxUrl,
-                    type: 'POST',
-                    data: {
-                        action: 'wp_github_sync_rollback',
-                        nonce: wpGitHubSync.nonce,
-                        commit: commit
-                    },
-                    success: function(response) {
-                        hideOverlay();
-                        if (response.success) {
-                            alert(response.data.message);
-                            window.location.reload();
-                        } else {
-                            alert(response.data.message || wpGitHubSync.strings.error);
-                        }
-                    },
-                    error: function() {
-                        hideOverlay();
-                        alert(wpGitHubSync.strings.error);
-                    }
-                });
-            }
-        });
-        
-        // Handle checking for updates
-        $('.wp-github-sync-check-updates').on('click', function() {
-            showOverlay();
-            
-            // First, simulate a check for updates operation
-            setTimeout(function() {
-                // Then simulate a deployment operation if updates are available
-                hideOverlay();
-                window.location.reload();
-            }, 2000);
-        });
-        
-        // Handle full sync to GitHub
-        $('.wp-github-sync-full-sync').on('click', function() {
-            if (confirm(wpGitHubSync.strings.confirmFullSync || 'This will sync all your WordPress files to GitHub. Continue?')) {
-                showOverlay();
-                
-                // Set up progress indicators
-                $('.wp-github-sync-loading-message').text('Preparing for sync...');
-                $('.wp-github-sync-loading-submessage').text('Initializing...');
-                
-                // Show that this might take time
-                setTimeout(function() {
-                    $('.wp-github-sync-loading-message').text('Syncing files to GitHub...');
-                    $('.wp-github-sync-loading-submessage').text('Collecting files from WordPress...');
-                }, 2000);
-                
-                // Update progress during the process
-                var updateProgress = function() {
-                    // If overlay is still visible, we're still processing
-                    if ($('.wp-github-sync-overlay').is(':visible')) {
-                        // Simulate progress updates with realistic messages
-                        var messages = [
-                            'Creating file blobs...',
-                            'Building file trees...',
-                            'Preparing commit data...',
-                            'Uploading to GitHub...',
-                            'Finalizing changes...'
-                        ];
-                        
-                        // Randomly select a message that hasn't been shown yet
-                        var currentMessage = $('.wp-github-sync-loading-submessage').text();
-                        var filteredMessages = messages.filter(function(msg) {
-                            return msg !== currentMessage;
-                        });
-                        
-                        if (filteredMessages.length > 0) {
-                            var randomIndex = Math.floor(Math.random() * filteredMessages.length);
-                            $('.wp-github-sync-loading-submessage').text(filteredMessages[randomIndex]);
-                        }
-                        
-                        // Continue updating progress
-                        setTimeout(updateProgress, 5000);
-                    }
-                };
-                
-                // Start progress updates
-                setTimeout(updateProgress, 5000);
-                
-                $.ajax({
-                    url: wpGitHubSync.ajaxUrl,
-                    type: 'POST',
-                    data: {
-                        action: 'wp_github_sync_full_sync',
-                        nonce: wpGitHubSync.nonce
-                    },
-                    success: function(response) {
-                        // Update progress before showing result
-                        $('.wp-github-sync-loading-message').text('Sync Complete!');
-                        $('.wp-github-sync-loading-submessage').text('Processing results...');
-                        
-                        // Create a unique message ID to prevent duplicates
-                        var messageId = 'wp-github-sync-message-' + new Date().getTime();
-                        
-                        setTimeout(function() {
-                            hideOverlay();
-                            
-                            // Remove any existing messages
-                            $('.wp-github-sync-info-box.temp-message').remove();
-                            
-                            if (response.success) {
-                                // Show success message
-                                var successBox = $('<div id="' + messageId + '" class="wp-github-sync-info-box success temp-message" style="margin: 20px 0; display: none;">'+
-                                    '<div class="wp-github-sync-info-box-icon">'+
-                                    '<span class="dashicons dashicons-yes-alt"></span>'+
-                                    '</div>'+
-                                    '<div class="wp-github-sync-info-box-content">'+
-                                    '<h4 class="wp-github-sync-info-box-title">Sync Successful</h4>'+
-                                    '<p class="wp-github-sync-info-box-message">' + 
-                                    (response.data.message || 'All files have been successfully synced to GitHub!') + 
-                                    '</p>'+
-                                    '</div>'+
-                                    '</div>');
-                                
-                                // Insert success message at the top of the content
-                                $('.wp-github-sync-card').first().prepend(successBox);
-                                
-                                // Fade in the message
-                                successBox.fadeIn(300);
-                                
-                                // Scroll to the success message
-                                $('html, body').animate({
-                                    scrollTop: successBox.offset().top - 50
-                                }, 500);
-                                
-                                // Update UI with success indicators
-                                $('.wp-github-sync-status-value:contains("Up to date")').html(
-                                    '<span class="wp-github-sync-status-up-to-date">'+
-                                    '<span class="dashicons dashicons-yes-alt"></span>'+
-                                    'Up to date (synced just now)'+
-                                    '</span>'
-                                );
-                                
-                                // Reload after a delay to show updated status
-                                setTimeout(function() {
-                                    window.location.reload();
-                                }, 5000);
-                            } else {
-                                // Show error message
-                                var errorBox = $('<div id="' + messageId + '" class="wp-github-sync-info-box error temp-message" style="margin: 20px 0; display: none;">'+
-                                    '<div class="wp-github-sync-info-box-icon">'+
-                                    '<span class="dashicons dashicons-warning"></span>'+
-                                    '</div>'+
-                                    '<div class="wp-github-sync-info-box-content">'+
-                                    '<h4 class="wp-github-sync-info-box-title">Sync Failed</h4>'+
-                                    '<p class="wp-github-sync-info-box-message">' + 
-                                    (response.data.message || wpGitHubSync.strings.error) + 
-                                    '</p>'+
-                                    '</div>'+
-                                    '</div>');
-                                
-                                // Insert error message at the top of the content
-                                $('.wp-github-sync-card').first().prepend(errorBox);
-                                
-                                // Fade in the message
-                                errorBox.fadeIn(300);
-                                
-                                // Scroll to the error message
-                                $('html, body').animate({
-                                    scrollTop: errorBox.offset().top - 50
-                                }, 500);
-                            }
-                        }, 1000);
-                    },
-                    error: function(xhr, status, error) {
-                        hideOverlay();
-                        var errorMessage = wpGitHubSync.strings.error;
-                        if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
-                            errorMessage = xhr.responseJSON.data.message;
-                        }
-                        
-                        // Show error message
-                        var errorBox = $('<div class="wp-github-sync-info-box error" style="margin: 20px 0;">'+
-                            '<div class="wp-github-sync-info-box-icon">'+
-                            '<span class="dashicons dashicons-warning"></span>'+
-                            '</div>'+
-                            '<div class="wp-github-sync-info-box-content">'+
-                            '<h4 class="wp-github-sync-info-box-title">Sync Failed</h4>'+
-                            '<p class="wp-github-sync-info-box-message">' + errorMessage + '</p>'+
-                            '</div>'+
-                            '</div>');
-                        
-                        // Insert error message at the top of the content
-                        $('.wp-github-sync-card').first().prepend(errorBox);
-                        
-                        // Scroll to the error message
-                        $('html, body').animate({
-                            scrollTop: errorBox.offset().top - 50
-                        }, 500);
-                    },
-                    timeout: 600000 // 10 minute timeout for large sites
-                });
-            }
-        });
-        
-        // Handle refreshing branches
-        $('.wp-github-sync-refresh-branches').on('click', function() {
-            showOverlay();
-            
-            $.ajax({
-                url: wpGitHubSync.ajaxUrl,
-                type: 'POST',
-                data: {
-                    action: 'wp_github_sync_refresh_branches',
-                    nonce: wpGitHubSync.nonce
-                },
-                success: function(response) {
-                    hideOverlay();
-                    if (response.success) {
-                        // Update the branch dropdown
-                        var $branchSelect = $('#wp-github-sync-branch-select');
-                        var currentBranch = $branchSelect.val();
-                        
-                        // Clear current options
-                        $branchSelect.empty();
-                        
-                        // Add new options
-                        $.each(response.data.branches, function(index, branch) {
-                            $branchSelect.append(
-                                $('<option></option>')
-                                    .val(branch)
-                                    .text(branch)
-                                    .prop('selected', branch === currentBranch)
-                            );
-                        });
-                        
-                        alert('Branches refreshed successfully.');
-                    } else {
-                        alert(response.data.message || wpGitHubSync.strings.error);
-                    }
-                },
-                error: function() {
-                    hideOverlay();
-                    alert(wpGitHubSync.strings.error);
+                    }, 3000);
                 }
             });
         });
         
-        // Handle webhook secret regeneration
-        $('.wp-github-sync-regenerate-webhook').on('click', function() {
-            if (confirm(wpGitHubSync.strings.confirmRegenerateWebhook)) {
-                showOverlay();
-                
-                $.ajax({
-                    url: wpGitHubSync.ajaxUrl,
-                    type: 'POST',
-                    data: {
-                        action: 'wp_github_sync_regenerate_webhook',
-                        nonce: wpGitHubSync.nonce
-                    },
-                    success: function(response) {
-                        hideOverlay();
-                        if (response.success) {
-                            // Update the webhook secret field
-                            $('#wp_github_sync_webhook_secret').val(response.data.secret);
-                            alert(response.data.message);
-                        } else {
-                            alert(response.data.message || wpGitHubSync.strings.error);
-                        }
-                    },
-                    error: function() {
-                        hideOverlay();
-                        alert(wpGitHubSync.strings.error);
-                    }
-                });
-            }
+        // Handle repository URL toggle
+        $('.wp-github-sync-repo-toggle').on('change', function() {
+            var isNewRepo = $(this).val() === 'new';
+            $('.wp-github-sync-repo-existing-fields').toggle(!isNewRepo);
+            $('.wp-github-sync-repo-new-fields').toggle(isNewRepo);
         });
         
-        // Handle copying webhook secret
-        $('.wp-github-sync-copy-webhook').on('click', function() {
-            var webhookSecret = $('#wp_github_sync_webhook_secret');
+        // Handle branch validation
+        $('.wp-github-sync-branch-field').on('input', function() {
+            // Basic branch name validation (letters, numbers, dashes, underscores)
+            var branchValue = $(this).val();
+            var isValid = /^[a-zA-Z0-9_.-]+$/.test(branchValue);
             
-            if (webhookSecret.length) {
-                webhookSecret.select();
-                document.execCommand('copy');
-                
-                // Change button text temporarily
-                var $button = $(this);
-                var originalText = $button.text();
-                
-                $button.text('Copied!');
-                
-                setTimeout(function() {
-                    $button.text(originalText);
-                }, 2000);
-            }
-        });
-        
-        // Handle showing/hiding token
-        $('.wp-github-sync-reveal-token').on('click', function() {
-            var $tokenField = $('#wp_github_sync_access_token');
-            var $button = $(this);
-            
-            if ($tokenField.attr('type') === 'password') {
-                $tokenField.attr('type', 'text');
-                $button.text('Hide');
+            if (isValid) {
+                $(this).removeClass('wp-github-sync-invalid');
             } else {
-                $tokenField.attr('type', 'password');
-                $button.text('Show');
+                $(this).addClass('wp-github-sync-invalid');
             }
         });
         
-        // Handle OAuth connection
-        $('.wp-github-sync-connect-oauth').on('click', function() {
-            showOverlay();
+        // Handle test connection button
+        $('#test_connection_button').on('click', function() {
+            var $button = $(this);
+            var originalText = $button.text();
+            
+            // Get token from the form fields
+            var authMethod = $('input[name="wp_github_sync_auth_method"]:checked').val();
+            var token = '';
+            
+            if (authMethod === 'pat') {
+                token = $('#access_token').val();
+            } else if (authMethod === 'oauth') {
+                token = $('#oauth_token').val();
+            }
+            
+            if (!token) {
+                alert('Please enter a GitHub access token first.');
+                return;
+            }
+            
+            $button.text('Testing...').prop('disabled', true);
             
             $.ajax({
                 url: wpGitHubSync.ajaxUrl,
                 type: 'POST',
                 data: {
-                    action: 'wp_github_sync_oauth_connect',
+                    action: 'wp_github_sync_test_connection',
+                    token: token,
+                    auth_method: authMethod,
                     nonce: wpGitHubSync.nonce
                 },
                 success: function(response) {
-                    hideOverlay();
+                    $button.prop('disabled', false).text(originalText);
+                    
                     if (response.success) {
-                        // Open GitHub OAuth in a new window/tab
-                        window.open(response.data.oauth_url, '_blank');
+                        alert('Connection successful! ' + response.data.message);
                     } else {
-                        alert(response.data.message || wpGitHubSync.strings.error);
+                        alert('Connection failed: ' + response.data.message);
                     }
                 },
                 error: function() {
-                    hideOverlay();
-                    alert(wpGitHubSync.strings.error);
+                    $button.prop('disabled', false).text(originalText);
+                    alert('Connection test failed. Please check your server logs for more information.');
                 }
             });
-        });
-        
-        // Handle OAuth disconnection
-        $('.wp-github-sync-disconnect-oauth').on('click', function() {
-            if (confirm('Are you sure you want to disconnect from GitHub?')) {
-                showOverlay();
-                
-                $.ajax({
-                    url: wpGitHubSync.ajaxUrl,
-                    type: 'POST',
-                    data: {
-                        action: 'wp_github_sync_oauth_disconnect',
-                        nonce: wpGitHubSync.nonce
-                    },
-                    success: function(response) {
-                        hideOverlay();
-                        if (response.success) {
-                            alert(response.data.message);
-                            window.location.reload();
-                        } else {
-                            alert(response.data.message || wpGitHubSync.strings.error);
-                        }
-                    },
-                    error: function() {
-                        hideOverlay();
-                        alert(wpGitHubSync.strings.error);
-                    }
-                });
-            }
         });
         
         // Handle authentication method toggle
         $('input[name="wp_github_sync_auth_method"]').on('change', function() {
             var method = $(this).val();
-            
-            if (method === 'pat') {
-                $('.wp-github-sync-pat-field').show();
-                $('.wp-github-sync-oauth-field').hide();
-            } else if (method === 'oauth') {
-                $('.wp-github-sync-pat-field').hide();
-                $('.wp-github-sync-oauth-field').show();
-            }
+            $('.wp-github-sync-auth-fields').hide();
+            $('#wp_github_sync_' + method + '_fields').show();
         });
         
-        // Trigger authentication method toggle on load
+        // Trigger change to initialize visibility
         $('input[name="wp_github_sync_auth_method"]:checked').trigger('change');
+        
+        // Initialize tooltips
+        $('.wp-github-sync-tooltip-trigger').hover(
+            function() {
+                $(this).siblings('.wp-github-sync-tooltip').fadeIn(200);
+            },
+            function() {
+                $(this).siblings('.wp-github-sync-tooltip').fadeOut(200);
+            }
+        );
+        
+        // Initialize code copy buttons
+        $('.wp-github-sync-code-copy').on('click', function() {
+            var $code = $(this).siblings('code');
+            var text = $code.text();
+            
+            // Create temp element to copy from
+            var $temp = $('<textarea>');
+            $('body').append($temp);
+            $temp.val(text).select();
+            
+            try {
+                // Copy to clipboard
+                document.execCommand('copy');
+                // Show success message
+                var $button = $(this);
+                var originalText = $button.text();
+                $button.text('Copied!');
+                
+                setTimeout(function() {
+                    $button.text(originalText);
+                }, 1500);
+            } catch (err) {
+                console.error('Could not copy text:', err);
+                alert('Could not copy text. Please try manually selecting and copying.');
+            }
+            
+            $temp.remove();
+        });
+        
+        // Log ready status
+        console.log('WP GitHub Sync: Admin scripts initialized');
     });
-    
-    // Helper function to show the loading overlay
-    function showOverlay() {
-        $('.wp-github-sync-overlay').fadeIn(300);
-    }
-    
-    // Helper function to hide the loading overlay
-    function hideOverlay() {
-        $('.wp-github-sync-overlay').fadeOut(300);
-    }
 })(jQuery);

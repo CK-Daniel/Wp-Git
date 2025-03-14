@@ -894,13 +894,48 @@ mark {
     border-radius: 5px;
     overflow: hidden;
     margin-bottom: 10px;
+    position: relative;
 }
 
 .wp-github-sync-progress-bar {
     height: 100%;
     background-color: #2271b1;
     border-radius: 5px;
-    transition: width 0.3s ease;
+    transition: width 0.5s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Add animated stripes for active progress */
+.wp-github-sync-progress-bar::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: linear-gradient(
+        45deg,
+        rgba(255, 255, 255, 0.15) 25%,
+        transparent 25%,
+        transparent 50%,
+        rgba(255, 255, 255, 0.15) 50%,
+        rgba(255, 255, 255, 0.15) 75%,
+        transparent 75%,
+        transparent
+    );
+    background-size: 20px 20px;
+    animation: progress-stripes 1s linear infinite;
+    z-index: 1;
+}
+
+@keyframes progress-stripes {
+    from {
+        background-position: 0 0;
+    }
+    to {
+        background-position: 20px 0;
+    }
 }
 
 .wp-github-sync-step-indicator {
@@ -912,12 +947,31 @@ mark {
 .wp-github-sync-status-detail {
     color: rgba(255, 255, 255, 0.7);
     font-size: 14px;
-    max-width: 80%;
-    text-align: center;
+    max-width: 90%;
+    width: 600px;
+    text-align: left;
     font-family: monospace;
     background: rgba(0, 0, 0, 0.3);
     padding: 8px 15px;
     border-radius: 4px;
-    max-height: 100px;
+    max-height: 150px;
     overflow-y: auto;
+    line-height: 1.4;
+    margin-top: 10px;
+    box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.5);
+}
+
+.wp-github-sync-status-detail div {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 4px 0;
+}
+
+.wp-github-sync-status-detail div:last-child {
+    border-bottom: none;
+}
+
+/* Highlight warnings */
+.wp-github-sync-status-detail div:contains("⚠️") {
+    color: #f0c674;
+    font-weight: bold;
 }

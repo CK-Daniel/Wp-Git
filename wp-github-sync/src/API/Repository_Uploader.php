@@ -23,6 +23,27 @@ class Repository_Uploader {
      * @var API_Client
      */
     private $api_client;
+    
+    /**
+     * Progress callback function
+     * 
+     * @var callable|null
+     */
+    private $progress_callback = null;
+    
+    /**
+     * File processing statistics
+     * 
+     * @var array
+     */
+    private $file_stats = [
+        'total_files' => 0,
+        'processed_files' => 0,
+        'binary_files' => 0,
+        'text_files' => 0,
+        'blobs_created' => 0,
+        'failures' => 0
+    ];
 
     /**
      * Initialize the Repository Uploader class.
@@ -31,6 +52,31 @@ class Repository_Uploader {
      */
     public function __construct($api_client) {
         $this->api_client = $api_client;
+    }
+    
+    /**
+     * Set a progress callback function
+     * 
+     * @param callable $callback Function that takes ($subStep, $detail, $stats)
+     * @return void
+     */
+    public function set_progress_callback($callback) {
+        $this->progress_callback = $callback;
+    }
+    
+    /**
+     * Update progress via callback
+     * 
+     * @param int $subStep Sub-step number
+     * @param string $detail Progress detail message
+     * @param array $stats Optional additional stats
+     */
+    private function update_progress($subStep, $detail, $stats = []) {
+        if (is_callable($this->progress_callback)) {
+            // Merge provided stats with ongoing file stats
+            $stats = array_merge($this->file_stats, $stats);
+            call_user_func($this->progress_callback, $subStep, $detail, $stats);
+        }
     }
 
     /**
@@ -527,13 +573,31 @@ class Repository_Uploader {
         $max_files = 1000; // GitHub has limits on tree size
         $skipped_files = [];
         
+        // Reset file stats for this operation
+        $this->file_stats = [
+            'total_files' => 0,
+            'processed_files' => 0,
+            'binary_files' => 0,
+            'text_files' => 0,
+            'blobs_created' => 0,
+            'failures' => 0
+        ];
+        
+        // Report initial progress
+        $this->update_progress(1, "Starting file analysis");
+        
         // Log directory contents first
         wp_github_sync_log("Scanning directory for files: {$directory}", 'debug');
         $this->list_directory_recursive($directory);
         
         // Recursive function to process directories
-        $process_directory = function($dir, $base_path = '') use (&$process_directory, &$tree_items, &$files_processed, &$total_size, &$skipped_files, $upload_limit, $max_files) {
+        $process_directory = function($dir, $base_path = '') use (&$process_directory, &$tree_items, &$files_processed, &$total_size, &$skipped_files, $upload_limit, $max_files, &$this) {
             wp_github_sync_log("Processing directory: {$dir} (base path: {$base_path})", 'debug');
+            
+            // Update directory processing progress
+            $this->file_stats['total_files'] = max($this->file_stats['total_files'], $files_processed + 10); // Estimate
+            $this->file_stats['processed_files'] = $files_processed;
+            $this->update_progress(2, "Processing directory: " . basename($dir));
             
             if (!is_dir($dir)) {
                 wp_github_sync_log("Directory does not exist: {$dir}", 'error');
@@ -681,11 +745,27 @@ class Repository_Uploader {
                         
                         // Common image formats should always be treated as binary
                         $file_ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
-                        $binary_extensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'ico', 'webp', 'svg'];
+                        $binary_extensions = [
+                            // Images
+                            'jpg', 'jpeg', 'png', 'gif', 'bmp', 'ico', 'webp', 'svg', 
+                            // Archives
+                            'zip', 'gz', 'tar', 'rar', '7z',
+                            // Media
+                            'mp3', 'mp4', 'mov', 'avi', 'wmv', 'webm', 
+                            // Documents and fonts
+                            'pdf', 'ttf', 'otf', 'woff', 'woff2', 'eot',
+                            // Translation files (these often cause issues with UTF-8)
+                            'mo', 'po'
+                        ];
                         
                         if (in_array($file_ext, $binary_extensions)) {
-                            wp_github_sync_log("File {$file} has binary extension, treating as binary", 'debug');
+                            wp_github_sync_log("File {$file} has binary extension ({$file_ext}), treating as binary", 'debug');
                             $is_binary = true;
+                            
+                            // Track file types for progress reporting
+                            $this->file_stats['binary_files']++;
+                        } else {
+                            $this->file_stats['text_files']++;
                         }
                         
                         // Always treat files that look like images as binary
@@ -750,6 +830,12 @@ class Repository_Uploader {
                             }
                         }
                         
+                        // Update progress before blob creation
+                        $this->file_stats['processed_files'] = $files_processed;
+                        if ($files_processed % 5 == 0 || $file_ext === 'po') { // Update more frequently for translation files
+                            $this->update_progress(3, "Processing file: {$relative_path} ({$files_processed}/{$this->file_stats['total_files']})");
+                        }
+                        
                         wp_github_sync_log("Creating blob for file: {$relative_path}", 'debug');
                         $blob = $this->api_client->request(
                             "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
@@ -768,7 +854,8 @@ class Repository_Uploader {
                                 strpos($error_message, '400') !== false ||
                                 strpos($error_message, 'Bad Request') !== false ||
                                 strpos($error_message, 'Unprocessable') !== false ||
-                                strpos($error_message, '422') !== false) {
+                                strpos($error_message, '422') !== false ||
+                                strpos($error_message, '412') !== false) {
                                 
                                 wp_github_sync_log("Retrying with forced base64 encoding due to API error", 'debug');
                                 
@@ -777,6 +864,11 @@ class Repository_Uploader {
                                     'content' => base64_encode($content),
                                     'encoding' => 'base64'
                                 ];
+                                
+                                // For .po files or 412 errors, add a status update
+                                if ($file_ext === 'po' || strpos($error_message, '412') !== false) {
+                                    $this->update_progress(3, "Special retry for translation file: {$relative_path}");
+                                }
                                 
                                 $retry_blob = $this->api_client->request(
                                     "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
@@ -787,6 +879,37 @@ class Repository_Uploader {
                                 if (!is_wp_error($retry_blob)) {
                                     wp_github_sync_log("Retry successful with base64 encoding", 'info');
                                     $blob = $retry_blob;
+                                    // Track successful retry
+                                    $this->file_stats['blobs_created']++;
+                                } else if (($file_ext === 'po' || strpos($error_message, '412') !== false) && 
+                                         function_exists('mb_convert_encoding')) {
+                                    // Second retry attempt with sanitized content for .po files with 412 errors
+                                    wp_github_sync_log("Translation file still failing, trying with sanitized content: {$relative_path}", 'warning');
+                                    $this->update_progress(3, "Final retry with sanitized content: {$relative_path}");
+                                    
+                                    // Sanitize content using MB functions
+                                    $sanitized_content = mb_convert_encoding($content, 'UTF-8', 'UTF-8');
+                                    // Also strip NUL bytes which can cause issues
+                                    $sanitized_content = str_replace("\0", "", $sanitized_content);
+                                    
+                                    $final_retry_blob = $this->api_client->request(
+                                        "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
+                                        'POST',
+                                        [
+                                            'content' => base64_encode($sanitized_content),
+                                            'encoding' => 'base64'
+                                        ]
+                                    );
+                                    
+                                    if (!is_wp_error($final_retry_blob)) {
+                                        wp_github_sync_log("Final retry successful with sanitized content", 'info');
+                                        $blob = $final_retry_blob;
+                                        // Track successful retry
+                                        $this->file_stats['blobs_created']++;
+                                    } else {
+                                        wp_github_sync_log("Final retry also failed for {$relative_path}", 'error');
+                                        $this->file_stats['failures']++;
+                                    }
                                 } else {
                                     // Try one more time with a short pause and slight modification
                                     wp_github_sync_log("First retry failed, pausing and trying again with additional encoding sanitization", 'debug');
@@ -872,6 +995,12 @@ class Repository_Uploader {
         // Process the directory
         $process_directory($directory);
         
+        // Update final processing stats and progress
+        $this->file_stats['total_files'] = $files_processed;
+        $this->file_stats['processed_files'] = $files_processed;
+        $this->update_progress(4, "File processing complete: {$files_processed} files, " . 
+            round($total_size/1024/1024, 2) . "MB, " . count($tree_items) . " tree items");
+        
         // Log summary of processed files
         wp_github_sync_log("Total files processed: {$files_processed}, total size: " . round($total_size/1024/1024, 2) . "MB", 'info');
         wp_github_sync_log("Tree items created: " . count($tree_items), 'info');
@@ -897,6 +1026,9 @@ class Repository_Uploader {
             
             // Store skipped files in a transient for user feedback
             set_transient('wp_github_sync_skipped_files', $skipped_files, HOUR_IN_SECONDS);
+            
+            // Update progress with skipped files information
+            $this->update_progress(4, "Warning: {$skipped_count} files were skipped during processing");
         }
         
         return $tree_items;
