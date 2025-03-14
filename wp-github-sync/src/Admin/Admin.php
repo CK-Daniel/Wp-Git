@@ -1113,156 +1113,179 @@ class Admin {
             
             // If creating a new repository
             if ($create_new_repo) {
-                if (empty($repo_name)) {
-                    // Generate default repo name based on site URL
-                    $site_url = parse_url(get_site_url(), PHP_URL_HOST);
-                    $repo_name = sanitize_title(str_replace('.', '-', $site_url));
-                    wp_github_sync_log("Using generated repo name: " . $repo_name, 'info');
-                }
-                
-                // Create description based on site name
-                $site_name = get_bloginfo('name');
-                $description = sprintf(__('WordPress site: %s', 'wp-github-sync'), $site_name);
-                
-                wp_github_sync_log("Creating new repository: " . $repo_name, 'info');
-                
                 try {
-                    // Create the repository
-                    $result = $this->github_api->create_repository($repo_name, $description);
-                    
-                    if (is_wp_error($result)) {
-                        wp_github_sync_log("Failed to create repository: " . $result->get_error_message(), 'error');
-                        wp_send_json_error(array('message' => sprintf(__('Failed to create repository: %s', 'wp-github-sync'), $result->get_error_message())));
-                        return;
+                    if (empty($repo_name)) {
+                        // Generate default repo name based on site URL
+                        $site_url = parse_url(get_site_url(), PHP_URL_HOST);
+                        $repo_name = sanitize_title(str_replace('.', '-', $site_url));
+                        wp_github_sync_log("Using generated repo name: " . $repo_name, 'info');
                     }
                     
-                    // Get the repository URL and owner/repo details
-                    if (isset($result['html_url'])) {
-                        $repo_url = $result['html_url'];
-                        $repo_owner = isset($result['owner']['login']) ? $result['owner']['login'] : '';
-                        $repo_name = isset($result['name']) ? $result['name'] : '';
+                    // Create description based on site name
+                    $site_name = get_bloginfo('name');
+                    $description = sprintf(__('WordPress site: %s', 'wp-github-sync'), $site_name);
+                    
+                    wp_github_sync_log("Creating new repository: " . $repo_name, 'info');
+                    
+                    try {
+                        // Create the repository
+                        $result = $this->github_api->create_repository($repo_name, $description);
                         
-                        wp_github_sync_log("Repository created successfully: " . $repo_url, 'info');
-                        
-                        // Save repository URL to settings
-                        update_option('wp_github_sync_repository', $repo_url);
-                        
-                        // Try initial sync for a new repository
-                        wp_github_sync_log("Starting initial file sync to new repository", 'info');
-                        
-                        try {
-                            $sync_result = $this->github_api->initial_sync();
-                            
-                            if (is_wp_error($sync_result)) {
-                                wp_github_sync_log("Initial file sync failed: " . $sync_result->get_error_message(), 'error');
-                                // Even if sync fails, we created the repo, so consider it successful
-                                wp_send_json_success(array(
-                                    'message' => sprintf(
-                                        __('Repository created successfully at %s. However, initial file sync failed: %s', 'wp-github-sync'),
-                                        $repo_url,
-                                        $sync_result->get_error_message()
-                                    ),
-                                    'repo_url' => $repo_url,
-                                ));
-                                return;
-                            }
-                        } catch (Exception $sync_exception) {
-                            wp_github_sync_log("Exception during initial file sync: " . $sync_exception->getMessage(), 'error');
-                            wp_send_json_error(array('message' => sprintf(__('Repository created, but initial sync failed: %s', 'wp-github-sync'), $sync_exception->getMessage())));
+                        if (is_wp_error($result)) {
+                            wp_github_sync_log("Failed to create repository: " . $result->get_error_message(), 'error');
+                            wp_send_json_error(array('message' => sprintf(__('Failed to create repository: %s', 'wp-github-sync'), $result->get_error_message())));
                             return;
                         }
                         
-                        // Set deployed branch and mark first deployment
-                        update_option('wp_github_sync_branch', 'main');
-                        update_option('wp_github_sync_last_deployment_time', time());
-                        update_option('wp_github_sync_last_deployed_commit', $sync_result);
-                        
-                        wp_github_sync_log("Repository created and initialized successfully", 'info');
-                        
-                        wp_send_json_success(array(
-                            'message' => sprintf(__('Repository created and initialized successfully at %s', 'wp-github-sync'), $repo_url),
-                            'repo_url' => $repo_url,
-                        ));
-                        return;
-                    } else {
-                        wp_github_sync_log("Repository created, but response missing URL", 'error');
-                        wp_send_json_error(array('message' => __('Repository created, but the response did not include the repository URL.', 'wp-github-sync')));
+                        // Get the repository URL and owner/repo details
+                        if (isset($result['html_url'])) {
+                            $repo_url = $result['html_url'];
+                            $repo_owner = isset($result['owner']['login']) ? $result['owner']['login'] : '';
+                            $repo_name = isset($result['name']) ? $result['name'] : '';
+                            
+                            wp_github_sync_log("Repository created successfully: " . $repo_url, 'info');
+                            
+                            // Save repository URL to settings
+                            update_option('wp_github_sync_repository', $repo_url);
+                            
+                            // Try initial sync for a new repository
+                            wp_github_sync_log("Starting initial file sync to new repository", 'info');
+                            
+                            try {
+                                // Create Repository instance with the API client
+                                $repository = new \WPGitHubSync\API\Repository($this->github_api);
+                                $sync_result = $repository->initial_sync();
+                                
+                                if (is_wp_error($sync_result)) {
+                                    wp_github_sync_log("Initial file sync failed: " . $sync_result->get_error_message(), 'error');
+                                    // Even if sync fails, we created the repo, so consider it successful
+                                    wp_send_json_success(array(
+                                        'message' => sprintf(
+                                            __('Repository created successfully at %s. However, initial file sync failed: %s', 'wp-github-sync'),
+                                            $repo_url,
+                                            $sync_result->get_error_message()
+                                        ),
+                                        'repo_url' => $repo_url,
+                                    ));
+                                    return;
+                                }
+                                
+                                // Set deployed branch and mark first deployment
+                                update_option('wp_github_sync_branch', 'main');
+                                update_option('wp_github_sync_last_deployment_time', time());
+                                update_option('wp_github_sync_last_deployed_commit', $sync_result);
+                                
+                                wp_github_sync_log("Repository created and initialized successfully", 'info');
+                                
+                                wp_send_json_success(array(
+                                    'message' => sprintf(__('Repository created and initialized successfully at %s', 'wp-github-sync'), $repo_url),
+                                    'repo_url' => $repo_url,
+                                ));
+                                return;
+                            } catch (Exception $sync_exception) {
+                                wp_github_sync_log("Exception during initial file sync: " . $sync_exception->getMessage(), 'error');
+                                wp_github_sync_log("Stack trace: " . $sync_exception->getTraceAsString(), 'error');
+                                wp_send_json_error(array('message' => sprintf(__('Repository created, but initial sync failed: %s', 'wp-github-sync'), $sync_exception->getMessage())));
+                                return;
+                            }
+                        } else {
+                            wp_github_sync_log("Repository created, but response missing URL", 'error');
+                            wp_send_json_error(array('message' => __('Repository created, but the response did not include the repository URL.', 'wp-github-sync')));
+                            return;
+                        }
+                    } catch (Exception $repo_exception) {
+                        wp_github_sync_log("Exception creating repository: " . $repo_exception->getMessage(), 'error');
+                        wp_github_sync_log("Stack trace: " . $repo_exception->getTraceAsString(), 'error');
+                        wp_send_json_error(array('message' => sprintf(__('Failed to create repository: %s', 'wp-github-sync'), $repo_exception->getMessage())));
                         return;
                     }
-                } catch (Exception $repo_exception) {
-                    wp_github_sync_log("Exception creating repository: " . $repo_exception->getMessage(), 'error');
-                    wp_send_json_error(array('message' => sprintf(__('Failed to create repository: %s', 'wp-github-sync'), $repo_exception->getMessage())));
+                } catch (Exception $create_repo_exception) {
+                    wp_github_sync_log("Critical exception during repository creation: " . $create_repo_exception->getMessage(), 'error');
+                    wp_github_sync_log("Stack trace: " . $create_repo_exception->getTraceAsString(), 'error');
+                    wp_send_json_error(array('message' => sprintf(__('Critical error while creating repository: %s', 'wp-github-sync'), $create_repo_exception->getMessage())));
                     return;
                 }
             } else {
                 // Using existing repository - perform initial deployment
-                $repo_url = get_option('wp_github_sync_repository', '');
-                
-                if (empty($repo_url)) {
-                    wp_github_sync_log("No repository URL configured for initial sync", 'error');
-                    wp_send_json_error(array('message' => __('No repository URL configured. Please enter a repository URL in the settings.', 'wp-github-sync')));
-                    return;
-                }
-                
-                wp_github_sync_log("Performing initial sync with existing repository: " . $repo_url, 'info');
-                
                 try {
-                    // Check if repository exists and is accessible
-                    if (!$this->github_api->repository_exists()) {
-                        wp_github_sync_log("Repository does not exist or is not accessible: " . $repo_url, 'error');
-                        wp_send_json_error(array('message' => __('The repository does not exist or is not accessible with your current GitHub credentials.', 'wp-github-sync')));
+                    $repo_url = get_option('wp_github_sync_repository', '');
+                    
+                    if (empty($repo_url)) {
+                        wp_github_sync_log("No repository URL configured for initial sync", 'error');
+                        wp_send_json_error(array('message' => __('No repository URL configured. Please enter a repository URL in the settings.', 'wp-github-sync')));
                         return;
                     }
                     
-                    wp_github_sync_log("Repository exists and is accessible", 'info');
-                    
-                    // Try to get the default branch from the repository
-                    $default_branch = $this->github_api->get_default_branch();
-                    if (!is_wp_error($default_branch) && !empty($default_branch)) {
-                        wp_github_sync_log("Detected default branch: " . $default_branch, 'info');
-                        update_option('wp_github_sync_branch', $default_branch);
-                        $branch = $default_branch;
-                    } else {
-                        // Use configured branch or fallback to main
-                        $branch = get_option('wp_github_sync_branch', 'main');
-                        wp_github_sync_log("Using configured branch: " . $branch, 'info');
-                    }
-                    
-                    // First try an initial sync to establish the repository structure
-                    wp_github_sync_log("Attempting initial file sync to repository", 'info');
+                    wp_github_sync_log("Performing initial sync with existing repository: " . $repo_url, 'info');
                     
                     try {
-                        $sync_result = $this->github_api->initial_sync($branch);
-                        
-                        if (is_wp_error($sync_result)) {
-                            wp_github_sync_log("Initial file sync failed: " . $sync_result->get_error_message(), 'error');
-                            wp_send_json_error(array('message' => sprintf(__('Initial file sync failed: %s', 'wp-github-sync'), $sync_result->get_error_message())));
+                        // Check if repository exists and is accessible
+                        if (!$this->github_api->repository_exists()) {
+                            wp_github_sync_log("Repository does not exist or is not accessible: " . $repo_url, 'error');
+                            wp_send_json_error(array('message' => __('The repository does not exist or is not accessible with your current GitHub credentials.', 'wp-github-sync')));
                             return;
                         }
                         
-                        // Set initial deployment commit reference
-                        if (!empty($sync_result)) {
-                            update_option('wp_github_sync_last_deployed_commit', $sync_result);
-                            update_option('wp_github_sync_last_deployment_time', time());
-                            wp_github_sync_log("Initial sync completed successfully, commit: " . $sync_result, 'info');
+                        wp_github_sync_log("Repository exists and is accessible", 'info');
+                        
+                        // Try to get the default branch from the repository
+                        $default_branch = $this->github_api->get_default_branch();
+                        if (!is_wp_error($default_branch) && !empty($default_branch)) {
+                            wp_github_sync_log("Detected default branch: " . $default_branch, 'info');
+                            update_option('wp_github_sync_branch', $default_branch);
+                            $branch = $default_branch;
+                        } else {
+                            // Use configured branch or fallback to main
+                            $branch = get_option('wp_github_sync_branch', 'main');
+                            wp_github_sync_log("Using configured branch: " . $branch, 'info');
                         }
                         
-                        wp_send_json_success(array('message' => __('Initial sync completed successfully.', 'wp-github-sync')));
-                        return;
-                    } catch (Exception $sync_exception) {
-                        wp_github_sync_log("Exception during initial file sync: " . $sync_exception->getMessage(), 'error');
-                        wp_send_json_error(array('message' => sprintf(__('Initial file sync failed: %s', 'wp-github-sync'), $sync_exception->getMessage())));
+                        // First try an initial sync to establish the repository structure
+                        wp_github_sync_log("Attempting initial file sync to repository", 'info');
+                        
+                        try {
+                            // Create Repository instance with the API client
+                            $repository = new \WPGitHubSync\API\Repository($this->github_api);
+                            $sync_result = $repository->initial_sync($branch);
+                            
+                            if (is_wp_error($sync_result)) {
+                                wp_github_sync_log("Initial file sync failed: " . $sync_result->get_error_message(), 'error');
+                                wp_send_json_error(array('message' => sprintf(__('Initial file sync failed: %s', 'wp-github-sync'), $sync_result->get_error_message())));
+                                return;
+                            }
+                            
+                            // Set initial deployment commit reference
+                            if (!empty($sync_result)) {
+                                update_option('wp_github_sync_last_deployed_commit', $sync_result);
+                                update_option('wp_github_sync_last_deployment_time', time());
+                                wp_github_sync_log("Initial sync completed successfully, commit: " . $sync_result, 'info');
+                            }
+                            
+                            wp_send_json_success(array('message' => __('Initial sync completed successfully.', 'wp-github-sync')));
+                            return;
+                        } catch (Exception $sync_exception) {
+                            wp_github_sync_log("Exception during initial file sync: " . $sync_exception->getMessage(), 'error');
+                            wp_github_sync_log("Stack trace: " . $sync_exception->getTraceAsString(), 'error');
+                            wp_send_json_error(array('message' => sprintf(__('Initial file sync failed: %s', 'wp-github-sync'), $sync_exception->getMessage())));
+                            return;
+                        }
+                    } catch (Exception $repo_exception) {
+                        wp_github_sync_log("Exception checking repository: " . $repo_exception->getMessage(), 'error');
+                        wp_github_sync_log("Stack trace: " . $repo_exception->getTraceAsString(), 'error');
+                        wp_send_json_error(array('message' => sprintf(__('Error verifying repository: %s', 'wp-github-sync'), $repo_exception->getMessage())));
                         return;
                     }
-                } catch (Exception $repo_exception) {
-                    wp_github_sync_log("Exception checking repository: " . $repo_exception->getMessage(), 'error');
-                    wp_send_json_error(array('message' => sprintf(__('Error verifying repository: %s', 'wp-github-sync'), $repo_exception->getMessage())));
+                } catch (Exception $existing_repo_exception) {
+                    wp_github_sync_log("Critical exception during existing repository sync: " . $existing_repo_exception->getMessage(), 'error');
+                    wp_github_sync_log("Stack trace: " . $existing_repo_exception->getTraceAsString(), 'error');
+                    wp_send_json_error(array('message' => sprintf(__('Critical error during repository sync: %s', 'wp-github-sync'), $existing_repo_exception->getMessage())));
                     return;
                 }
             }
         } catch (Exception $e) {
             // Catch any exceptions and return an error response
             wp_github_sync_log("Initial sync exception: " . $e->getMessage(), 'error');
+            wp_github_sync_log("Stack trace: " . $e->getTraceAsString(), 'error');
             wp_send_json_error(array('message' => sprintf(__('Initial sync failed: %s', 'wp-github-sync'), $e->getMessage())));
             return;
         }
@@ -1329,7 +1352,9 @@ class Admin {
         update_option('wp_github_sync_sync_in_progress', true);
         
         // Execute the initial sync operation
-        $result = $this->github_api->initial_sync($branch);
+        // Create Repository instance with the API client
+        $repository = new \WPGitHubSync\API\Repository($this->github_api);
+        $result = $repository->initial_sync($branch);
         
         // Clear the in-progress flag
         delete_option('wp_github_sync_sync_in_progress');
@@ -1356,6 +1381,36 @@ class Admin {
         }
     }
 
+    /**
+     * Handle AJAX log error request.
+     */
+    public function handle_ajax_log_error() {
+        // Check permissions
+        if (!wp_github_sync_current_user_can()) {
+            return;
+        }
+        
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
+            return;
+        }
+        
+        // Get error details from AJAX request
+        $error_context = isset($_POST['error_context']) ? sanitize_text_field($_POST['error_context']) : 'Unknown context';
+        $error_status = isset($_POST['error_status']) ? sanitize_text_field($_POST['error_status']) : 'Unknown status';
+        $error_message = isset($_POST['error_message']) ? sanitize_text_field($_POST['error_message']) : 'Unknown error';
+        
+        // Log error with detailed information
+        wp_github_sync_log(
+            "JavaScript Error - Context: {$error_context}, Status: {$error_status}, Message: {$error_message}",
+            'error',
+            true // Force logging even if debug mode is off
+        );
+        
+        // No need to send a detailed response
+        wp_send_json_success();
+    }
+    
     /**
      * Handle AJAX test connection request.
      */

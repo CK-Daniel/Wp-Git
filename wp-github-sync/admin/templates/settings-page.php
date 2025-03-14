@@ -337,6 +337,19 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
     
     <script>
     jQuery(document).ready(function($) {
+        // Toggle authentication fields based on auth method
+        function toggleAuthFields() {
+            var authMethod = $('#wp_github_sync_auth_method').val();
+            $('.auth-field').hide();
+            $('.auth-field-' + authMethod).show();
+        }
+        
+        // Initialize auth fields
+        toggleAuthFields();
+        
+        // Listen for auth method changes
+        $('#wp_github_sync_auth_method').on('change', toggleAuthFields);
+        
         // Tab switching functionality
         $('.wp-github-sync-tab').on('click', function() {
             // Remove active class from all tabs
@@ -415,20 +428,155 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                     console.error("AJAX Error:", status, error);
                     if (xhr.responseText) {
                         console.error("Response:", xhr.responseText);
+                        
+                        // Try to parse response for more details
+                        try {
+                            var responseObj = JSON.parse(xhr.responseText);
+                            if (responseObj && responseObj.data && responseObj.data.message) {
+                                $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
+                                $('.wp-github-sync-loading-submessage').text(responseObj.data.message);
+                            } else {
+                                // Look for WordPress critical error
+                                if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
+                                    $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
+                                    $('.wp-github-sync-loading-submessage').text('<?php _e('WordPress encountered a critical error. Check server logs for details.', 'wp-github-sync'); ?>');
+                                } else {
+                                    $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
+                                    $('.wp-github-sync-loading-submessage').text('<?php _e('An unexpected error occurred. Please check server logs for details.', 'wp-github-sync'); ?>');
+                                }
+                            }
+                        } catch (e) {
+                            // If we can't parse JSON, check for WordPress error page
+                            if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
+                                $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
+                                $('.wp-github-sync-loading-submessage').text('<?php _e('WordPress encountered a critical error. Check server logs for details.', 'wp-github-sync'); ?>');
+                            } else {
+                                $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
+                                $('.wp-github-sync-loading-submessage').text('<?php _e('An unexpected error occurred. Please check server logs for details.', 'wp-github-sync'); ?>');
+                            }
+                        }
+                    } else {
+                        $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
+                        $('.wp-github-sync-loading-submessage').text('<?php _e('An unexpected error occurred. Please try again.', 'wp-github-sync'); ?>');
                     }
                     
-                    $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                    $('.wp-github-sync-loading-submessage').text('<?php _e('An unexpected error occurred. Please try again.', 'wp-github-sync'); ?>');
-                    
-                    // Hide overlay after 3 seconds
+                    // Hide overlay after a longer time so user can read message
                     setTimeout(function() {
                         $('.wp-github-sync-overlay').hide();
-                    }, 3000);
+                    }, 5000);
+                    
+                    // Log error to plugin's log file if possible
+                    if (typeof wpGitHubSync !== 'undefined' && wpGitHubSync.ajaxUrl) {
+                        $.post(wpGitHubSync.ajaxUrl, {
+                            action: 'wp_github_sync_log_error',
+                            nonce: wpGitHubSync.nonce,
+                            error_context: 'Initial sync AJAX error',
+                            error_status: status,
+                            error_message: error
+                        });
+                    }
                 }
             });
         });
         
-        // Connection testing
+        // GitHub App Connection testing
+        $('.wp-github-sync-test-github-app').on('click', function() {
+            const $statusArea = $('#github-app-connection-status');
+            const appId = $('#wp_github_sync_github_app_id').val();
+            const installationId = $('#wp_github_sync_github_app_installation_id').val();
+            const privateKey = $('#wp_github_sync_github_app_key').val();
+            const repoUrl = $('#wp_github_sync_repository').val();
+            
+            // Don't test with masked key
+            if (privateKey === '********') {
+                $statusArea.html(
+                    '<div class="wp-github-sync-info-box warning" style="margin-top: 10px;">' +
+                    '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-warning"></span></div>' +
+                    '<div class="wp-github-sync-info-box-content">' +
+                    '<p>Please enter your private key. The masked key cannot be used for testing.</p>' +
+                    '</div></div>'
+                );
+                return;
+            }
+            
+            // Check required fields
+            if (!appId || !installationId || !privateKey) {
+                $statusArea.html(
+                    '<div class="wp-github-sync-info-box error" style="margin-top: 10px;">' +
+                    '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-no"></span></div>' +
+                    '<div class="wp-github-sync-info-box-content">' +
+                    '<p>Please fill in all GitHub App fields (App ID, Installation ID, and Private Key).</p>' +
+                    '</div></div>'
+                );
+                return;
+            }
+            
+            // Show testing indicator
+            $statusArea.html(
+                '<div class="wp-github-sync-info-box info" style="margin-top: 10px;">' +
+                '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-update wp-github-sync-spin"></span></div>' +
+                '<div class="wp-github-sync-info-box-content">' +
+                '<p>Testing GitHub App connection...</p>' +
+                '</div></div>'
+            );
+            
+            // Send the AJAX request to test connection
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'wp_github_sync_test_github_app',
+                    app_id: appId,
+                    installation_id: installationId,
+                    private_key: privateKey,
+                    repo_url: repoUrl,
+                    nonce: '<?php echo wp_create_nonce('wp_github_sync_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Success - GitHub App is valid
+                        let message = response.data.message;
+                        
+                        if (response.data.app_name) {
+                            message += ' App name: <strong>' + response.data.app_name + '</strong>.';
+                        }
+                        
+                        if (response.data.repo_info) {
+                            message += ' Repository: <strong>' + response.data.repo_info.owner + '/' + response.data.repo_info.repo + '</strong>';
+                        }
+                        
+                        $statusArea.html(
+                            '<div class="wp-github-sync-info-box success" style="margin-top: 10px;">' +
+                            '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-yes-alt"></span></div>' +
+                            '<div class="wp-github-sync-info-box-content">' +
+                            '<p>' + message + '</p>' +
+                            '</div></div>'
+                        );
+                    } else {
+                        // Error - display the error message
+                        $statusArea.html(
+                            '<div class="wp-github-sync-info-box error" style="margin-top: 10px;">' +
+                            '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-no"></span></div>' +
+                            '<div class="wp-github-sync-info-box-content">' +
+                            '<p>' + response.data.message + '</p>' +
+                            '</div></div>'
+                        );
+                    }
+                },
+                error: function() {
+                    // AJAX request failed
+                    $statusArea.html(
+                        '<div class="wp-github-sync-info-box error" style="margin-top: 10px;">' +
+                        '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-no"></span></div>' +
+                        '<div class="wp-github-sync-info-box-content">' +
+                        '<p>Connection test failed. Please try again.</p>' +
+                        '</div></div>'
+                    );
+                }
+            });
+        });
+
+        // PAT/OAuth Connection testing
         $('.wp-github-sync-test-connection').on('click', function() {
             const $statusArea = $('#github-connection-status');
             const token = $('#wp_github_sync_access_token').val();

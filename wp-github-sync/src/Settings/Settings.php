@@ -38,6 +38,31 @@ class Settings {
                 'default' => 'pat',
             )
         );
+        
+        // GitHub App settings
+        register_setting(
+            'wp_github_sync_settings',
+            'wp_github_sync_github_app_id',
+            array(
+                'sanitize_callback' => 'sanitize_text_field',
+            )
+        );
+        
+        register_setting(
+            'wp_github_sync_settings',
+            'wp_github_sync_github_app_installation_id',
+            array(
+                'sanitize_callback' => 'sanitize_text_field',
+            )
+        );
+        
+        register_setting(
+            'wp_github_sync_settings',
+            'wp_github_sync_github_app_key',
+            array(
+                'sanitize_callback' => array($this, 'sanitize_app_key'),
+            )
+        );
 
         register_setting(
             'wp_github_sync_settings',
@@ -196,7 +221,36 @@ class Settings {
             __('GitHub Access Token', 'wp-github-sync'),
             array($this, 'render_access_token_field'),
             'wp_github_sync_settings',
-            'wp_github_sync_repository_section'
+            'wp_github_sync_repository_section',
+            ['class' => 'auth-field auth-field-pat auth-field-oauth']
+        );
+        
+        // GitHub App fields
+        add_settings_field(
+            'wp_github_sync_github_app_id',
+            __('GitHub App ID', 'wp-github-sync'),
+            array($this, 'render_github_app_id_field'),
+            'wp_github_sync_settings',
+            'wp_github_sync_repository_section',
+            ['class' => 'auth-field auth-field-github_app']
+        );
+        
+        add_settings_field(
+            'wp_github_sync_github_app_installation_id',
+            __('Installation ID', 'wp-github-sync'),
+            array($this, 'render_github_app_installation_id_field'),
+            'wp_github_sync_settings',
+            'wp_github_sync_repository_section',
+            ['class' => 'auth-field auth-field-github_app']
+        );
+        
+        add_settings_field(
+            'wp_github_sync_github_app_key',
+            __('Private Key', 'wp-github-sync'),
+            array($this, 'render_github_app_key_field'),
+            'wp_github_sync_settings',
+            'wp_github_sync_repository_section',
+            ['class' => 'auth-field auth-field-github_app']
         );
 
         add_settings_field(
@@ -304,6 +358,33 @@ class Settings {
         $encrypted_token = wp_github_sync_encrypt($token);
         return $encrypted_token ?: '';
     }
+    
+    /**
+     * Sanitize GitHub App private key.
+     *
+     * @param string $key The private key to sanitize.
+     * @return string The sanitized and encrypted key.
+     */
+    public function sanitize_app_key($key) {
+        // If the key is the masked placeholder, get the existing value
+        if ($key === '********') {
+            return get_option('wp_github_sync_github_app_key', '');
+        }
+        
+        // Validate the key format (should start with "-----BEGIN RSA PRIVATE KEY-----")
+        if (!empty($key) && strpos($key, '-----BEGIN') === false) {
+            add_settings_error(
+                'wp_github_sync_github_app_key',
+                'invalid_key_format',
+                __('The GitHub App private key appears to be invalid. It should include the BEGIN and END lines.', 'wp-github-sync')
+            );
+            return '';
+        }
+
+        // Encrypt the private key
+        $encrypted_key = wp_github_sync_encrypt($key);
+        return $encrypted_key ?: '';
+    }
 
     /**
      * Render the repository section description.
@@ -361,11 +442,46 @@ class Settings {
     public function render_auth_method_field() {
         $auth_method = get_option('wp_github_sync_auth_method', 'pat');
         ?>
-        <select name="wp_github_sync_auth_method">
+        <select name="wp_github_sync_auth_method" id="wp_github_sync_auth_method">
             <option value="pat" <?php selected($auth_method, 'pat'); ?>><?php _e('Personal Access Token', 'wp-github-sync'); ?></option>
             <option value="oauth" <?php selected($auth_method, 'oauth'); ?>><?php _e('OAuth Token', 'wp-github-sync'); ?></option>
+            <option value="github_app" <?php selected($auth_method, 'github_app'); ?>><?php _e('GitHub App (Recommended)', 'wp-github-sync'); ?></option>
         </select>
         <p class="description"><?php _e('Select the authentication method to use with GitHub.', 'wp-github-sync'); ?></p>
+        <div class="auth-description-pat auth-description" <?php echo $auth_method !== 'pat' ? 'style="display:none;"' : ''; ?>>
+            <p class="auth-info">
+                <?php _e('Personal Access Tokens are the simplest way to authenticate. GitHub now offers two types:', 'wp-github-sync'); ?>
+                <ul style="margin-left: 20px; list-style-type: disc;">
+                    <li><?php _e('<strong>Fine-grained tokens</strong> (recommended): More secure with precise permissions. <a href="https://github.com/settings/tokens?type=beta" target="_blank">Create one here</a> with <code>Contents</code> read/write access.', 'wp-github-sync'); ?></li>
+                    <li><?php _e('<strong>Classic tokens</strong>: Compatible with older integrations. <a href="https://github.com/settings/tokens" target="_blank">Create one here</a> with the <code>repo</code> scope.', 'wp-github-sync'); ?></li>
+                </ul>
+            </p>
+        </div>
+        <div class="auth-description-oauth auth-description" <?php echo $auth_method !== 'oauth' ? 'style="display:none;"' : ''; ?>>
+            <p class="auth-info">
+                <?php _e('OAuth authentication requires creating an OAuth App in GitHub and configuring redirect URLs. This is more complex but provides a better user experience.', 'wp-github-sync'); ?>
+            </p>
+        </div>
+        <div class="auth-description-github_app auth-description" <?php echo $auth_method !== 'github_app' ? 'style="display:none;"' : ''; ?>>
+            <p class="auth-info">
+                <?php _e('GitHub Apps are the officially recommended way to integrate with GitHub. Benefits include:', 'wp-github-sync'); ?>
+                <ul style="margin-left: 20px; list-style-type: disc;">
+                    <li><?php _e('<strong>Higher rate limits</strong>: 5,000 requests per hour vs 1,000 for OAuth/PAT', 'wp-github-sync'); ?></li>
+                    <li><?php _e('<strong>Fine-grained permissions</strong>: Request only what you need', 'wp-github-sync'); ?></li>
+                    <li><?php _e('<strong>Installation-based</strong>: Users control which repositories you can access', 'wp-github-sync'); ?></li>
+                </ul>
+                <a href="https://docs.github.com/en/apps/creating-github-apps/creating-github-apps/creating-a-github-app" target="_blank" style="margin-top: 10px; display: inline-block;"><?php _e('Learn how to create a GitHub App', 'wp-github-sync'); ?></a>
+            </p>
+        </div>
+        <script>
+        jQuery(document).ready(function($) {
+            // Show/hide appropriate description based on selection
+            $('#wp_github_sync_auth_method').on('change', function() {
+                $('.auth-description').hide();
+                $('.auth-description-' + $(this).val()).show();
+            });
+        });
+        </script>
         <?php
     }
 
@@ -380,6 +496,42 @@ class Settings {
         <button type="button" class="button wp-github-sync-test-connection"><?php _e('Test Connection', 'wp-github-sync'); ?></button>
         <div id="github-connection-status"></div>
         <p class="description"><?php _e('Enter your GitHub access token with repo scope permissions.', 'wp-github-sync'); ?></p>
+        <?php
+    }
+    
+    /**
+     * Render the GitHub App ID field.
+     */
+    public function render_github_app_id_field() {
+        $app_id = get_option('wp_github_sync_github_app_id', '');
+        ?>
+        <input type="text" name="wp_github_sync_github_app_id" id="wp_github_sync_github_app_id" value="<?php echo esc_attr($app_id); ?>" class="regular-text">
+        <p class="description"><?php _e('The GitHub App ID from your GitHub App settings.', 'wp-github-sync'); ?></p>
+        <?php
+    }
+    
+    /**
+     * Render the GitHub App Installation ID field.
+     */
+    public function render_github_app_installation_id_field() {
+        $installation_id = get_option('wp_github_sync_github_app_installation_id', '');
+        ?>
+        <input type="text" name="wp_github_sync_github_app_installation_id" id="wp_github_sync_github_app_installation_id" value="<?php echo esc_attr($installation_id); ?>" class="regular-text">
+        <p class="description"><?php _e('The Installation ID for this repository. Found in the URL when viewing the installation.', 'wp-github-sync'); ?></p>
+        <?php
+    }
+    
+    /**
+     * Render the GitHub App Private Key field.
+     */
+    public function render_github_app_key_field() {
+        $key = get_option('wp_github_sync_github_app_key', '');
+        $display_value = !empty($key) ? '********' : '';
+        ?>
+        <textarea name="wp_github_sync_github_app_key" id="wp_github_sync_github_app_key" rows="6" cols="50" class="code"><?php echo esc_textarea($display_value === '********' ? $display_value : ''); ?></textarea>
+        <p class="description"><?php _e('The private key file content from your GitHub App. Include the BEGIN and END lines.', 'wp-github-sync'); ?></p>
+        <button type="button" class="button wp-github-sync-test-github-app"><?php _e('Test GitHub App', 'wp-github-sync'); ?></button>
+        <div id="github-app-connection-status"></div>
         <?php
     }
 

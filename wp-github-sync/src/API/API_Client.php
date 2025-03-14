@@ -25,6 +25,13 @@ class API_Client {
     private $api_base_url = 'https://api.github.com';
 
     /**
+     * GitHub API version to use.
+     * 
+     * @var string
+     */
+    private $api_version = '2022-11-28';
+
+    /**
      * GitHub repository owner.
      *
      * @var string
@@ -44,6 +51,13 @@ class API_Client {
      * @var string
      */
     private $token;
+    
+    /**
+     * Authentication method.
+     * 
+     * @var string pat|oauth|github_app
+     */
+    private $auth_method;
 
     /**
      * Initialize the GitHub API client.
@@ -67,8 +81,8 @@ class API_Client {
             }
         }
         
-        // Get authentication token
-        $auth_method = get_option('wp_github_sync_auth_method', 'pat');
+        // Get authentication method
+        $this->auth_method = get_option('wp_github_sync_auth_method', 'pat');
         
         // First check for unencrypted token in environment for development purposes
         $dev_token = defined('WP_GITHUB_SYNC_DEV_TOKEN') ? WP_GITHUB_SYNC_DEV_TOKEN : '';
@@ -76,7 +90,7 @@ class API_Client {
             wp_github_sync_log("Using development token from environment variable", 'debug');
             $this->token = $dev_token;
         } else {
-            if ($auth_method === 'pat') {
+            if ($this->auth_method === 'pat') {
                 // Personal Access Token
                 $encrypted_token = get_option('wp_github_sync_access_token', '');
                 if (!empty($encrypted_token)) {
@@ -97,7 +111,7 @@ class API_Client {
                 } else {
                     wp_github_sync_log("No PAT token found in options", 'error');
                 }
-            } elseif ($auth_method === 'oauth') {
+            } elseif ($this->auth_method === 'oauth') {
                 // OAuth token
                 $encrypted_token = get_option('wp_github_sync_oauth_token', '');
                 if (!empty($encrypted_token)) {
@@ -118,8 +132,33 @@ class API_Client {
                 } else {
                     wp_github_sync_log("No OAuth token found in options", 'error');
                 }
+            } elseif ($this->auth_method === 'github_app') {
+                // Check if we need to generate a new GitHub App token
+                // We don't store GitHub App tokens permanently, instead we generate them as needed
+                // GitHub App installation tokens are valid for 1 hour
+                $cached_token = get_transient('wp_github_sync_github_app_token');
+                
+                if (!empty($cached_token)) {
+                    wp_github_sync_log("Using cached GitHub App token", 'debug');
+                    $this->token = $cached_token;
+                } else {
+                    wp_github_sync_log("No cached GitHub App token found, will generate during request", 'debug');
+                    // We'll generate the token later when needed in the request method
+                }
+            }
             }
         }
+        
+        // Load cached API metadata
+        $this->load_api_metadata();
+    }
+    
+    /**
+     * Load cached API metadata like etags for conditional requests.
+     */
+    private function load_api_metadata() {
+        // This will be used for implementing conditional requests
+        $this->etags = get_option('wp_github_sync_etags', array());
     }
 
     /**
@@ -206,6 +245,18 @@ class API_Client {
      */
     public function request($endpoint, $method = 'GET', $data = []) {
         try {
+            // Generate token for GitHub App if needed
+            if ($this->auth_method === 'github_app' && empty($this->token)) {
+                wp_github_sync_log("Generating GitHub App token for request", 'debug');
+                $token = $this->generate_github_app_token();
+                
+                if (is_wp_error($token)) {
+                    return $token;
+                }
+                
+                $this->token = $token;
+            }
+            
             // Check if we have what we need to make a request
             if (empty($this->token)) {
                 wp_github_sync_log("API request failed: No GitHub token available", 'error');
@@ -240,13 +291,45 @@ class API_Client {
             
             $url = trailingslashit($this->api_base_url) . ltrim($endpoint, '/');
             
+            // Build request headers according to GitHub API documentation
+            $headers = [
+                'Accept' => 'application/vnd.github+json',
+                'User-Agent' => 'WordPress/' . get_bloginfo('version') . '; ' . get_bloginfo('url'),
+                'X-GitHub-Api-Version' => $this->api_version,
+            ];
+            
+            // Add authorization header based on token type
+            // From GitHub docs: "In most cases, you can use Authorization: Bearer or Authorization: token to pass a token.
+            // However, if you are passing a JSON web token (JWT), you must use Authorization: Bearer."
+            
+            // Always use Bearer for GitHub App installation tokens (ghs_) and JSON Web Tokens
+            if (strpos($this->token, 'ghs_') === 0 || strpos($this->token, 'ey') === 0) { // JWT tokens start with "ey"
+                $headers['Authorization'] = 'Bearer ' . $this->token;
+            } 
+            // For all other tokens (PAT, OAuth, etc), use Bearer per GitHub's recommendations
+            else {
+                $headers['Authorization'] = 'Bearer ' . $this->token;
+                
+                // Log the token type being used (for debugging)
+                if (strpos($this->token, 'gho_') === 0) {
+                    wp_github_sync_log("Using OAuth token format", 'debug');
+                } else if (strpos($this->token, 'github_pat_') === 0) {
+                    wp_github_sync_log("Using fine-grained PAT token format", 'debug');
+                } else if (strlen($this->token) === 40 && ctype_xdigit($this->token)) {
+                    wp_github_sync_log("Using classic PAT token format", 'debug');
+                }
+            }
+            
+            // Add conditional request header if we have an etag
+            $resource_key = md5($endpoint . json_encode($data));
+            if (isset($this->etags[$resource_key])) {
+                $headers['If-None-Match'] = $this->etags[$resource_key];
+                wp_github_sync_log("Using etag for conditional request: " . $this->etags[$resource_key], 'debug');
+            }
+            
             $args = [
                 'method' => $method,
-                'headers' => [
-                    'Accept' => 'application/vnd.github.v3+json',
-                    'Authorization' => 'token ' . $this->token,
-                    'User-Agent' => 'WordPress/' . get_bloginfo('version') . '; ' . get_bloginfo('url'),
-                ],
+                'headers' => $headers,
                 'timeout' => 30,
                 'sslverify' => true,
             ];
@@ -347,10 +430,95 @@ class API_Client {
                 }
             }
             
+            // Handle 304 Not Modified (conditional request) responses
+            if ($response_code === 304) {
+                wp_github_sync_log("Resource not modified (304) - using cached version", 'debug');
+                
+                // Return the cached data if available
+                $cache_key = 'wp_github_sync_cache_' . md5($endpoint . json_encode($data));
+                $cached_data = get_transient($cache_key);
+                
+                if ($cached_data !== false) {
+                    return $cached_data;
+                } else {
+                    // If we somehow got a 304 but don't have cached data, make a fresh request
+                    unset($this->etags[$resource_key]);
+                    update_option('wp_github_sync_etags', $this->etags);
+                    return $this->request($endpoint, $method, $data);
+                }
+            }
+            
             // Check for API errors
             if ($response_code >= 400) {
                 $error_message = isset($response_data['message']) ? $response_data['message'] : "Unknown API error (HTTP {$response_code})";
                 wp_github_sync_log("GitHub API error ({$response_code}): {$error_message}", 'error');
+                
+                // Handle rate limiting and abuse prevention according to documentation
+                if ($response_code === 403) {
+                    // Check for rate limit messages
+                    if (strpos($error_message, 'rate limit') !== false) {
+                        $retry_after = wp_remote_retrieve_header($response, 'retry-after');
+                        $rate_reset = wp_remote_retrieve_header($response, 'x-ratelimit-reset');
+                        
+                        if (!empty($retry_after)) {
+                            $wait_time = (int)$retry_after;
+                            wp_github_sync_log("Rate limit exceeded. Retry-After: {$wait_time} seconds", 'warning');
+                            
+                            // Store the retry-after timestamp
+                            set_transient('wp_github_sync_retry_after', time() + $wait_time, $wait_time + 5);
+                            
+                            return new \WP_Error("github_api_rate_limit", 
+                                sprintf(__('GitHub API rate limit exceeded. Please wait %d seconds before retrying.', 'wp-github-sync'), $wait_time),
+                                ['retry_after' => $wait_time]
+                            );
+                        } elseif (!empty($rate_reset)) {
+                            $wait_time = (int)$rate_reset - time();
+                            if ($wait_time > 0) {
+                                wp_github_sync_log("Rate limit exceeded. Reset in: {$wait_time} seconds", 'warning');
+                                
+                                // Update our cached rate limit values
+                                update_option('wp_github_sync_rate_limit_remaining', 0);
+                                update_option('wp_github_sync_rate_limit_reset', $rate_reset);
+                                
+                                return new \WP_Error("github_api_rate_limit", 
+                                    sprintf(__('GitHub API rate limit exceeded. Resets in %d seconds.', 'wp-github-sync'), $wait_time),
+                                    ['reset_in' => $wait_time]
+                                );
+                            }
+                        }
+                    } 
+                    // Check for secondary rate limit / abuse detection
+                    else if (
+                        strpos($error_message, 'secondary rate limit') !== false || 
+                        strpos($error_message, 'abuse detection') !== false
+                    ) {
+                        $retry_after = wp_remote_retrieve_header($response, 'retry-after');
+                        
+                        if (!empty($retry_after)) {
+                            $wait_time = (int)$retry_after;
+                            wp_github_sync_log("Secondary rate limit detected. Retry-After: {$wait_time} seconds", 'warning');
+                            
+                            // Store the retry-after timestamp
+                            set_transient('wp_github_sync_retry_after', time() + $wait_time, $wait_time + 5);
+                            
+                            return new \WP_Error("github_api_secondary_limit", 
+                                sprintf(__('GitHub API secondary rate limit exceeded. Please wait %d seconds before retrying.', 'wp-github-sync'), $wait_time),
+                                ['retry_after' => $wait_time]
+                            );
+                        } else {
+                            // Get current attempt number
+                            $attempt = get_option('wp_github_sync_secondary_ratelimit_attempt', 1);
+                            
+                            // Implement exponential backoff
+                            $backoff = $this->set_secondary_rate_limit_backoff($attempt);
+                            
+                            return new \WP_Error("github_api_secondary_limit", 
+                                sprintf(__('GitHub API secondary rate limit exceeded. Using exponential backoff (%d seconds).', 'wp-github-sync'), $backoff),
+                                ['backoff' => $backoff]
+                            );
+                        }
+                    }
+                }
                 
                 // Additional information for specific error cases
                 if ($error_message === 'Bad credentials') {
@@ -375,6 +543,18 @@ class API_Client {
                 }
                 
                 return new \WP_Error("github_api_{$response_code}", $error_message);
+            }
+            
+            // Store the ETag for conditional requests if provided
+            $etag = wp_remote_retrieve_header($response, 'etag');
+            if (!empty($etag)) {
+                wp_github_sync_log("Storing ETag for future conditional requests: " . $etag, 'debug');
+                $this->etags[$resource_key] = $etag;
+                update_option('wp_github_sync_etags', $this->etags);
+                
+                // Also cache the response data
+                $cache_key = 'wp_github_sync_cache_' . md5($endpoint . json_encode($data));
+                set_transient($cache_key, $response_data, DAY_IN_SECONDS); // Cache for 24 hours
             }
             
             return $response_data;
@@ -542,14 +722,32 @@ class API_Client {
             // Make a simple request directly to the GitHub API to avoid any internal abstractions
             $url = $this->api_base_url . '/user';
             
+            // Determine the authorization header format based on the token type
+            $auth_header = 'Bearer ' . $this->token;
+            
+            // Add headers according to GitHub documentation
             $args = array(
                 'headers' => array(
-                    'Accept' => 'application/vnd.github.v3+json',
-                    'Authorization' => 'token ' . $this->token,
+                    'Accept' => 'application/vnd.github+json',
+                    'Authorization' => $auth_header,
                     'User-Agent' => 'WordPress/' . get_bloginfo('version') . '; ' . get_bloginfo('url'),
+                    'X-GitHub-Api-Version' => $this->api_version,
                 ),
                 'timeout' => 30,
             );
+            
+            // Log the token format for debugging
+            if (strpos($this->token, 'ghs_') === 0) {
+                wp_github_sync_log("Testing with GitHub App installation token", 'debug');
+            } else if (strpos($this->token, 'gho_') === 0) {
+                wp_github_sync_log("Testing with OAuth token", 'debug');
+            } else if (strpos($this->token, 'github_pat_') === 0) {
+                wp_github_sync_log("Testing with fine-grained personal access token", 'debug');
+            } else if (strlen($this->token) === 40 && ctype_xdigit($this->token)) {
+                wp_github_sync_log("Testing with classic personal access token", 'debug');
+            } else {
+                wp_github_sync_log("Testing with unidentified token format", 'debug');
+            }
             
             wp_github_sync_log("Making direct request to GitHub API: {$url}", 'debug');
             $response = wp_remote_get($url, $args);
@@ -687,9 +885,10 @@ class API_Client {
             $args = [
                 'method' => 'POST',
                 'headers' => [
-                    'Accept' => 'application/vnd.github.v3+json',
-                    'Authorization' => 'token ' . $this->token,
+                    'Accept' => 'application/vnd.github+json',
+                    'Authorization' => 'Bearer ' . $this->token,
                     'User-Agent' => 'WordPress/' . get_bloginfo('version') . '; ' . get_bloginfo('url'),
+                    'X-GitHub-Api-Version' => $this->api_version,
                     'Content-Type' => 'application/json',
                 ],
                 'timeout' => 30,
@@ -772,49 +971,128 @@ class API_Client {
     /**
      * Check if we're close to hitting rate limits and should wait before making more requests.
      * 
+     * Following GitHub's best practices for handling rate limits:
+     * 1. Check retry-after header
+     * 2. Use x-ratelimit-reset for primary rate limit
+     * 3. Implement exponential backoff for secondary rate limits
+     * 
      * @return bool|int False if rate limits are fine, or seconds to wait if limits are low
      */
     public function check_rate_limits() {
-        // First check if we have rate limit info cached
+        // First check for secondary rate limit backoff
+        $secondary_backoff = get_transient('wp_github_sync_secondary_ratelimit_backoff');
+        if ($secondary_backoff !== false) {
+            return (int)$secondary_backoff;
+        }
+        
+        // Check for retry-after directive
+        $retry_after = get_transient('wp_github_sync_retry_after');
+        if ($retry_after !== false && $retry_after > time()) {
+            $wait_time = $retry_after - time();
+            wp_github_sync_log("Retry-After period active: wait {$wait_time} seconds", 'warning');
+            return $wait_time;
+        }
+        
+        // Check primary rate limit info
         $rate_limit_remaining = get_option('wp_github_sync_rate_limit_remaining', false);
         $rate_limit_reset = get_option('wp_github_sync_rate_limit_reset', false);
         
         // If we don't have cached info or we need fresh data
-        if ($rate_limit_remaining === false || $rate_limit_remaining < 5) {
+        if ($rate_limit_remaining === false || $rate_limit_remaining < 10) {
             // Make a direct request to get rate limit info
-            $result = $this->request('rate_limit');
+            // We avoid using $this->request to prevent recursion
+            $url = trailingslashit($this->api_base_url) . 'rate_limit';
             
-            if (!is_wp_error($result) && isset($result['resources']['core'])) {
-                $rate_limit_remaining = $result['resources']['core']['remaining'];
-                $rate_limit_reset = $result['resources']['core']['reset'];
+            $args = [
+                'headers' => [
+                    'Accept' => 'application/vnd.github+json',
+                    'Authorization' => 'Bearer ' . $this->token,
+                    'User-Agent' => 'WordPress/' . get_bloginfo('version') . '; ' . get_bloginfo('url'),
+                    'X-GitHub-Api-Version' => $this->api_version,
+                ],
+                'timeout' => 15,
+            ];
+            
+            $response = wp_remote_get($url, $args);
+            
+            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                $body = wp_remote_retrieve_body($response);
+                $result = json_decode($body, true);
                 
-                // Update our cached values
-                update_option('wp_github_sync_rate_limit_remaining', $rate_limit_remaining);
-                update_option('wp_github_sync_rate_limit_reset', $rate_limit_reset);
+                if (isset($result['resources']['core'])) {
+                    $rate_limit_remaining = $result['resources']['core']['remaining'];
+                    $rate_limit_reset = $result['resources']['core']['reset'];
+                    
+                    // Update our cached values
+                    update_option('wp_github_sync_rate_limit_remaining', $rate_limit_remaining);
+                    update_option('wp_github_sync_rate_limit_reset', $rate_limit_reset);
+                    
+                    wp_github_sync_log("Fresh rate limit data: {$rate_limit_remaining} remaining, resets at " . 
+                        date('Y-m-d H:i:s', $rate_limit_reset), 'debug');
+                }
+            } else {
+                // If we can't get fresh data, be conservative
+                $rate_limit_remaining = 1;
+                wp_github_sync_log("Could not fetch rate limit info, being conservative", 'warning');
             }
         }
         
-        // If rate limit is critically low, calculate wait time
-        if ($rate_limit_remaining !== false && $rate_limit_remaining < 3) {
-            wp_github_sync_log("Rate limit critically low: {$rate_limit_remaining} remaining", 'warning');
-            
-            // If we have reset time, calculate how long to wait
-            if ($rate_limit_reset !== false) {
-                $now = time();
-                $wait_time = $rate_limit_reset - $now;
+        // Handle different levels of rate limit remaining
+        if ($rate_limit_remaining !== false) {
+            if ($rate_limit_remaining < 3) {
+                wp_github_sync_log("Rate limit critically low: {$rate_limit_remaining} remaining", 'warning');
                 
-                // If reset is in the future, suggest waiting
-                if ($wait_time > 0) {
-                    wp_github_sync_log("Rate limit will reset in {$wait_time} seconds", 'warning');
-                    return $wait_time;
+                // If we have reset time, calculate how long to wait
+                if ($rate_limit_reset !== false) {
+                    $now = time();
+                    $wait_time = $rate_limit_reset - $now;
+                    
+                    // If reset is in the future, suggest waiting
+                    if ($wait_time > 0) {
+                        wp_github_sync_log("Rate limit will reset in {$wait_time} seconds", 'warning');
+                        return min($wait_time, 60); // Wait at most 60 seconds
+                    }
                 }
+                
+                // Default wait time if we can't determine exact time
+                return 60;
+            } else if ($rate_limit_remaining < 10) {
+                // Getting low, add some delay between requests
+                wp_github_sync_log("Rate limit getting low: {$rate_limit_remaining} remaining", 'debug');
+                return 2; // Short pause between requests
             }
-            
-            // Default wait time if we can't determine exact time
-            return 60;
         }
         
         return false;
+    }
+    
+    /**
+     * Set a backoff period for secondary rate limits.
+     * 
+     * This implements exponential backoff as recommended by GitHub.
+     * 
+     * @param int $attempt The current attempt number (starts at 1)
+     */
+    private function set_secondary_rate_limit_backoff($attempt = 1) {
+        // Exponential backoff: 2^attempt seconds with jitter (random 0-1s)
+        $backoff = pow(2, min($attempt, 6)) + mt_rand(0, 1000) / 1000;
+        $wait_until = time() + $backoff;
+        
+        wp_github_sync_log("Setting secondary rate limit backoff: {$backoff} seconds (attempt {$attempt})", 'warning');
+        set_transient('wp_github_sync_secondary_ratelimit_backoff', $backoff, $backoff);
+        
+        // Store the attempt count for next time
+        update_option('wp_github_sync_secondary_ratelimit_attempt', $attempt + 1);
+        
+        return $backoff;
+    }
+    
+    /**
+     * Reset secondary rate limit backoff after successful requests.
+     */
+    private function reset_secondary_rate_limit_backoff() {
+        delete_transient('wp_github_sync_secondary_ratelimit_backoff');
+        update_option('wp_github_sync_secondary_ratelimit_attempt', 1);
     }
     
     /**
@@ -830,5 +1108,118 @@ class API_Client {
         }
         
         return $repo_info['default_branch'];
+    }
+    
+    /**
+     * Generate a GitHub App installation token
+     * 
+     * This follows the GitHub App authentication flow:
+     * 1. Generate a JWT using the App's private key
+     * 2. Use the JWT to get an installation access token
+     * 
+     * @return string|WP_Error The installation token or WP_Error on failure
+     */
+    public function generate_github_app_token() {
+        if ($this->auth_method !== 'github_app') {
+            return new \WP_Error('invalid_auth_method', __('This method requires GitHub App authentication.', 'wp-github-sync'));
+        }
+        
+        // Get the GitHub App settings
+        $app_id = get_option('wp_github_sync_github_app_id', '');
+        $installation_id = get_option('wp_github_sync_github_app_installation_id', '');
+        $encrypted_key = get_option('wp_github_sync_github_app_key', '');
+        
+        if (empty($app_id) || empty($installation_id) || empty($encrypted_key)) {
+            return new \WP_Error('missing_github_app_config', __('GitHub App configuration is incomplete. Please check your settings.', 'wp-github-sync'));
+        }
+        
+        // First check if we have a cached token
+        $cached_token = get_transient('wp_github_sync_github_app_token');
+        if (!empty($cached_token)) {
+            wp_github_sync_log('Using cached GitHub App token', 'debug');
+            return $cached_token;
+        }
+        
+        // Decrypt the private key
+        $private_key = wp_github_sync_decrypt($encrypted_key);
+        if ($private_key === false) {
+            return new \WP_Error('invalid_key', __('Could not decrypt GitHub App private key.', 'wp-github-sync'));
+        }
+        
+        // Generate JWT token
+        try {
+            // Make sure we have the JWT library
+            if (!class_exists('Firebase\JWT\JWT')) {
+                // Try to load the library via composer autoload
+                if (file_exists(WP_GITHUB_SYNC_PLUGIN_DIR . 'vendor/autoload.php')) {
+                    require_once WP_GITHUB_SYNC_PLUGIN_DIR . 'vendor/autoload.php';
+                }
+                
+                // If still not available, return an error
+                if (!class_exists('Firebase\JWT\JWT')) {
+                    return new \WP_Error('missing_jwt_library', __('JWT library not found. Please run composer install.', 'wp-github-sync'));
+                }
+            }
+            
+            // Generate JWT token according to GitHub's documentation
+            // See: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app
+            $jwt_payload = [
+                // Issued at time (60 seconds in the past to allow for clock drift)
+                'iat' => time() - 60,
+                // Expiration time (10 minutes in the future)
+                // GitHub docs specify maximum expiration time of 10 minutes
+                'exp' => time() + 600,
+                // GitHub App identifier - required for GitHub to identify which app is making the request
+                'iss' => $app_id
+            ];
+            
+            $jwt = \Firebase\JWT\JWT::encode($jwt_payload, $private_key, 'RS256');
+            
+            // Use JWT to request an installation token
+            $url = $this->api_base_url . '/app/installations/' . $installation_id . '/access_tokens';
+            
+            $args = [
+                'method' => 'POST',
+                'headers' => [
+                    'Accept' => 'application/vnd.github+json',
+                    'Authorization' => 'Bearer ' . $jwt,
+                    'User-Agent' => 'WordPress/' . get_bloginfo('version') . '; ' . get_bloginfo('url'),
+                    'X-GitHub-Api-Version' => $this->api_version,
+                ],
+                'timeout' => 30,
+            ];
+            
+            wp_github_sync_log('Requesting GitHub App installation token', 'debug');
+            $response = wp_remote_request($url, $args);
+            
+            if (is_wp_error($response)) {
+                wp_github_sync_log('Error requesting GitHub App token: ' . $response->get_error_message(), 'error');
+                return $response;
+            }
+            
+            $response_code = wp_remote_retrieve_response_code($response);
+            $response_body = wp_remote_retrieve_body($response);
+            $response_data = json_decode($response_body, true);
+            
+            if ($response_code !== 201 || !isset($response_data['token'])) {
+                $error_message = isset($response_data['message']) ? $response_data['message'] : 'Unknown error';
+                wp_github_sync_log('GitHub App token request failed: ' . $error_message, 'error');
+                return new \WP_Error('github_app_token_failed', $error_message);
+            }
+            
+            // Cache the token (GitHub App tokens are valid for 1 hour)
+            $token = $response_data['token'];
+            $expires_at = isset($response_data['expires_at']) ? strtotime($response_data['expires_at']) : (time() + 3600);
+            $cache_time = $expires_at - time() - 60; // Subtract 60 seconds for safety
+            
+            set_transient('wp_github_sync_github_app_token', $token, $cache_time);
+            wp_github_sync_log('Successfully generated GitHub App token, valid until ' . date('Y-m-d H:i:s', $expires_at), 'debug');
+            
+            return $token;
+            
+        } catch (\Exception $e) {
+            wp_github_sync_log('Exception generating GitHub App token: ' . $e->getMessage(), 'error');
+            return new \WP_Error('github_app_token_exception', $e->getMessage());
+        }
     }
 }
