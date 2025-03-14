@@ -882,4 +882,42 @@ mark {
     font-size: 16px;
     max-width: 80%;
     text-align: center;
+    margin-bottom: 20px;
+}
+
+/* Progress Bar Styles */
+.wp-github-sync-progress-container {
+    width: 80%;
+    max-width: 500px;
+    height: 10px;
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 5px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.wp-github-sync-progress-bar {
+    height: 100%;
+    background-color: #2271b1;
+    border-radius: 5px;
+    transition: width 0.3s ease;
+}
+
+.wp-github-sync-step-indicator {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+    margin-bottom: 15px;
+}
+
+.wp-github-sync-status-detail {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 14px;
+    max-width: 80%;
+    text-align: center;
+    font-family: monospace;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 8px 15px;
+    border-radius: 4px;
+    max-height: 100px;
+    overflow-y: auto;
 }

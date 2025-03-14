@@ -973,7 +973,14 @@ class API_Client {
                         }
                     }
                     
-                    return 'Invalid GitHub token (Bad credentials). Please check your token and make sure it has the necessary permissions. Ensure you\'re using a valid token format (e.g., github_pat_*, ghp_*, or a 40-character classic PAT) and verify the token is valid by creating a new one with the "repo" scope in your GitHub settings.';
+                    $token_advice = '';
+                    if (strpos($this->token, 'github_pat_') === 0) {
+                        $token_advice = 'Fine-grained tokens require specific permissions. Please ensure your token has "Contents" permission with read/write access.';
+                    } else {
+                        $token_advice = 'Classic tokens should have the "repo" scope enabled.';
+                    }
+                    
+                    return 'Invalid GitHub token (Bad credentials). ' . $token_advice . ' Please check your token and make sure it has the necessary permissions. Verify the token is valid by creating a new one in your GitHub settings.';
                 }
                 
                 return $error_message;
@@ -1368,12 +1375,16 @@ class API_Client {
             wp_github_sync_log("Creating README.md file to initialize repository", 'debug');
             
             // Create README file using the contents API directly
+            // Always use base64 encoding for content as it's more reliable with all token types
+            $encoded_content = base64_encode($readme_content);
+            wp_github_sync_log("Creating README with base64 encoded content", 'debug');
+            
             $result = $this->request(
                 "repos/{$this->owner}/{$this->repo}/contents/README.md",
                 'PUT',
                 [
                     'message' => 'Initial commit',
-                    'content' => base64_encode($readme_content),
+                    'content' => $encoded_content,
                     'branch' => $branch
                 ]
             );
@@ -1391,20 +1402,22 @@ class API_Client {
                     // Try creating with Git Data API instead of Contents API
                     // This follows GitHub's documented approach for creating a file in an empty repo
                     
-                    // Step 1: Create a blob for README.md
+                    // Step 1: Create a blob for README.md using base64 encoding
+                    // This is more reliable for both classic and fine-grained tokens
                     $blob = $this->request(
                         "repos/{$this->owner}/{$this->repo}/git/blobs",
                         'POST',
                         [
-                            'content' => $readme_content,
-                            'encoding' => 'utf-8'
+                            'content' => base64_encode($readme_content),
+                            'encoding' => 'base64'
                         ]
                     );
                     
                     if (is_wp_error($blob)) {
                         wp_github_sync_log("Failed to create blob: " . $blob->get_error_message(), 'error');
                         
-                        // Try again with base64 encoding
+                        // Try again with base64 encoding - this approach is more reliable for both token types
+                        wp_github_sync_log("Re-attempting blob creation with explicit base64 encoding", 'debug');
                         $blob = $this->request(
                             "repos/{$this->owner}/{$this->repo}/git/blobs",
                             'POST',

@@ -11,7 +11,13 @@
 
 // Token to test - provide as command line argument
 $token = isset($argv[1]) ? $argv[1] : '';  // GitHub token should be provided as argument
-$repo_url = isset($argv[2]) ? $argv[2] : 'https://github.com/CK-Daniel/kuper';
+// Get repo URL from command line or WordPress settings
+$repo_url = isset($argv[2]) ? $argv[2] : '';
+
+// If no URL provided via command line, try to get from WordPress settings
+if (empty($repo_url) && function_exists('get_option')) {
+    $repo_url = get_option('wp_github_sync_repository', '');
+}
 
 // Check if token is empty
 if (empty($token)) {

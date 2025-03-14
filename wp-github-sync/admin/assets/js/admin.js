@@ -110,6 +110,42 @@
         
         // Initialize tabs
         initializeTabs();
+        // Define sync steps for progress tracking
+        var syncSteps = [
+            { name: 'Initializing', percent: 5 },
+            { name: 'Authenticating with GitHub', percent: 10 },
+            { name: 'Validating repository settings', percent: 20 },
+            { name: 'Preparing local files', percent: 30 },
+            { name: 'Scanning themes and plugins', percent: 40 },
+            { name: 'Creating initial commit', percent: 60 },
+            { name: 'Pushing to GitHub', percent: 80 },
+            { name: 'Finalizing synchronization', percent: 95 },
+            { name: 'Complete', percent: 100 }
+        ];
+        
+        // Progress update function
+        function updateProgress(step, detail) {
+            if (step < 0 || step >= syncSteps.length) return;
+            
+            var currentStep = syncSteps[step];
+            $('.wp-github-sync-progress-bar').css('width', currentStep.percent + '%');
+            $('.wp-github-sync-current-step').text(step + 1);
+            $('.wp-github-sync-loading-submessage').text(currentStep.name);
+            
+            if (detail) {
+                $('.wp-github-sync-status-detail').append('<div>' + detail + '</div>');
+                $('.wp-github-sync-status-detail').scrollTop($('.wp-github-sync-status-detail')[0].scrollHeight);
+            }
+        }
+        
+        // Initialize progress tracking
+        function initProgress() {
+            $('.wp-github-sync-current-step').text('0');
+            $('.wp-github-sync-total-steps').text(syncSteps.length);
+            $('.wp-github-sync-progress-bar').css('width', '0%');
+            $('.wp-github-sync-status-detail').empty();
+        }
+        
         // Handle the initial sync process
         $('#initial_sync_button').on('click', function() {
             var createNewRepo = $('#create_new_repo').is(':checked');
@@ -123,11 +159,32 @@
             showOverlay();
             $('.wp-github-sync-loading-message').text('Setting up GitHub Sync...');
             
+            // Initialize progress display
+            initProgress();
+            updateProgress(0, 'Starting synchronization process...');
+            
             if (createNewRepo) {
-                $('.wp-github-sync-loading-submessage').text('Creating new repository...');
+                updateProgress(0, 'Creating new repository: ' + repoName);
             } else {
-                $('.wp-github-sync-loading-submessage').text('Connecting to existing repository...');
+                updateProgress(0, 'Connecting to existing repository...');
             }
+            
+            // Setup polling for progress updates
+            var progressCheck = setInterval(function() {
+                $.ajax({
+                    url: wpGitHubSync.ajaxUrl,
+                    type: 'POST',
+                    data: {
+                        action: 'wp_github_sync_check_progress',
+                        nonce: wpGitHubSync.nonce
+                    },
+                    success: function(progressData) {
+                        if (progressData.success && progressData.data.step !== undefined) {
+                            updateProgress(progressData.data.step, progressData.data.detail);
+                        }
+                    }
+                });
+            }, 1500);
             
             $.ajax({
                 url: wpGitHubSync.ajaxUrl,
@@ -139,7 +196,10 @@
                     nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce for initial sync
                 },
                 success: function(response) {
+                    clearInterval(progressCheck);
+                    
                     if (response.success) {
+                        updateProgress(syncSteps.length - 1, 'Sync completed successfully!');
                         $('.wp-github-sync-loading-message').text('Success!');
                         $('.wp-github-sync-loading-submessage').text(response.data.message);
                         

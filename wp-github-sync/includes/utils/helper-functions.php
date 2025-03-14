@@ -34,6 +34,13 @@ function wp_github_sync_encrypt($data) {
         (strlen($data) === 40 && ctype_xdigit($data))) {
         // Token format is valid
         wp_github_sync_log("Token format validation passed", 'debug');
+        
+        // Determine token type and log permissions advice
+        if (strpos($data, 'github_pat_') === 0) {
+            wp_github_sync_log("Fine-grained PAT detected. Ensure it has the 'Contents' permission with read/write access for repo initialization.", 'info');
+        } else if (strpos($data, 'ghp_') === 0) {
+            wp_github_sync_log("Classic PAT detected. Should have 'repo' scope for full repository access.", 'debug');
+        }
     } else {
         wp_github_sync_log("Invalid token format detected", 'warning');
     }

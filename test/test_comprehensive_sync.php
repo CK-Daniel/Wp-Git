@@ -425,7 +425,8 @@ namespace {
         
         // Test configuration
         $token = ''; // Add your GitHub token here
-        $repo_url = 'https://github.com/CK-Daniel/kuper';
+        // Use repository URL from settings if available
+        $repo_url = get_option('wp_github_sync_repository', '');
         
         // Check if token is empty
         if (empty($token)) {

@@ -60,6 +60,7 @@ class Admin {
         add_action('wp_ajax_wp_github_sync_full_sync', array($this, 'handle_ajax_full_sync'));
         add_action('wp_ajax_wp_github_sync_test_connection', array($this, 'handle_ajax_test_connection'));
         add_action('wp_ajax_wp_github_sync_log_error', array($this, 'handle_ajax_log_error'));
+        add_action('wp_ajax_wp_github_sync_check_progress', array($this, 'handle_ajax_check_progress'));
         
         // Handle OAuth callback
         add_action('admin_init', array($this, 'handle_oauth_callback'));
@@ -1072,6 +1073,62 @@ class Admin {
     }
 
     /**
+     * Store sync progress data
+     */
+    private $sync_progress = [
+        'step' => 0,
+        'detail' => '',
+        'status' => 'pending',
+        'timestamp' => 0
+    ];
+    
+    /**
+     * Update sync progress
+     * 
+     * @param int $step The current step number
+     * @param string $detail Detailed status message
+     * @param string $status Status ('pending', 'error', 'complete')
+     */
+    private function update_sync_progress($step, $detail = '', $status = 'pending') {
+        $this->sync_progress = [
+            'step' => $step,
+            'detail' => $detail,
+            'status' => $status,
+            'timestamp' => time()
+        ];
+        
+        // Store progress in transient for AJAX polling
+        set_transient('wp_github_sync_progress', $this->sync_progress, 3600);
+        wp_github_sync_log("Sync progress updated: Step {$step} - {$detail}", 'debug');
+    }
+    
+    /**
+     * Handle AJAX check progress request
+     */
+    public function handle_ajax_check_progress() {
+        // Security check
+        if (!wp_github_sync_current_user_can() || 
+            !isset($_POST['nonce']) || 
+            !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
+            wp_send_json_error(['message' => 'Security check failed']);
+            return;
+        }
+        
+        // Get current progress
+        $progress = get_transient('wp_github_sync_progress');
+        if (!$progress) {
+            $progress = [
+                'step' => 0,
+                'detail' => 'Initializing...',
+                'status' => 'pending',
+                'timestamp' => time()
+            ];
+        }
+        
+        wp_send_json_success($progress);
+    }
+    
+    /**
      * Handle AJAX initial sync request.
      */
     public function handle_ajax_initial_sync() {
@@ -1092,23 +1149,30 @@ class Admin {
         }
         
         try {
+            // Initialize progress tracking
+            $this->update_sync_progress(0, 'Starting initial sync process');
+            
             // Check if we should create a new repository
             $create_new_repo = isset($_POST['create_new_repo']) && $_POST['create_new_repo'] == 1;
             $repo_name = isset($_POST['repo_name']) ? sanitize_text_field($_POST['repo_name']) : '';
             
             // Make sure GitHub API is initialized with the latest settings
+            $this->update_sync_progress(1, 'Initializing API client');
             $this->github_api->initialize();
             
             wp_github_sync_log("Starting initial sync. Create new repo: " . ($create_new_repo ? 'yes' : 'no'), 'info');
             
             // Check if authentication is working
+            $this->update_sync_progress(2, 'Testing GitHub authentication');
             $auth_test = $this->github_api->test_authentication();
             if ($auth_test !== true) {
                 wp_github_sync_log("Authentication failed during initial sync: " . $auth_test, 'error');
+                $this->update_sync_progress(2, 'Authentication failed: ' . $auth_test, 'error');
                 wp_send_json_error(array('message' => sprintf(__('Authentication failed: %s. Please check your GitHub access token.', 'wp-github-sync'), $auth_test)));
                 return;
             }
             
+            $this->update_sync_progress(2, 'GitHub authentication successful');
             wp_github_sync_log("GitHub authentication successful", 'info');
             
             // If creating a new repository
@@ -1126,6 +1190,7 @@ class Admin {
                     $description = sprintf(__('WordPress site: %s', 'wp-github-sync'), $site_name);
                     
                     wp_github_sync_log("Creating new repository: " . $repo_name, 'info');
+                    $this->update_sync_progress(3, "Creating new repository: " . $repo_name);
                     
                     try {
                         // Create the repository
@@ -1144,12 +1209,14 @@ class Admin {
                             $repo_name = isset($result['name']) ? $result['name'] : '';
                             
                             wp_github_sync_log("Repository created successfully: " . $repo_url, 'info');
+                            $this->update_sync_progress(4, "Repository created successfully: " . $repo_url);
                             
                             // Save repository URL to settings
                             update_option('wp_github_sync_repository', $repo_url);
                             
                             // Try initial sync for a new repository
                             wp_github_sync_log("Starting initial file sync to new repository", 'info');
+                            $this->update_sync_progress(5, "Starting initial file sync to new repository");
                             
                             try {
                                 // Create Repository instance with the API client
@@ -1176,6 +1243,7 @@ class Admin {
                                 update_option('wp_github_sync_last_deployed_commit', $sync_result);
                                 
                                 wp_github_sync_log("Repository created and initialized successfully", 'info');
+                                $this->update_sync_progress(8, "Repository created and initialized successfully", 'complete');
                                 
                                 wp_send_json_success(array(
                                     'message' => sprintf(__('Repository created and initialized successfully at %s', 'wp-github-sync'), $repo_url),
@@ -1185,6 +1253,7 @@ class Admin {
                             } catch (Exception $sync_exception) {
                                 wp_github_sync_log("Exception during initial file sync: " . $sync_exception->getMessage(), 'error');
                                 wp_github_sync_log("Stack trace: " . $sync_exception->getTraceAsString(), 'error');
+                                $this->update_sync_progress(5, "Initial sync failed: " . $sync_exception->getMessage(), 'error');
                                 wp_send_json_error(array('message' => sprintf(__('Repository created, but initial sync failed: %s', 'wp-github-sync'), $sync_exception->getMessage())));
                                 return;
                             }
@@ -1217,9 +1286,11 @@ class Admin {
                     }
                     
                     wp_github_sync_log("Performing initial sync with existing repository: " . $repo_url, 'info');
+                    $this->update_sync_progress(3, "Connecting to existing repository: " . $repo_url);
                     
                     try {
                         // Check if repository exists and is accessible
+                        $this->update_sync_progress(3, "Verifying repository access");
                         if (!$this->github_api->repository_exists()) {
                             wp_github_sync_log("Repository does not exist or is not accessible: " . $repo_url, 'error');
                             wp_send_json_error(array('message' => __('The repository does not exist or is not accessible with your current GitHub credentials.', 'wp-github-sync')));
@@ -1227,6 +1298,7 @@ class Admin {
                         }
                         
                         wp_github_sync_log("Repository exists and is accessible", 'info');
+                        $this->update_sync_progress(4, "Repository access verified");
                         
                         // Try to get the default branch from the repository
                         $default_branch = $this->github_api->get_default_branch();
@@ -1272,11 +1344,13 @@ class Admin {
                             }
                             
                             // Create Repository instance with the API client
+                            $this->update_sync_progress(5, "Starting file upload to GitHub");
                             $repository = new \WPGitHubSync\API\Repository($this->github_api);
                             $sync_result = $repository->initial_sync($branch);
                             
                             if (is_wp_error($sync_result)) {
                                 wp_github_sync_log("Initial file sync failed: " . $sync_result->get_error_message(), 'error');
+                                $this->update_sync_progress(5, "Initial file sync failed: " . $sync_result->get_error_message(), 'error');
                                 wp_send_json_error(array('message' => sprintf(__('Initial file sync failed: %s', 'wp-github-sync'), $sync_result->get_error_message())));
                                 return;
                             }
@@ -1286,6 +1360,7 @@ class Admin {
                                 update_option('wp_github_sync_last_deployed_commit', $sync_result);
                                 update_option('wp_github_sync_last_deployment_time', time());
                                 wp_github_sync_log("Initial sync completed successfully, commit: " . $sync_result, 'info');
+                                $this->update_sync_progress(8, "Initial sync completed successfully! Commit ID: " . $sync_result, 'complete');
                             }
                             
                             wp_send_json_success(array('message' => __('Initial sync completed successfully.', 'wp-github-sync')));
