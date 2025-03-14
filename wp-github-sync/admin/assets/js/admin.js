@@ -157,14 +157,56 @@
                         }, 3000);
                     }
                 },
-                error: function() {
+                error: function(xhr, status, error) {
                     $('.wp-github-sync-loading-message').text('Error');
-                    $('.wp-github-sync-loading-submessage').text('An unexpected error occurred. Please try again.');
                     
-                    // Hide overlay after 3 seconds
+                    // Log detailed error to console
+                    console.error("AJAX Error:", status, error);
+                    
+                    if (xhr.responseText) {
+                        console.error("Response:", xhr.responseText);
+                        
+                        // Try to parse response for more details
+                        try {
+                            var responseObj = JSON.parse(xhr.responseText);
+                            if (responseObj && responseObj.data && responseObj.data.message) {
+                                $('.wp-github-sync-loading-submessage').text(responseObj.data.message);
+                                console.error("Parsed error:", responseObj.data.message);
+                            } else {
+                                // Look for WordPress critical error
+                                if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
+                                    $('.wp-github-sync-loading-submessage').text('WordPress encountered a critical error. Check server logs for details.');
+                                } else {
+                                    $('.wp-github-sync-loading-submessage').text('An unexpected error occurred. Please check server logs for details.');
+                                }
+                            }
+                        } catch (e) {
+                            // If we can't parse JSON, check for WordPress error page
+                            if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
+                                $('.wp-github-sync-loading-submessage').text('WordPress encountered a critical error. Check server logs for details.');
+                            } else {
+                                $('.wp-github-sync-loading-submessage').text('An unexpected error occurred. Please check server logs for details.');
+                            }
+                        }
+                    } else {
+                        $('.wp-github-sync-loading-submessage').text('An unexpected error occurred. Please try again.');
+                    }
+                    
+                    // Hide overlay after a longer time so user can read message
                     setTimeout(function() {
                         hideOverlay();
-                    }, 3000);
+                    }, 5000);
+                    
+                    // Log error to plugin's log file if possible
+                    if (typeof wpGitHubSync !== 'undefined' && wpGitHubSync.ajaxUrl) {
+                        $.post(wpGitHubSync.ajaxUrl, {
+                            action: 'wp_github_sync_log_error',
+                            nonce: wpGitHubSync.nonce,
+                            error_context: 'Initial sync AJAX error',
+                            error_status: status,
+                            error_message: error
+                        });
+                    }
                 }
             });
         });
