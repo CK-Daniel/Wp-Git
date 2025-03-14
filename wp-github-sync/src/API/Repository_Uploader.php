@@ -266,27 +266,131 @@ class Repository_Uploader {
         wp_github_sync_log("Default branch not found. Creating initial commit for empty repository.", 'info');
         
         try {
-            // Create an empty tree first
-            $empty_tree = $this->api_client->request(
-                "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/trees",
+            // Step 1: Create a blob for a README.md file (following GitHub's documented approach)
+            $readme_content = "# WordPress GitHub Sync\n\nThis repository was created by the WordPress GitHub Sync plugin.\n";
+            $blob = $this->api_client->request(
+                "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/blobs",
                 'POST',
                 [
-                    'tree' => []
+                    'content' => $readme_content,
+                    'encoding' => 'utf-8'
                 ]
             );
             
-            if (is_wp_error($empty_tree)) {
-                wp_github_sync_log("Failed to create empty tree: " . $empty_tree->get_error_message(), 'error');
-                return new \WP_Error('github_api_error', __('Failed to create initial commit tree', 'wp-github-sync'));
+            if (is_wp_error($blob)) {
+                wp_github_sync_log("Failed to create README blob: " . $blob->get_error_message(), 'error');
+                
+                // Check if this might be due to repository being completely empty or uninitialized
+                $error_message = $blob->get_error_message();
+                if (strpos($error_message, 'Git Repository is empty') !== false) {
+                    wp_github_sync_log("Repository is completely empty. Attempting to initialize repository with first commit.", 'info');
+                    
+                    // For an empty repository, we need to create an initial commit directly using the GitHub API
+                    // This requires using the GitHub Content API instead of the Git Data API
+                    
+                    try {
+                        // Create a README file using the contents API directly
+                        $readme_content = "# WordPress GitHub Sync\n\nThis repository was created by the WordPress GitHub Sync plugin.\n";
+                        $readme_commit = $this->api_client->request(
+                            "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/contents/README.md",
+                            'PUT',
+                            [
+                                'message' => 'Initial commit',
+                                'content' => base64_encode($readme_content),
+                                'branch' => $branch
+                            ]
+                        );
+                        
+                        if (is_wp_error($readme_commit)) {
+                            wp_github_sync_log("Failed to create initial README.md file: " . $readme_commit->get_error_message(), 'error');
+                            return new \WP_Error(
+                                'empty_repository', 
+                                __('Git Repository is empty. Please initialize the repository with a README file in GitHub first.', 'wp-github-sync')
+                            );
+                        }
+                        
+                        wp_github_sync_log("Successfully created initial commit with README.md", 'info');
+                        
+                        // Now get the reference to the branch we just created
+                        $ref = $this->api_client->request(
+                            "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/refs/heads/{$branch}"
+                        );
+                        
+                        if (is_wp_error($ref)) {
+                            wp_github_sync_log("Failed to get branch reference after initialization: " . $ref->get_error_message(), 'error');
+                            return new \WP_Error(
+                                'ref_not_found',
+                                __('Repository initialized but branch reference could not be retrieved.', 'wp-github-sync')
+                            );
+                        }
+                        
+                        return $ref;
+                    } catch (\Exception $e) {
+                        wp_github_sync_log("Exception initializing empty repository: " . $e->getMessage(), 'error');
+                        return new \WP_Error(
+                            'empty_repository_exception', 
+                            __('Error initializing empty repository: ', 'wp-github-sync') . $e->getMessage()
+                        );
+                    }
+                }
+                
+                return new \WP_Error('github_api_error', __('Failed to create initial blob', 'wp-github-sync'));
             }
             
-            // Create the initial commit with the empty tree
+            // Step 2: Create a tree entry with the blob
+            $tree = $this->api_client->request(
+                "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/trees",
+                'POST',
+                [
+                    'tree' => [
+                        [
+                            'path' => 'README.md',
+                            'mode' => '100644',
+                            'type' => 'blob',
+                            'sha' => $blob['sha']
+                        ]
+                    ]
+                ]
+            );
+            
+            if (is_wp_error($tree)) {
+                wp_github_sync_log("Failed to create tree: " . $tree->get_error_message(), 'error');
+                
+                // Try a completely empty tree as a fallback
+                wp_github_sync_log("Attempting to create an empty tree as fallback", 'info');
+                $empty_tree = $this->api_client->request(
+                    "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/trees",
+                    'POST',
+                    [
+                        'tree' => []
+                    ]
+                );
+                
+                if (is_wp_error($empty_tree)) {
+                    wp_github_sync_log("Failed to create empty tree: " . $empty_tree->get_error_message(), 'error');
+                    
+                    // Check if this is a newly created repository without initialization
+                    $error_message = $empty_tree->get_error_message();
+                    if (strpos($error_message, 'Git Repository is empty') !== false) {
+                        return new \WP_Error(
+                            'empty_repository', 
+                            __('Git Repository is empty. Please create a repository with README initialization or push an initial commit manually.', 'wp-github-sync')
+                        );
+                    }
+                    
+                    return new \WP_Error('github_api_error', __('Failed to create initial tree', 'wp-github-sync'));
+                }
+                
+                $tree = $empty_tree;
+            }
+            
+            // Step 3: Create the initial commit with the tree
             $initial_commit = $this->api_client->request(
                 "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/commits",
                 'POST',
                 [
                     'message' => 'Initial commit',
-                    'tree' => $empty_tree['sha'],
+                    'tree' => $tree['sha'],
                     'parents' => []
                 ]
             );
@@ -294,10 +398,19 @@ class Repository_Uploader {
             if (is_wp_error($initial_commit)) {
                 wp_github_sync_log("Failed to create initial commit: " . $initial_commit->get_error_message(), 'error');
                 
-                // Check if this is a 422 error that indicates the repo may already have content
+                // Check for specific error conditions
                 $error_message = $initial_commit->get_error_message();
+                
+                if (strpos($error_message, 'Git Repository is empty') !== false) {
+                    return new \WP_Error(
+                        'empty_repository', 
+                        __('Git Repository is empty. Please initialize the repository in GitHub first by creating a README.', 'wp-github-sync')
+                    );
+                }
+                
+                // Check if this is a 422 error (Unprocessable Entity)
                 if (strpos($error_message, '422') !== false) {
-                    wp_github_sync_log("422 error received. Repository might not be empty. Trying alternative approach.", 'info');
+                    wp_github_sync_log("422 error received. Repository might not be empty. Trying to use existing branches.", 'info');
                     
                     // Try to get all refs to see what's available
                     $all_refs = $this->api_client->request(
@@ -333,7 +446,7 @@ class Repository_Uploader {
                 return new \WP_Error('github_api_error', __('Failed to create initial commit', 'wp-github-sync'));
             }
             
-            // Create the main branch reference with the initial commit
+            // Step 4: Create the main branch reference with the initial commit
             $create_main_ref = $this->api_client->request(
                 "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/refs",
                 'POST',
@@ -346,7 +459,7 @@ class Repository_Uploader {
             if (is_wp_error($create_main_ref)) {
                 wp_github_sync_log("Failed to create main branch reference: " . $create_main_ref->get_error_message(), 'error');
                 
-                // Try to get the reference we just created
+                // Try to get the reference we just created - sometimes the branch is created despite the error
                 $check_ref = $this->api_client->request(
                     "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/refs/heads/{$branch}"
                 );
@@ -359,7 +472,7 @@ class Repository_Uploader {
                 return new \WP_Error('github_api_error', __('Failed to create initial branch reference', 'wp-github-sync'));
             }
             
-            wp_github_sync_log("Successfully created initial branch reference", 'info');
+            wp_github_sync_log("Successfully created initial branch reference with README.md", 'info');
             return $create_main_ref;
         } catch (\Exception $e) {
             wp_github_sync_log("Exception in create_initial_branch: " . $e->getMessage(), 'error');
