@@ -563,6 +563,26 @@
   border-top: 1px solid var(--wp-github-border);
 }
 
+/* Form validation errors */
+.wp-github-sync-field-error {
+  border-color: var(--wp-github-error) !important;
+  box-shadow: 0 0 0 1px var(--wp-github-error) !important;
+}
+
+.wp-github-sync-field-error-message {
+  color: var(--wp-github-error);
+  margin-top: 5px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+}
+
+.wp-github-sync-field-error-message::before {
+  content: "⚠️";
+  margin-right: 5px;
+}
+
 /* Toggle Switch */
 .wp-github-sync-toggle-switch {
   position: relative;

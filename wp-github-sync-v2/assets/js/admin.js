@@ -37,6 +37,11 @@
                 WpGitHubSync.testConnection();
             });
             
+            // Initialize connection status on page load
+            if ($('#wp-github-sync-connection-status').length) {
+                WpGitHubSync.updateConnectionStatus();
+            }
+            
             // Restore backup confirmation
             $('.js-restore-backup').on('click', function(e) {
                 e.preventDefault();
@@ -88,16 +93,32 @@
             $('.wp-github-sync-toggle-tab').on('click', function() {
                 var method = $(this).data('method');
                 
+                if (wpGitHubSync.debug) {
+                    console.log('Auth method tab clicked:', method);
+                }
+                
                 // Update active tab
                 $('.wp-github-sync-toggle-tab').removeClass('active');
                 $(this).addClass('active');
                 
                 // Show selected auth method fields
-                $('.wp-github-sync-auth-method-fields').removeClass('active');
-                $('.wp-github-sync-auth-method-fields.' + method).addClass('active');
+                $('.wp-github-sync-auth-method-fields').hide().removeClass('active');
+                $('.wp-github-sync-auth-method-fields.' + method).show().addClass('active');
                 
                 // Check the radio button
                 $(this).find('input[type="radio"]').prop('checked', true);
+            });
+            
+            // Initialize auth method tabs
+            $('input[name="wp_github_sync_settings[auth_method]"]:checked').each(function() {
+                var method = $(this).val();
+                
+                if (wpGitHubSync.debug) {
+                    console.log('Initializing auth method:', method);
+                }
+                
+                $('.wp-github-sync-toggle-tab[data-method="' + method + '"]').addClass('active');
+                $('.wp-github-sync-auth-method-fields.' + method).show().addClass('active');
             });
             
             // Password visibility toggle
@@ -177,6 +198,126 @@
             
             // Initialize tooltips
             this.initTooltips();
+            
+            // Add form validation
+            this.initFormValidation();
+        },
+        
+        /**
+         * Initialize form validation
+         */
+        initFormValidation: function() {
+            var self = this;
+            
+            // Handle settings form submission
+            $('.wp-github-sync-settings-form').on('submit', function(e) {
+                if (wpGitHubSync.debug) {
+                    console.log('Settings form submitted');
+                }
+                
+                // Validate form before submission
+                var isValid = true;
+                var authMethod = $('input[name="wp_github_sync_settings[auth_method]"]:checked').val() || 'pat';
+                
+                // Check repository URL (required)
+                var repoUrl = $('input[name="wp_github_sync_settings[repo_url]"]').val().trim();
+                if (!repoUrl) {
+                    isValid = false;
+                    self.highlightFieldError('repo_url', 'Repository URL is required');
+                }
+                
+                // Check authentication based on selected method
+                if (authMethod === 'pat') {
+                    var token = $('input[name="wp_github_sync_settings[access_token]"]').val().trim();
+                    if (!token && token !== '********') {
+                        isValid = false;
+                        self.highlightFieldError('access_token', 'Personal Access Token is required');
+                    }
+                } else if (authMethod === 'oauth') {
+                    var oauthToken = $('input[name="wp_github_sync_settings[oauth_token]"]').val().trim();
+                    if (!oauthToken && oauthToken !== '********') {
+                        isValid = false;
+                        self.highlightFieldError('oauth_token', 'OAuth Token is required');
+                    }
+                } else if (authMethod === 'github_app') {
+                    var appId = $('input[name="wp_github_sync_settings[github_app_id]"]').val().trim();
+                    var installId = $('input[name="wp_github_sync_settings[github_app_installation_id]"]').val().trim();
+                    var appKey = $('#github_app_key').val().trim();
+                    
+                    if (!appId) {
+                        isValid = false;
+                        self.highlightFieldError('github_app_id', 'GitHub App ID is required');
+                    }
+                    if (!installId) {
+                        isValid = false;
+                        self.highlightFieldError('github_app_installation_id', 'Installation ID is required');
+                    }
+                    if (!appKey) {
+                        isValid = false;
+                        self.highlightFieldError('github_app_key', 'Private Key is required');
+                    }
+                }
+                
+                if (!isValid) {
+                    e.preventDefault();
+                    return false;
+                }
+                
+                // Form is valid, show loading state
+                var $submitButton = $('#save-settings');
+                $submitButton.prop('disabled', true).addClass('wp-github-sync-button-loading');
+                $submitButton.val(wpGitHubSync.strings.saving || 'Saving...');
+                
+                // Store form data for comparison later
+                sessionStorage.setItem('wp_github_sync_form_data', $(this).serialize());
+                
+                return true;
+            });
+            
+            // Check for settings update success
+            if (window.location.search.indexOf('settings-updated=true') !== -1) {
+                $('#save-settings-feedback').fadeIn().delay(3000).fadeOut();
+                
+                // Highlight saved fields
+                $('.wp-github-sync-text-input, .wp-github-sync-select, .wp-github-sync-textarea').addClass('wp-github-sync-saved-field');
+                setTimeout(function() {
+                    $('.wp-github-sync-saved-field').removeClass('wp-github-sync-saved-field');
+                }, 2000);
+            }
+        },
+        
+        /**
+         * Highlight field with error
+         */
+        highlightFieldError: function(fieldId, message) {
+            var $field = $('#' + fieldId);
+            var $wrapper = $field.closest('.wp-github-sync-input-wrapper');
+            
+            // Add error class
+            $wrapper.addClass('wp-github-sync-field-error');
+            
+            // Show error message
+            var $errorMsg = $wrapper.siblings('.wp-github-sync-field-error-message');
+            if ($errorMsg.length === 0) {
+                $errorMsg = $('<div class="wp-github-sync-field-error-message">' + message + '</div>');
+                $wrapper.after($errorMsg);
+            } else {
+                $errorMsg.text(message);
+            }
+            
+            // Scroll to the error
+            $('html, body').animate({
+                scrollTop: $wrapper.offset().top - 100
+            }, 300);
+            
+            // Focus the field
+            $field.focus();
+            
+            // Remove error after field is changed
+            $field.one('input', function() {
+                $wrapper.removeClass('wp-github-sync-field-error');
+                $errorMsg.remove();
+            });
         },
         
         initTabs: function() {
@@ -368,44 +509,202 @@
         },
         
         testConnection: function() {
-            var $button = $('.js-test-connection');
-            var $result = $('.js-connection-result');
+            var $button = $('#test-connection, .js-test-connection');
+            var $status = $('#wp-github-sync-connection-status');
+            var $result = $('#connection-test-result, .js-connection-result');
             
-            // Disable button
-            $button.prop('disabled', true).text('Testing...');
+            // Log debug info
+            if (wpGitHubSync.debug) {
+                console.log('Testing connection with form data');
+            }
+            
+            // Get auth method
+            var authMethod = $('input[name="wp_github_sync_settings[auth_method]"]:checked').val() || 'pat';
             
             // Get form data
             var data = {
-                repo_url: $('#repo_url').val(),
-                auth_method: $('input[name="auth_method"]:checked').val(),
-                access_token: $('#access_token').val()
+                action: 'wp_github_sync_test_connection', // AJAX action name
+                nonce: wpGitHubSync.apiNonce,
+                repo_url: $('input[name="wp_github_sync_settings[repo_url]"]').val(),
+                branch: $('input[name="wp_github_sync_settings[sync_branch]"]').val() || 'main',
+                auth_method: authMethod
             };
             
-            // Make API request
+            // Get token based on auth method
+            if (authMethod === 'pat') {
+                data.token = $('input[name="wp_github_sync_settings[access_token]"]').val();
+            } else if (authMethod === 'oauth') {
+                data.token = $('input[name="wp_github_sync_settings[oauth_token]"]').val();
+            } else if (authMethod === 'github_app') {
+                data.github_app_id = $('input[name="wp_github_sync_settings[github_app_id]"]').val();
+                data.github_app_installation_id = $('input[name="wp_github_sync_settings[github_app_installation_id]"]').val();
+                data.github_app_key = $('#github_app_key').val();
+            }
+            
+            // Log the data we're sending
+            if (wpGitHubSync.debug) {
+                console.log('Test connection data:', JSON.parse(JSON.stringify(data)));
+            }
+            
+            // Validation
+            if (!data.repo_url) {
+                this.showConnectionError('Repository URL is required');
+                return;
+            }
+            
+            if (authMethod === 'pat' && !data.token) {
+                this.showConnectionError('Personal Access Token is required');
+                return;
+            } else if (authMethod === 'oauth' && !data.token) {
+                this.showConnectionError('OAuth Token is required');
+                return;
+            } else if (authMethod === 'github_app' && (!data.github_app_id || !data.github_app_installation_id || !data.github_app_key)) {
+                this.showConnectionError('All GitHub App credentials are required');
+                return;
+            }
+            
+            // Disable button and show loading state
+            $button.prop('disabled', true);
+            if ($button.find('.dashicons').length) {
+                $button.find('.dashicons').addClass('wp-github-sync-spin');
+            }
+            
+            // Update status indicator to testing state
+            if ($status.length) {
+                $status.removeClass('pending success error')
+                    .addClass('testing')
+                    .find('.dashicons')
+                    .removeClass('dashicons-warning dashicons-yes dashicons-no')
+                    .addClass('dashicons-update wp-github-sync-spin');
+                $status.find('.status-text').text(wpGitHubSync.strings.testing || 'Testing connection...');
+            }
+            
+            // Make AJAX request to our WordPress handler
             $.ajax({
-                url: wpGitHubSync.apiUrl + '/test-connection',
+                url: wpGitHubSync.ajaxUrl,
                 method: 'POST',
                 data: data,
-                beforeSend: function(xhr) {
-                    xhr.setRequestHeader('X-WP-Nonce', wpGitHubSync.apiNonce);
-                },
                 success: function(response) {
-                    $button.prop('disabled', false).text('Test Connection');
+                    // Log the response for debugging
+                    if (wpGitHubSync.debug) {
+                        console.log('Test connection response:', response);
+                    }
                     
-                    // Show success message
-                    $result.html('<div class="wp-github-sync-status success"><span class="dashicons dashicons-yes"></span> ' + response.message + '</div>');
+                    // Re-enable button
+                    $button.prop('disabled', false);
+                    if ($button.find('.dashicons').length) {
+                        $button.find('.dashicons').removeClass('wp-github-sync-spin');
+                    }
+                    
+                    if (response.success) {
+                        // Show success message
+                        if ($status.length) {
+                            $status.removeClass('pending testing error')
+                                .addClass('success')
+                                .find('.dashicons')
+                                .removeClass('dashicons-warning dashicons-update dashicons-no wp-github-sync-spin')
+                                .addClass('dashicons-yes');
+                            $status.find('.status-text').text(response.data.message || 'Connection successful!');
+                        }
+                        
+                        if ($result.length) {
+                            $result.html('<div class="wp-github-sync-status success"><span class="dashicons dashicons-yes"></span> ' + 
+                                (response.data.message || 'Connection successful!') + '</div>');
+                        }
+                    } else {
+                        // Show error message
+                        WpGitHubSync.showConnectionError(response.data.message || 'Connection failed', $status, $result);
+                    }
                 },
-                error: function(xhr) {
-                    $button.prop('disabled', false).text('Test Connection');
+                error: function(xhr, status, error) {
+                    // Re-enable button
+                    $button.prop('disabled', false);
+                    if ($button.find('.dashicons').length) {
+                        $button.find('.dashicons').removeClass('wp-github-sync-spin');
+                    }
+                    
+                    // Try to parse error response
+                    var message = 'Connection test failed';
+                    
+                    try {
+                        if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+                            message = xhr.responseJSON.data.message;
+                        } else if (xhr.responseText) {
+                            var resp = JSON.parse(xhr.responseText);
+                            if (resp.data && resp.data.message) {
+                                message = resp.data.message;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Error parsing AJAX response:', e);
+                    }
                     
                     // Show error message
-                    var message = xhr.responseJSON && xhr.responseJSON.message ? 
-                                 xhr.responseJSON.message : 
-                                 'Connection failed';
-                                 
-                    $result.html('<div class="wp-github-sync-status error"><span class="dashicons dashicons-warning"></span> ' + message + '</div>');
+                    WpGitHubSync.showConnectionError(message, $status, $result);
                 }
             });
+        },
+        
+        /**
+         * Display connection error
+         */
+        showConnectionError: function(message, $status, $result) {
+            if (!$status) {
+                $status = $('#wp-github-sync-connection-status');
+            }
+            if (!$result) {
+                $result = $('#connection-test-result');
+            }
+            
+            // Update status indicator if it exists
+            if ($status.length) {
+                $status.removeClass('pending testing success')
+                    .addClass('error')
+                    .find('.dashicons')
+                    .removeClass('dashicons-warning dashicons-update dashicons-yes wp-github-sync-spin')
+                    .addClass('dashicons-no');
+                $status.find('.status-text').text(message);
+            }
+            
+            // Update result container if it exists
+            if ($result.length) {
+                $result.html('<div class="wp-github-sync-status error"><span class="dashicons dashicons-no"></span> ' + 
+                    message + '</div>');
+            }
+        },
+        
+        /**
+         * Update connection status based on current settings
+         */
+        updateConnectionStatus: function() {
+            var $status = $('#wp-github-sync-connection-status');
+            if (!$status.length) return;
+            
+            // Check if we have settings with a repo URL and token
+            var settings = wpGitHubSync.settings || {};
+            var hasRepo = settings.repo_url && settings.repo_url.trim() !== '';
+            var hasToken = false;
+            
+            if (settings.auth_method === 'pat') {
+                hasToken = settings.access_token && settings.access_token.trim() !== '';
+            } else if (settings.auth_method === 'oauth') {
+                hasToken = settings.oauth_token && settings.oauth_token.trim() !== '';
+            } else if (settings.auth_method === 'github_app') {
+                hasToken = settings.github_app_id && settings.github_app_installation_id && settings.github_app_key;
+            }
+            
+            if (hasRepo && hasToken) {
+                // We have credentials, so let's test the connection automatically
+                this.testConnection();
+            } else {
+                // No credentials, show pending status
+                $status.removeClass('success error testing')
+                    .addClass('pending')
+                    .find('.dashicons')
+                    .removeClass('dashicons-yes dashicons-no dashicons-update wp-github-sync-spin')
+                    .addClass('dashicons-warning');
+                $status.find('.status-text').text('Not Configured');
+            }
         },
         
         restoreBackup: function(backupId) {

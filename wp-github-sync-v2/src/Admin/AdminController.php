@@ -44,6 +44,56 @@ class AdminController {
     public function __construct( $version ) {
         $this->version = $version;
         $this->client = new Client( $version );
+        
+        // Register AJAX handlers
+        add_action('wp_ajax_wp_github_sync_test_connection', array($this, 'handle_test_connection'));
+        add_action('wp_ajax_wp_github_sync_reset_settings', array($this, 'handle_reset_settings'));
+    }
+    
+    /**
+     * Handle AJAX reset settings request
+     */
+    public function handle_reset_settings() {
+        check_ajax_referer('wp_github_sync_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array(
+                'message' => __('You do not have permission to perform this action.', 'wp-github-sync'),
+            ));
+        }
+        
+        // Default settings
+        $default_settings = array(
+            'repo_url' => '',
+            'sync_branch' => 'main',
+            'auth_method' => 'pat',
+            'access_token' => '',
+            'oauth_token' => '',
+            'auto_backup' => true,
+            'backup_themes' => true,
+            'backup_plugins' => true,
+            'backup_uploads' => false,
+            'backup_config' => false,
+            'max_backups' => 5,
+            'maintenance_mode' => true,
+            'auto_rollback' => true,
+            'delete_removed' => true,
+            'debug_mode' => false,
+            'log_retention' => 30,
+        );
+        
+        // Update option with default settings
+        update_option('wp_github_sync_settings', $default_settings);
+        
+        // Also clear individual options for backward compatibility
+        delete_option('wp_github_sync_repository');
+        delete_option('wp_github_sync_branch');
+        delete_option('wp_github_sync_access_token');
+        
+        wp_send_json_success(array(
+            'message' => __('Settings reset successfully.', 'wp-github-sync'),
+            'settings' => $default_settings,
+        ));
     }
     
     /**
@@ -124,14 +174,18 @@ class AdminController {
             true
         );
         
+        // Get current settings for form
+        $settings = get_option('wp_github_sync_settings', array());
+        
         // Localize script
         wp_localize_script(
             'wp-github-sync-admin',
             'wpGitHubSync',
             array(
                 'ajaxUrl'  => admin_url( 'admin-ajax.php' ),
-                'apiNonce' => wp_create_nonce( 'wp_rest' ),
+                'apiNonce' => wp_create_nonce( 'wp_github_sync_nonce' ), // Use consistent nonce name
                 'apiUrl'   => rest_url( 'wp-github-sync/v1' ),
+                'settings' => $settings, // Pass current settings to JS for loading state
                 'strings'  => array(
                     'syncing'      => __( 'Syncing...', 'wp-github-sync' ),
                     'syncComplete' => __( 'Sync Complete!', 'wp-github-sync' ),
@@ -140,7 +194,11 @@ class AdminController {
                     'creating'     => __( 'Creating...', 'wp-github-sync' ),
                     'restoring'    => __( 'Restoring...', 'wp-github-sync' ),
                     'comparing'    => __( 'Comparing...', 'wp-github-sync' ),
+                    'testing'      => __( 'Testing Connection...', 'wp-github-sync' ),
+                    'testSuccess'  => __( 'Connection Successful!', 'wp-github-sync' ),
+                    'testFailed'   => __( 'Connection Failed!', 'wp-github-sync' ),
                 ),
+                'debug'    => true, // Enable debug mode for troubleshooting
             )
         );
     }
@@ -1220,7 +1278,7 @@ class AdminController {
      * Handle AJAX test connection request
      */
     public function handle_test_connection() {
-        check_ajax_referer( 'wp_rest', 'nonce' ); // Updated to use the correct nonce
+        check_ajax_referer( 'wp_github_sync_nonce', 'nonce' ); // Use consistent nonce name
         
         if ( ! current_user_can( 'manage_options' ) ) {
             wp_send_json_error( array(
@@ -1231,7 +1289,17 @@ class AdminController {
         // Get and sanitize all input fields
         $repo_url = isset( $_POST['repo_url'] ) ? sanitize_text_field( wp_unslash( $_POST['repo_url'] ) ) : '';
         $auth_method = isset( $_POST['auth_method'] ) ? sanitize_text_field( wp_unslash( $_POST['auth_method'] ) ) : 'pat';
-        $token = isset( $_POST['token'] ) ? sanitize_text_field( wp_unslash( $_POST['token'] ) ) : '';
+        
+        // Handle token based on auth method for backward compatibility
+        $token = '';
+        if (isset($_POST['token'])) {
+            $token = sanitize_text_field(wp_unslash($_POST['token']));
+        } elseif (isset($_POST['access_token']) && $auth_method === 'pat') {
+            $token = sanitize_text_field(wp_unslash($_POST['access_token']));
+        } elseif (isset($_POST['oauth_token']) && $auth_method === 'oauth') {
+            $token = sanitize_text_field(wp_unslash($_POST['oauth_token']));
+        }
+        
         $branch = isset( $_POST['branch'] ) ? sanitize_text_field( wp_unslash( $_POST['branch'] ) ) : 'main';
         
         // Debug logging
@@ -1240,16 +1308,19 @@ class AdminController {
         error_log('- Repo URL: ' . $repo_url);
         error_log('- Branch: ' . $branch);
         error_log('- Token provided: ' . (!empty($token) ? 'Yes' : 'No'));
+        error_log('- POST data: ' . print_r($_POST, true));
         
         if ( empty( $repo_url ) ) {
             wp_send_json_error( array(
                 'message' => __( 'Repository URL is required.', 'wp-github-sync' ),
+                'field' => 'repo_url'
             ) );
         }
         
         if ( empty( $token ) ) {
             wp_send_json_error( array(
                 'message' => __( 'Access token is required.', 'wp-github-sync' ),
+                'field' => $auth_method === 'pat' ? 'access_token' : 'oauth_token'
             ) );
         }
         
@@ -1265,10 +1336,17 @@ class AdminController {
             $settings['access_token'] = $token;
         } elseif ($auth_method === 'oauth') {
             $settings['oauth_token'] = $token;
+        } elseif ($auth_method === 'github_app') {
+            // Handle GitHub App authentication
+            $settings['github_app_id'] = isset($_POST['github_app_id']) ? 
+                sanitize_text_field(wp_unslash($_POST['github_app_id'])) : '';
+            $settings['github_app_installation_id'] = isset($_POST['github_app_installation_id']) ?
+                sanitize_text_field(wp_unslash($_POST['github_app_installation_id'])) : '';
+            $settings['github_app_key'] = isset($_POST['github_app_key']) ?
+                wp_unslash($_POST['github_app_key']) : '';
         }
         
         // Don't update options yet, just test with temporary settings
-        
         try {
             // Temporarily init the client with new settings
             $test_client = new Client( $this->version, $settings );
@@ -1277,16 +1355,19 @@ class AdminController {
             if ( is_wp_error( $result ) ) {
                 wp_send_json_error( array(
                     'message' => $result->get_error_message(),
+                    'code' => $result->get_error_code()
                 ) );
             }
             
             wp_send_json_success( array(
                 'message' => __( 'Connection successful!', 'wp-github-sync' ),
+                'settings_tested' => $settings
             ) );
             
         } catch ( \Exception $e ) {
             wp_send_json_error( array(
                 'message' => $e->getMessage(),
+                'exception' => true
             ) );
         }
     }

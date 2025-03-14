@@ -69,10 +69,11 @@ if ( ! current_user_can( 'manage_options' ) ) {
                         <span class="dashicons dashicons-warning"></span>
                         <span class="status-text"><?php esc_html_e( 'Not Connected', 'wp-github-sync' ); ?></span>
                     </div>
-                    <button type="button" class="wp-github-sync-button secondary" id="test-connection">
+                    <button type="button" class="wp-github-sync-button secondary" id="test-connection" onclick="WpGitHubSync.testConnection()">
                         <span class="dashicons dashicons-update"></span>
                         <?php esc_html_e( 'Test Connection', 'wp-github-sync' ); ?>
                     </button>
+                    <div id="connection-test-result" class="wp-github-sync-connection-test-result"></div>
                 </div>
             </div>
         </div>
