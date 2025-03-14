@@ -184,71 +184,132 @@ class Repository {
      * @return bool|\WP_Error True on success or WP_Error on failure.
      */
     public function initial_sync($branch = 'main') {
+        // First verify authentication is working
+        $auth_test = $this->api_client->test_authentication();
+        if ($auth_test !== true) {
+            wp_github_sync_log("Initial sync authentication test failed: " . $auth_test, 'error');
+            return new \WP_Error('github_auth_failed', sprintf(__('GitHub authentication failed: %s', 'wp-github-sync'), $auth_test));
+        }
+        
         // Set up basic commit information
-        $user = $this->api_client->get_user();
-        
-        if (is_wp_error($user)) {
-            return $user;
-        }
-        
-        // Get site info for commit message
-        $site_url = get_bloginfo('url');
-        $site_name = get_bloginfo('name');
-        
-        // Create a temporary directory to prepare files
-        $temp_dir = wp_tempnam('wp-github-sync-');
-        @unlink($temp_dir); // Remove the file so we can create a directory with the same name
-        wp_mkdir_p($temp_dir);
-        
-        // Define paths to sync
-        $paths_to_sync = apply_filters('wp_github_sync_paths', [
-            'wp-content/themes' => true,
-            'wp-content/plugins' => true,
-            'wp-content/uploads' => false, // Default to not sync media
-        ]);
-        
-        // Prepare files to sync
-        $result = $this->prepare_files_for_initial_sync($temp_dir, $paths_to_sync);
-        
-        if (is_wp_error($result)) {
-            // Clean up
-            $this->recursive_rmdir($temp_dir);
-            return $result;
-        }
-        
-        // Create a README.md file at the root
-        $readme_content = "# {$site_name}\n\nWordPress site synced with GitHub.\n\nSite URL: {$site_url}\n\n";
-        $readme_content .= "## About\n\nThis repository contains the themes, plugins, and configuration for the WordPress site.\n";
-        $readme_content .= "It is managed by the [WordPress GitHub Sync](https://github.com/yourusername/wp-github-sync) plugin.\n";
-        
-        file_put_contents($temp_dir . '/README.md', $readme_content);
-        
-        // Create a .gitignore file
-        $gitignore_content = "# WordPress core files\nwp-admin/\nwp-includes/\nwp-*.php\n\n";
-        $gitignore_content .= "# Exclude sensitive files\nwp-config.php\n*.log\n.htaccess\n\n";
-        $gitignore_content .= "# Exclude cache and backup files\n*.cache\n*.bak\n*~\n\n";
-        
-        file_put_contents($temp_dir . '/.gitignore', $gitignore_content);
-        
-        // Create an uploader instance
-        $uploader = new Repository_Uploader($this->api_client);
-        
-        // Upload files to GitHub
         try {
-            $result = $uploader->upload_files_to_github($temp_dir, $branch, "Initial sync from {$site_name}");
+            $user = $this->api_client->get_user();
             
-            // Clean up temporary directory regardless of success or failure
-            $this->recursive_rmdir($temp_dir);
+            if (is_wp_error($user)) {
+                $error_message = $user->get_error_message();
+                wp_github_sync_log("Failed to get user info: " . $error_message, 'error');
+                return new \WP_Error('github_api_user_error', sprintf(__('Failed to get GitHub user info: %s', 'wp-github-sync'), $error_message));
+            }
             
-            return $result;
+            // Log user info for debugging
+            if (isset($user['login'])) {
+                wp_github_sync_log("Performing initial sync as GitHub user: " . $user['login'], 'info');
+            }
+            
+            // Get site info for commit message
+            $site_url = get_bloginfo('url');
+            $site_name = get_bloginfo('name');
+            
+            wp_github_sync_log("Creating initial sync for site: {$site_name} ({$site_url})", 'info');
+            
+            // Create a temporary directory to prepare files
+            $temp_dir = wp_tempnam('wp-github-sync-');
+            @unlink($temp_dir); // Remove the file so we can create a directory with the same name
+            wp_github_sync_log("Creating temporary directory for initial sync: {$temp_dir}", 'debug');
+            
+            if (!wp_mkdir_p($temp_dir)) {
+                wp_github_sync_log("Failed to create temporary directory", 'error');
+                return new \WP_Error('temp_dir_creation_failed', __('Failed to create temporary directory for sync', 'wp-github-sync'));
+            }
+            
+            if (!is_dir($temp_dir) || !is_writable($temp_dir)) {
+                wp_github_sync_log("Temporary directory not writable: {$temp_dir}", 'error');
+                return new \WP_Error('temp_dir_not_writable', __('Temporary directory not writable', 'wp-github-sync'));
+            }
+            
+            // Define paths to sync
+            $paths_to_sync = apply_filters('wp_github_sync_paths', [
+                'wp-content/themes' => true,
+                'wp-content/plugins' => true,
+                'wp-content/uploads' => false, // Default to not sync media
+            ]);
+            
+            wp_github_sync_log("Preparing files for initial sync", 'info');
+            
+            // Prepare files to sync
+            $result = $this->prepare_files_for_initial_sync($temp_dir, $paths_to_sync);
+            
+            if (is_wp_error($result)) {
+                $error_message = $result->get_error_message();
+                wp_github_sync_log("Failed to prepare files: " . $error_message, 'error');
+                // Clean up
+                $this->recursive_rmdir($temp_dir);
+                return new \WP_Error('file_preparation_failed', sprintf(__('Failed to prepare files: %s', 'wp-github-sync'), $error_message));
+            }
+            
+            // Create a README.md file at the root
+            $readme_content = "# {$site_name}\n\nWordPress site synced with GitHub.\n\nSite URL: {$site_url}\n\n";
+            $readme_content .= "## About\n\nThis repository contains the themes, plugins, and configuration for the WordPress site.\n";
+            $readme_content .= "It is managed by the [WordPress GitHub Sync](https://github.com/yourusername/wp-github-sync) plugin.\n";
+            
+            wp_github_sync_log("Creating README.md file", 'debug');
+            
+            if (file_put_contents($temp_dir . '/README.md', $readme_content) === false) {
+                wp_github_sync_log("Failed to create README.md file", 'error');
+                $this->recursive_rmdir($temp_dir);
+                return new \WP_Error('readme_creation_failed', __('Failed to create README.md file', 'wp-github-sync'));
+            }
+            
+            // Create a .gitignore file
+            $gitignore_content = "# WordPress core files\nwp-admin/\nwp-includes/\nwp-*.php\n\n";
+            $gitignore_content .= "# Exclude sensitive files\nwp-config.php\n*.log\n.htaccess\n\n";
+            $gitignore_content .= "# Exclude cache and backup files\n*.cache\n*.bak\n*~\n\n";
+            
+            wp_github_sync_log("Creating .gitignore file", 'debug');
+            
+            if (file_put_contents($temp_dir . '/.gitignore', $gitignore_content) === false) {
+                wp_github_sync_log("Failed to create .gitignore file", 'error');
+                $this->recursive_rmdir($temp_dir);
+                return new \WP_Error('gitignore_creation_failed', __('Failed to create .gitignore file', 'wp-github-sync'));
+            }
+            
+            // Create an uploader instance
+            $uploader = new Repository_Uploader($this->api_client);
+            
+            // Upload files to GitHub
+            try {
+                wp_github_sync_log("Starting upload to GitHub", 'info');
+                $result = $uploader->upload_files_to_github($temp_dir, $branch, "Initial sync from {$site_name}");
+                
+                // Clean up temporary directory regardless of success or failure
+                wp_github_sync_log("Cleaning up temporary directory", 'debug');
+                $this->recursive_rmdir($temp_dir);
+                
+                if (is_wp_error($result)) {
+                    $error_message = $result->get_error_message();
+                    wp_github_sync_log("Upload failed: " . $error_message, 'error');
+                    return new \WP_Error('upload_failed', sprintf(__('Failed to upload to GitHub: %s', 'wp-github-sync'), $error_message));
+                }
+                
+                wp_github_sync_log("Initial sync completed successfully", 'info');
+                return $result;
+            } catch (\Exception $e) {
+                // Clean up temporary directory on exception
+                $this->recursive_rmdir($temp_dir);
+                
+                // Log exception details
+                $error_message = $e->getMessage();
+                $trace = $e->getTraceAsString();
+                wp_github_sync_log("Exception during initial sync: " . $error_message, 'error');
+                wp_github_sync_log("Stack trace: " . $trace, 'error');
+                
+                return new \WP_Error('sync_exception', sprintf(__('Exception during initial sync: %s', 'wp-github-sync'), $error_message));
+            }
         } catch (\Exception $e) {
-            // Clean up temporary directory on exception
-            $this->recursive_rmdir($temp_dir);
-            
-            // Log exception details
-            wp_github_sync_log("Exception during initial sync: " . $e->getMessage(), 'error');
-            
-            return new \WP_Error('sync_exception', $e->getMessage());
+            // Catch any exceptions during the entire process
+            $error_message = $e->getMessage();
+            wp_github_sync_log("Critical exception during initial sync: " . $error_message, 'error');
+            return new \WP_Error('critical_sync_exception', sprintf(__('Critical error during initial sync: %s', 'wp-github-sync'), $error_message));
         }
     }
     
