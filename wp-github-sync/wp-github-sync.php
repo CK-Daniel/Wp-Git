@@ -42,24 +42,30 @@ define('WP_GITHUB_SYNC_DIR', plugin_dir_path(__FILE__));
 define('WP_GITHUB_SYNC_URL', plugin_dir_url(__FILE__));
 
 /**
- * The core plugin class that is used to define internationalization,
- * admin-specific hooks, and sync functionality.
+ * Main plugin bootstrap file
+ * Loads all the plugin components
  */
-require_once WP_GITHUB_SYNC_DIR . 'includes/class-wp-github-sync.php';
+
+// Load the autoloader
+require_once WP_GITHUB_SYNC_DIR . 'includes/autoload.php';
+
+// Load plugin activation/deactivation functions
+require_once WP_GITHUB_SYNC_DIR . 'includes/plugin.php';
+
+// Register global activation, deactivation, and uninstall hooks
+// Note: Class-specific hooks are registered in WP_GitHub_Sync class
+register_activation_hook(__FILE__, 'wp_github_sync_activate');
+register_deactivation_hook(__FILE__, 'wp_github_sync_deactivate');
+register_uninstall_hook(__FILE__, 'wp_github_sync_uninstall');
 
 /**
  * Begins execution of the plugin.
- *
- * Since everything within the plugin is registered via hooks,
- * then kicking off the plugin from this point in the file does
- * not affect the page life cycle.
  */
 function run_wp_github_sync() {
-    $plugin = new WP_GitHub_Sync();
+    // Initialize the plugin
+    $plugin = new WPGitHubSync\WP_GitHub_Sync();
     $plugin->run();
 }
 
-/**
- * Run the plugin.
- */
+// Run the plugin
 run_wp_github_sync();

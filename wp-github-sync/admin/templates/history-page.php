@@ -10,6 +10,15 @@ if (!defined('WPINC')) {
     die;
 }
 
+// Check user capability
+if (!wp_github_sync_current_user_can()) {
+    wp_die(__('You do not have sufficient permissions to access this page.', 'wp-github-sync'));
+}
+
+// Get deployment history and status
+$history = get_option('wp_github_sync_deployment_history', array());
+$last_deployed_commit = get_option('wp_github_sync_last_deployed_commit', '');
+
 // Get the current timestamp for today's date
 $current_time = current_time('timestamp');
 $today_date = date('Y-m-d', $current_time);
@@ -29,9 +38,6 @@ if (!empty($history)) {
         $deployments_by_date[$deploy_date][] = $deployment;
     }
 }
-
-// Get the last deployed commit to highlight current version
-$last_deployed_commit = get_option('wp_github_sync_last_deployed_commit', '');
 ?>
 <div class="wrap wp-github-sync-wrap">
     <h1><?php _e('Version History', 'wp-github-sync'); ?></h1>
@@ -343,81 +349,8 @@ $last_deployed_commit = get_option('wp_github_sync_last_deployed_commit', '');
                 <div class="wp-github-sync-loading-submessage"></div>
             </div>
             
-            <script>
-            jQuery(document).ready(function($) {
-                // Tab functionality
-                $('.wp-github-sync-tab').on('click', function() {
-                    $('.wp-github-sync-tab').removeClass('active');
-                    $(this).addClass('active');
-                    
-                    const tab = $(this).data('tab');
-                    
-                    $('.wp-github-sync-tab-content').removeClass('active');
-                    $('#' + tab + '-tab-content').addClass('active');
-                    
-                    // Update URL hash
-                    window.location.hash = tab;
-                });
-                
-                // Check if URL has a hash for a tab
-                const hash = window.location.hash.substring(1);
-                if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
-                    $('.wp-github-sync-tab[data-tab="' + hash + '"]').click();
-                }
-                
-                // Rollback confirmation
-                $('.wp-github-sync-rollback').on('click', function() {
-                    const commitSha = $(this).data('commit');
-                    const confirmMsg = wpGitHubSync.strings.confirmRollback;
-                    
-                    if (confirm(confirmMsg)) {
-                        // Show loading overlay
-                        $('.wp-github-sync-overlay').show();
-                        $('.wp-github-sync-loading-message').text('<?php _e('Restoring previous version...', 'wp-github-sync'); ?>');
-                        $('.wp-github-sync-loading-submessage').text('<?php _e('This may take a moment.', 'wp-github-sync'); ?>');
-                        
-                        // Handle rollback via AJAX
-                        $.ajax({
-                            url: wpGitHubSync.ajaxUrl,
-                            type: 'POST',
-                            data: {
-                                action: 'wp_github_sync_rollback',
-                                nonce: wpGitHubSync.nonce,
-                                commit: commitSha
-                            },
-                            success: function(response) {
-                                if (response.success) {
-                                    $('.wp-github-sync-loading-message').text('<?php _e('Success!', 'wp-github-sync'); ?>');
-                                    $('.wp-github-sync-loading-submessage').text(response.data.message);
-                                    
-                                    // Reload page after 2 seconds
-                                    setTimeout(function() {
-                                        window.location.reload();
-                                    }, 2000);
-                                } else {
-                                    $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                                    $('.wp-github-sync-loading-submessage').text(response.data.message || wpGitHubSync.strings.error);
-                                    
-                                    // Hide overlay after 3 seconds
-                                    setTimeout(function() {
-                                        $('.wp-github-sync-overlay').hide();
-                                    }, 3000);
-                                }
-                            },
-                            error: function() {
-                                $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                                $('.wp-github-sync-loading-submessage').text(wpGitHubSync.strings.error);
-                                
-                                // Hide overlay after 3 seconds
-                                setTimeout(function() {
-                                    $('.wp-github-sync-overlay').hide();
-                                }, 3000);
-                            }
-                        });
-                    }
-                });
-            });
-            </script>
+            <!-- AJAX nonce for security -->
+            <input type="hidden" id="wp-github-sync-nonce" value="<?php echo wp_create_nonce('wp-github-sync-nonce'); ?>">
         <?php endif; ?>
     </div>
 </div>

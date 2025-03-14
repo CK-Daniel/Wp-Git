@@ -376,7 +376,9 @@ class Settings {
         $token = get_option('wp_github_sync_access_token', '');
         $display_value = !empty($token) ? '********' : '';
         ?>
-        <input type="password" name="wp_github_sync_access_token" value="<?php echo esc_attr($display_value); ?>" class="regular-text">
+        <input type="password" name="wp_github_sync_access_token" id="wp_github_sync_access_token" value="<?php echo esc_attr($display_value); ?>" class="regular-text">
+        <button type="button" class="button wp-github-sync-test-connection"><?php _e('Test Connection', 'wp-github-sync'); ?></button>
+        <div id="github-connection-status"></div>
         <p class="description"><?php _e('Enter your GitHub access token with repo scope permissions.', 'wp-github-sync'); ?></p>
         <?php
     }

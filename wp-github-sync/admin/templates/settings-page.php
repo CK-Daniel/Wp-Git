@@ -10,10 +10,16 @@ if (!defined('WPINC')) {
     die;
 }
 
+// Check user capability
+if (!wp_github_sync_current_user_can()) {
+    wp_die(__('You do not have sufficient permissions to access this page.', 'wp-github-sync'));
+}
+
 // Get settings and status
 $settings = get_option('wp_github_sync_settings', array());
-$is_configured = !empty($settings['github_repo']) && (!empty($settings['github_token']) || !empty($settings['github_oauth_token']));
-$has_synced = get_option('wp_github_sync_last_deployment', false);
+$repository_url = get_option('wp_github_sync_repository', '');
+$is_configured = !empty($repository_url) && (!empty(get_option('wp_github_sync_access_token', '')) || !empty(get_option('wp_github_sync_oauth_token', '')));
+$has_synced = !empty(get_option('wp_github_sync_last_deployed_commit', ''));
 
 // Create default repo name suggestion based on site URL
 $site_url = parse_url(get_site_url(), PHP_URL_HOST);
@@ -77,7 +83,193 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
             <div class="wp-github-sync-card">
                 <!-- Tab content will be dynamically loaded here -->
                 <div id="wp-github-sync-tab-content-container">
-                    <?php do_settings_sections('wp_github_sync_settings'); ?>
+                    <!-- General tab content -->
+                    <div id="general-tab-content" class="wp-github-sync-tab-content active" data-tab="general">
+                        <?php 
+                        // General repository settings
+                        settings_fields('wp_github_sync_settings');
+                        do_settings_sections('wp_github_sync_settings');
+                        ?>
+                    </div>
+                    
+                    <!-- Authentication tab content -->
+                    <div id="authentication-tab-content" class="wp-github-sync-tab-content" data-tab="authentication">
+                        <h3><?php _e('Authentication Settings', 'wp-github-sync'); ?></h3>
+                        <p><?php _e('Configure your GitHub authentication credentials.', 'wp-github-sync'); ?></p>
+                        
+                        <table class="form-table" role="presentation">
+                            <tbody>
+                                <tr>
+                                    <th scope="row"><?php _e('Authentication Method', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php 
+                                        $auth_method = get_option('wp_github_sync_auth_method', 'pat');
+                                        ?>
+                                        <select name="wp_github_sync_auth_method">
+                                            <option value="pat" <?php selected($auth_method, 'pat'); ?>><?php _e('Personal Access Token', 'wp-github-sync'); ?></option>
+                                            <option value="oauth" <?php selected($auth_method, 'oauth'); ?>><?php _e('OAuth Token', 'wp-github-sync'); ?></option>
+                                        </select>
+                                        <p class="description"><?php _e('Select the authentication method to use with GitHub.', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php _e('GitHub Access Token', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php
+                                        $token = get_option('wp_github_sync_access_token', '');
+                                        $display_value = !empty($token) ? '********' : '';
+                                        ?>
+                                        <input type="password" name="wp_github_sync_access_token" id="wp_github_sync_access_token" value="<?php echo esc_attr($display_value); ?>" class="regular-text">
+                                        <button type="button" class="button wp-github-sync-test-connection"><?php _e('Test Connection', 'wp-github-sync'); ?></button>
+                                        <div id="github-connection-status"></div>
+                                        <p class="description"><?php _e('Enter your GitHub access token with repo scope permissions.', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Sync tab content -->
+                    <div id="sync-tab-content" class="wp-github-sync-tab-content" data-tab="sync">
+                        <h3><?php _e('Synchronization Settings', 'wp-github-sync'); ?></h3>
+                        <p><?php _e('Configure how and when your WordPress site checks for updates from GitHub.', 'wp-github-sync'); ?></p>
+                        
+                        <table class="form-table" role="presentation">
+                            <tbody>
+                                <tr>
+                                    <th scope="row"><?php _e('Auto Sync', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $auto_sync = get_option('wp_github_sync_auto_sync', false); ?>
+                                        <label>
+                                            <input type="checkbox" name="wp_github_sync_auto_sync" value="1" <?php checked($auto_sync); ?>>
+                                            <?php _e('Enable automatic checking for updates from GitHub', 'wp-github-sync'); ?>
+                                        </label>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php _e('Auto Sync Interval', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $interval = get_option('wp_github_sync_auto_sync_interval', 5); ?>
+                                        <input type="number" name="wp_github_sync_auto_sync_interval" value="<?php echo esc_attr($interval); ?>" min="1" max="1440" step="1" class="small-text">
+                                        <p class="description"><?php _e('How often to check for updates (in minutes).', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php _e('Auto Deploy', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $auto_deploy = get_option('wp_github_sync_auto_deploy', false); ?>
+                                        <label>
+                                            <input type="checkbox" name="wp_github_sync_auto_deploy" value="1" <?php checked($auto_deploy); ?>>
+                                            <?php _e('Automatically deploy updates when they are found', 'wp-github-sync'); ?>
+                                        </label>
+                                        <p class="description"><?php _e('Warning: This will deploy changes without requiring manual approval.', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        
+                        <h3><?php _e('Webhook Settings', 'wp-github-sync'); ?></h3>
+                        <p><?php _e('Configure GitHub webhook settings to trigger deployments when changes are pushed to your repository.', 'wp-github-sync'); ?></p>
+                        
+                        <?php 
+                        // Generate the webhook URL
+                        $webhook_url = rest_url('wp-github-sync/v1/webhook');
+                        echo '<p><strong>' . __('Webhook URL:', 'wp-github-sync') . '</strong> <code>' . esc_html($webhook_url) . '</code></p>';
+                        
+                        // Generate the webhook secret if it doesn't exist
+                        $webhook_secret = get_option('wp_github_sync_webhook_secret', '');
+                        if (empty($webhook_secret)) {
+                            $webhook_secret = wp_github_sync_generate_webhook_secret();
+                            update_option('wp_github_sync_webhook_secret', $webhook_secret);
+                        }
+                        ?>
+                        
+                        <table class="form-table" role="presentation">
+                            <tbody>
+                                <tr>
+                                    <th scope="row"><?php _e('Webhook Deploy', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $webhook_deploy = get_option('wp_github_sync_webhook_deploy', true); ?>
+                                        <label>
+                                            <input type="checkbox" name="wp_github_sync_webhook_deploy" value="1" <?php checked($webhook_deploy); ?>>
+                                            <?php _e('Enable deployments triggered by GitHub webhooks', 'wp-github-sync'); ?>
+                                        </label>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php _e('Webhook Secret', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <input type="text" name="wp_github_sync_webhook_secret" id="wp_github_sync_webhook_secret" value="<?php echo esc_attr($webhook_secret); ?>" class="regular-text">
+                                        <button type="button" class="button wp-github-sync-copy-webhook"><?php _e('Copy', 'wp-github-sync'); ?></button>
+                                        <button type="button" class="button wp-github-sync-regenerate-webhook"><?php _e('Regenerate', 'wp-github-sync'); ?></button>
+                                        <p class="description"><?php _e('Secret token to validate webhook requests from GitHub.', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Advanced tab content -->
+                    <div id="advanced-tab-content" class="wp-github-sync-tab-content" data-tab="advanced">
+                        <h3><?php _e('Advanced Settings', 'wp-github-sync'); ?></h3>
+                        <p><?php _e('Configure advanced deployment options.', 'wp-github-sync'); ?></p>
+                        
+                        <table class="form-table" role="presentation">
+                            <tbody>
+                                <tr>
+                                    <th scope="row"><?php _e('Create Backup', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $create_backup = get_option('wp_github_sync_create_backup', true); ?>
+                                        <label>
+                                            <input type="checkbox" name="wp_github_sync_create_backup" value="1" <?php checked($create_backup); ?>>
+                                            <?php _e('Create a backup before deploying updates', 'wp-github-sync'); ?>
+                                        </label>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php _e('Backup wp-config.php', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $backup_config = get_option('wp_github_sync_backup_config', false); ?>
+                                        <label>
+                                            <input type="checkbox" name="wp_github_sync_backup_config" value="1" <?php checked($backup_config); ?>>
+                                            <?php _e('Include wp-config.php in backups', 'wp-github-sync'); ?>
+                                        </label>
+                                        <p class="description"><?php _e('Warning: wp-config.php contains sensitive information.', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php _e('Maintenance Mode', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $maintenance_mode = get_option('wp_github_sync_maintenance_mode', true); ?>
+                                        <label>
+                                            <input type="checkbox" name="wp_github_sync_maintenance_mode" value="1" <?php checked($maintenance_mode); ?>>
+                                            <?php _e('Enable maintenance mode during deployments', 'wp-github-sync'); ?>
+                                        </label>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php _e('Email Notifications', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $notify_updates = get_option('wp_github_sync_notify_updates', false); ?>
+                                        <label>
+                                            <input type="checkbox" name="wp_github_sync_notify_updates" value="1" <?php checked($notify_updates); ?>>
+                                            <?php _e('Send email notifications when updates are available', 'wp-github-sync'); ?>
+                                        </label>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php _e('Delete Removed Files', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $delete_removed = get_option('wp_github_sync_delete_removed', true); ?>
+                                        <label>
+                                            <input type="checkbox" name="wp_github_sync_delete_removed" value="1" <?php checked($delete_removed); ?>>
+                                            <?php _e('Delete files that were removed from the repository', 'wp-github-sync'); ?>
+                                        </label>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
                 
                 <div class="wp-github-sync-card-actions">
@@ -103,6 +295,9 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                 </div>
             </div>
             <?php endif; ?>
+            
+            <!-- Connection testing area -->
+            <div id="github-connection-status"></div>
         </div>
     </form>
     
@@ -115,101 +310,6 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
     
     <script>
     jQuery(document).ready(function($) {
-        // Remove any existing handlers to prevent duplicates
-        $('.wp-github-sync-tab').off('click.settings-tab');
-        
-        // Tab functionality
-        $('.wp-github-sync-tab').on('click.settings-tab', function(e) {
-            e.preventDefault();
-            
-            $('.wp-github-sync-tab').removeClass('active');
-            $(this).addClass('active');
-            
-            // Get the selected tab
-            const tab = $(this).data('tab');
-            
-            console.log('Tab clicked:', tab);
-            
-            // Reorganize form sections based on the tab
-            organizeSettingsByTab(tab);
-        });
-        
-        function organizeSettingsByTab(tab) {
-            if (!tab) {
-                console.error('No tab specified for organizeSettingsByTab');
-                return;
-            }
-            
-            console.log('Organizing settings for tab:', tab);
-            
-            // Hide all setting sections first
-            $('.settings-section').hide();
-            
-            // Show only the sections for the selected tab
-            $(`.settings-section[data-tab="${tab}"]`).show();
-            
-            // Update URL hash without scrolling
-            if (history.pushState) {
-                history.pushState(null, null, '#' + tab);
-            } else {
-                window.location.hash = tab;
-            }
-        }
-        
-        // Function to initialize tabs based on classes added to settings sections
-        function initializeTabs() {
-            console.log('Initializing settings tabs');
-            
-            // Add tab attribute to each settings section based on its title
-            $('.form-table').each(function() {
-                const $section = $(this).closest('.settings-section');
-                
-                if (!$section.length) return;
-                
-                const sectionTitle = $section.find('h2').text().toLowerCase();
-                
-                // Determine which tab this section belongs to
-                let tab = 'general';
-                
-                if (sectionTitle.includes('authentication') || sectionTitle.includes('token') || sectionTitle.includes('oauth')) {
-                    tab = 'authentication';
-                } else if (sectionTitle.includes('sync') || sectionTitle.includes('deployment') || sectionTitle.includes('webhook')) {
-                    tab = 'sync';
-                } else if (sectionTitle.includes('advanced') || sectionTitle.includes('backup') || sectionTitle.includes('maintenance')) {
-                    tab = 'advanced';
-                }
-                
-                console.log('Setting section tab:', sectionTitle, '→', tab);
-                $section.attr('data-tab', tab);
-            });
-            
-            // Check how many sections are in each tab
-            ['general', 'authentication', 'sync', 'advanced'].forEach(function(tabName) {
-                const count = $(`.settings-section[data-tab="${tabName}"]`).length;
-                console.log(`Tab ${tabName} has ${count} sections`);
-            });
-            
-            // Check if URL has a hash for a tab
-            const hash = window.location.hash.substring(1);
-            if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
-                console.log('Found hash in URL:', hash);
-                $('.wp-github-sync-tab[data-tab="' + hash + '"]').click();
-            } else {
-                // Default to first tab
-                console.log('No hash in URL, defaulting to general tab');
-                organizeSettingsByTab('general');
-            }
-        }
-        
-        // Repository creation toggle
-        $('#create_new_repo').on('change', function() {
-            if ($(this).is(':checked')) {
-                $('#new_repo_options').slideDown();
-            } else {
-                $('#new_repo_options').slideUp();
-            }
-        });
-        
         // Initial sync button click handler
         $('#initial_sync_button').on('click', function() {
             const createNewRepo = $('#create_new_repo').is(':checked');
@@ -356,48 +456,14 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
             });
         });
         
-        // Process settings sections after page load
-        $('.form-table').each(function() {
-            // Wrap each table in a section div for better styling
-            $(this).wrap('<div class="wp-github-sync-settings-section settings-section"></div>');
-            
-            // Move the h2 title inside the section
-            const $title = $(this).prev('h2');
-            if ($title.length) {
-                // Add dashicons based on section title
-                let icon = 'dashicons-admin-generic';
-                const titleText = $title.text().toLowerCase();
-                
-                if (titleText.includes('repository')) {
-                    icon = 'dashicons-archive';
-                } else if (titleText.includes('authentication')) {
-                    icon = 'dashicons-lock';
-                } else if (titleText.includes('deployment')) {
-                    icon = 'dashicons-update';
-                } else if (titleText.includes('webhook')) {
-                    icon = 'dashicons-welcome-widgets-menus';
-                } else if (titleText.includes('advanced')) {
-                    icon = 'dashicons-admin-tools';
-                } else if (titleText.includes('backup')) {
-                    icon = 'dashicons-backup';
-                }
-                
-                const $sectionDiv = $(this).parent('.wp-github-sync-settings-section');
-                $title.addClass('wp-github-sync-section-title').prepend(`<span class="dashicons ${icon}"></span>`);
-                $sectionDiv.prepend($title);
+        // Repository creation toggle
+        $('#create_new_repo').on('change', function() {
+            if ($(this).is(':checked')) {
+                $('#new_repo_options').slideDown();
+            } else {
+                $('#new_repo_options').slideUp();
             }
         });
-        
-        // Add field descriptions to appropriate settings fields
-        $('.form-table input, .form-table select, .form-table textarea').each(function() {
-            const $description = $(this).siblings('.description');
-            if ($description.length) {
-                $description.addClass('wp-github-sync-field-description');
-            }
-        });
-        
-        // Initialize tabs system
-        initializeTabs();
     });
     </script>
 </div>

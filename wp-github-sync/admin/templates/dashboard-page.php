@@ -10,8 +10,26 @@ if (!defined('WPINC')) {
     die;
 }
 
+// Check user capability
+if (!wp_github_sync_current_user_can()) {
+    wp_die(__('You do not have sufficient permissions to access this page.', 'wp-github-sync'));
+}
+
+// Get settings and status
+$api_client = new WPGitHubSync\API\API_Client();
+$repository_url = get_option('wp_github_sync_repository', '');
+$branch = wp_github_sync_get_current_branch();
+$last_deployed_commit = get_option('wp_github_sync_last_deployed_commit', '');
+$latest_commit_info = get_option('wp_github_sync_latest_commit', array());
+$update_available = get_option('wp_github_sync_update_available', false);
+$deployment_in_progress = get_option('wp_github_sync_deployment_in_progress', false);
+$deployment_history = get_option('wp_github_sync_deployment_history', array());
+$last_deployment_time = !empty($deployment_history) ? max(array_column($deployment_history, 'timestamp')) : 0;
+$branches = get_option('wp_github_sync_branches', array());
+$recent_commits = get_option('wp_github_sync_recent_commits', array());
+
 // Parse repository URL to get owner/repo format
-$parsed_url = $this->github_api->parse_github_url($repository_url);
+$parsed_url = $api_client->parse_github_url($repository_url);
 $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] : $repository_url;
 ?>
 <div class="wrap wp-github-sync-wrap">
@@ -537,112 +555,6 @@ $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] :
                             <div class="wp-github-sync-diff-content" style="background: #f6f7f7; padding: 15px; border-radius: 4px; overflow: auto; max-height: 400px; font-family: monospace; font-size: 12px; white-space: pre; line-height: 1.5;"></div>
                         </div>
                     </div>
-                    
-                    <script>
-                    jQuery(document).ready(function($) {
-                        // Component selector
-                        $('#wp-github-sync-component-select').on('change', function() {
-                            const componentValue = $(this).val();
-                            const hasSelection = componentValue !== '';
-                            
-                            $('.wp-github-sync-sync-component, .wp-github-sync-diff-component').prop('disabled', !hasSelection);
-                        });
-                        
-                        // Export changes button
-                        $('.wp-github-sync-export-changes').on('click', function() {
-                            $('.wp-github-sync-overlay').show();
-                            $('.wp-github-sync-loading-message').text('<?php _e('Preparing export...', 'wp-github-sync'); ?>');
-                            $('.wp-github-sync-loading-submessage').text('<?php _e('This may take a moment depending on the size of your site.', 'wp-github-sync'); ?>');
-                            
-                            // AJAX call would go here in a real implementation
-                            // For demo purposes, simulate a delay and success
-                            setTimeout(function() {
-                                $('.wp-github-sync-loading-message').text('<?php _e('Export Complete!', 'wp-github-sync'); ?>');
-                                $('.wp-github-sync-loading-submessage').text('<?php _e('Your browser will now download the ZIP file.', 'wp-github-sync'); ?>');
-                                
-                                setTimeout(function() {
-                                    $('.wp-github-sync-overlay').hide();
-                                    // In a real implementation, this would trigger file download
-                                    alert('<?php _e('Export feature will be available in the next version.', 'wp-github-sync'); ?>');
-                                }, 2000);
-                            }, 3000);
-                        });
-                        
-                        // Component sync button
-                        $('.wp-github-sync-sync-component').on('click', function() {
-                            const component = $('#wp-github-sync-component-select').val();
-                            if (!component) return;
-                            
-                            $('.wp-github-sync-overlay').show();
-                            $('.wp-github-sync-loading-message').text('<?php _e('Syncing component...', 'wp-github-sync'); ?>');
-                            $('.wp-github-sync-loading-submessage').text('<?php _e('Pulling latest changes from GitHub repository.', 'wp-github-sync'); ?>');
-                            
-                            // AJAX call would go here in a real implementation
-                            // For demo purposes, simulate a delay and success
-                            setTimeout(function() {
-                                $('.wp-github-sync-loading-message').text('<?php _e('Sync Complete!', 'wp-github-sync'); ?>');
-                                $('.wp-github-sync-loading-submessage').text('<?php _e('Component has been updated to the latest version.', 'wp-github-sync'); ?>');
-                                
-                                setTimeout(function() {
-                                    $('.wp-github-sync-overlay').hide();
-                                    // In a real implementation, refresh the component
-                                    alert('<?php _e('Component sync feature will be available in the next version.', 'wp-github-sync'); ?>');
-                                }, 2000);
-                            }, 3000);
-                        });
-                        
-                        // Component diff button
-                        $('.wp-github-sync-diff-component').on('click', function() {
-                            const component = $('#wp-github-sync-component-select').val();
-                            if (!component) return;
-                            
-                            $('.wp-github-sync-overlay').show();
-                            $('.wp-github-sync-loading-message').text('<?php _e('Calculating differences...', 'wp-github-sync'); ?>');
-                            $('.wp-github-sync-loading-submessage').text('<?php _e('Comparing local files with repository version.', 'wp-github-sync'); ?>');
-                            
-                            // AJAX call would go here in a real implementation
-                            // For demo purposes, simulate a delay and sample diff data
-                            setTimeout(function() {
-                                $('.wp-github-sync-overlay').hide();
-                                
-                                // Show diff viewer with sample data
-                                const diffContent = 
-`diff --git a/style.css b/style.css
-index 1234567..abcdefg 100644
---- a/style.css
-+++ b/style.css
-@@ -10,7 +10,7 @@
- */
- 
- .header {
--    background-color: #f8f8f8;
-+    background-color: #ffffff;
-     padding: 20px;
-     margin-bottom: 30px;
- }
-@@ -42,6 +42,10 @@
-     color: #333;
- }
- 
-+.new-element {
-+    display: flex;
-+}
-+
- /* Footer Styles */
- .footer {
-     background: #222;`;
-                                
-                                $('#wp-github-sync-diff-viewer').slideDown();
-                                $('.wp-github-sync-diff-content').html(diffContent);
-                                
-                                // Scroll to the diff viewer
-                                $('html, body').animate({
-                                    scrollTop: $('#wp-github-sync-diff-viewer').offset().top - 100
-                                }, 500);
-                            }, 2000);
-                        });
-                    });
-                    </script>
                 </div>
             </div>
         </div>
@@ -653,8 +565,8 @@ index 1234567..abcdefg 100644
             <div class="wp-github-sync-loading-message"><?php _e('Processing...', 'wp-github-sync'); ?></div>
             <div class="wp-github-sync-loading-submessage"></div>
         </div>
-        
-        <!-- Tab scripts will be moved to the main JS file -->
-        
+
+        <!-- AJAX nonce for security -->
+        <input type="hidden" id="wp-github-sync-nonce" value="<?php echo wp_create_nonce('wp-github-sync-nonce'); ?>">
     <?php endif; ?>
 </div>

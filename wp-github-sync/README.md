@@ -1,151 +1,138 @@
 # WordPress GitHub Sync
 
-WordPress GitHub Sync is a plugin that enables full control of your WordPress site's code through GitHub, providing version control and deployment features directly within the WordPress admin.
+A WordPress plugin that seamlessly syncs your WordPress site with a GitHub repository.
 
-## Description
+## Features
 
-This plugin bridges the gap between GitHub and WordPress, allowing you to manage your site's code through a GitHub repository while providing a user-friendly interface that doesn't require Git knowledge.
-
-### Key Features
-
-- **GitHub Integration**: Connect your WordPress site to any GitHub repository.
-- **Code Sync**: Automatically or manually sync your site's themes and plugins with your GitHub repository.
-- **Branch Switching**: Easily switch between different branches to test new features.
-- **One-Click Rollback**: Revert to any previous commit if something goes wrong.
-- **Webhook Support**: Set up webhooks to automatically deploy changes when code is pushed to GitHub.
-- **Non-Developer Friendly**: Uses plain language and a clear UI instead of Git terminology.
-- **Shared Hosting Compatible**: Works on any hosting that can run WordPress, no shell access or Git required.
+- Sync WordPress themes, plugins, and configuration files with GitHub
+- Automatic or manual deployments from GitHub to WordPress
+- Webhook support for automatic deployments when changes are pushed to GitHub
+- Branch switching and commit rollback capabilities
+- Backup and restore functionality to safely manage deployments
+- Detailed deployment history
 
 ## Installation
 
-1. Upload the `wp-github-sync` folder to the `/wp-content/plugins/` directory
-2. Activate the plugin through the 'Plugins' menu in WordPress
-3. Go to the 'GitHub Sync' menu and configure your GitHub repository settings
+1. Download the plugin ZIP file
+2. Install via WordPress admin panel (Plugins > Add New > Upload Plugin)
+3. Activate the plugin
+4. Configure the plugin settings (GitHub repository URL and authentication)
+
+## Directory Structure
+
+The plugin follows a modular structure for better organization and maintainability:
+
+```
+wp-github-sync/
+├── admin/
+│   ├── assets/
+│   │   ├── css/
+│   │   │   └── admin.css
+│   │   └── js/
+│   │       └── admin.js
+│   └── templates/
+│       ├── dashboard-page.php
+│       ├── history-page.php
+│       └── settings-page.php
+├── includes/
+│   ├── autoload.php
+│   └── utils/
+│       └── helper-functions.php
+├── src/
+│   ├── Admin/
+│   │   └── Admin.php
+│   ├── API/
+│   │   ├── API_Client.php
+│   │   ├── Repository.php
+│   │   └── Repository_Uploader.php
+│   ├── Core/
+│   │   ├── I18n.php
+│   │   └── Loader.php
+│   ├── Settings/
+│   │   └── Settings.php
+│   ├── Sync/
+│   │   ├── Backup_Manager.php
+│   │   ├── File_Sync.php
+│   │   └── Sync_Manager.php
+│   └── WP_GitHub_Sync.php
+└── wp-github-sync.php
+```
 
 ## Configuration
 
-### Repository Settings
+1. Go to WordPress admin > GitHub Sync > Settings
+2. Enter your GitHub repository URL (e.g., https://github.com/username/repository)
+3. Choose an authentication method and enter your GitHub token
+4. Select the branch to sync with (defaults to "main")
+5. Configure sync and deployment options
 
-1. Enter your GitHub repository URL (e.g., `https://github.com/username/repository`)
-2. Select which branch to use as your primary source
+### GitHub Token Setup
 
-### Authentication
+For the plugin to communicate with GitHub, you need to create a Personal Access Token (PAT):
 
-The plugin supports two authentication methods:
+1. Go to GitHub > Settings > Developer settings > Personal access tokens
+2. Generate a new token with the "repo" scope
+3. Enter this token in the plugin settings
 
-#### Personal Access Token (PAT)
+### Webhook Setup
 
-1. Go to your GitHub account settings
-2. Navigate to Developer Settings > Personal Access Tokens > Tokens (classic)
-3. Generate a new token with "repo" permissions
-4. Copy the token and paste it in the plugin settings
+To enable automatic deployments when pushing to GitHub:
 
-#### OAuth Authentication
-
-1. Click the "Connect to GitHub" button
-2. Authorize the application in the GitHub window that opens
-3. You'll be redirected back to your WordPress site
-
-### Deployment Settings
-
-Configure how updates are handled:
-
-- **Auto Sync**: Automatically check for new commits at your specified interval
-- **Auto Deploy**: Choose whether new commits should be automatically deployed or require manual approval
-- **Email Notifications**: Get notified when new updates are available
-- **Webhook Deployment**: Configure your GitHub repository to trigger immediate deployments when code is pushed
+1. Go to your GitHub repository > Settings > Webhooks > Add webhook
+2. Set the Payload URL to your webhook URL (shown in plugin settings)
+3. Set Content type to "application/json"
+4. Set the Secret to the webhook secret (shown in plugin settings)
+5. Select "Just the push event"
+6. Enable the webhook
 
 ## Usage
 
-### Deploying Updates
+### Manual Deployment
 
-When new commits are available, you can deploy them from the GitHub Sync dashboard:
+1. Go to WordPress admin > GitHub Sync
+2. Click "Check for Updates" to check for new commits
+3. When an update is available, click "Deploy Now"
 
-1. Go to the GitHub Sync dashboard
-2. If updates are available, you'll see a "Deploy Latest Changes" button
-3. Click the button to apply the changes to your site
+### Automatic Deployment
 
-### Switching Branches
+1. Enable auto-sync in the plugin settings
+2. Set the auto-sync interval (e.g., every 5 minutes)
+3. Optionally enable auto-deploy to automatically deploy new commits
 
-To switch to a different branch:
+### Branch Switching
 
-1. Go to the GitHub Sync dashboard
-2. Select the desired branch from the dropdown in the "Switch Branch" card
-3. Click "Switch Branch"
+1. Go to WordPress admin > GitHub Sync
+2. Enter the branch name in the "Switch Branch" field
+3. Click "Switch Branch" to deploy the latest commit from that branch
 
-### Rolling Back Changes
+### Rollback
 
-If you need to revert to an earlier version:
+1. Go to WordPress admin > GitHub Sync > Deployment History
+2. Find the commit you want to roll back to
+3. Click "Rollback" next to that commit
 
-1. Go to the GitHub Sync dashboard or Deployment History page
-2. Find the commit you want to revert to
-3. Click "Roll Back" next to that commit
+## Development
 
-### Setting Up Webhooks
+### File Structure Explanation
 
-For automatic deployments when code is pushed to GitHub:
+- `admin/`: Admin UI files
+- `includes/`: Plugin includes and helper functions
+- `src/`: Main plugin classes, organized by functionality
+- `wp-github-sync.php`: Main plugin file and entry point
 
-1. Go to your GitHub repository settings
-2. Navigate to Webhooks > Add webhook
-3. Set the Payload URL to the webhook URL displayed in your GitHub Sync settings
-4. Set Content type to `application/json`
-5. Enter the Secret shown in your GitHub Sync settings
-6. Choose which events should trigger the webhook (Push events are recommended)
-7. Save the webhook
+### Class Overview
 
-## Advanced Configuration
-
-### Encryption Key
-
-For enhanced security, you can define a custom encryption key in your `wp-config.php` file:
-
-```php
-define('WP_GITHUB_SYNC_ENCRYPTION_KEY', 'your-secure-random-key');
-```
-
-### OAuth Client
-
-If you want to use OAuth authentication, you need to register an OAuth application with GitHub and define the credentials in your `wp-config.php` file:
-
-```php
-define('WP_GITHUB_SYNC_OAUTH_CLIENT_ID', 'your-client-id');
-define('WP_GITHUB_SYNC_OAUTH_CLIENT_SECRET', 'your-client-secret');
-```
-
-## Frequently Asked Questions
-
-### Do I need Git installed on my server?
-
-No. The plugin works without Git installed on your server. It uses the GitHub API to handle all Git operations.
-
-### Can I use this with private repositories?
-
-Yes, as long as your Personal Access Token or OAuth application has access to the private repository.
-
-### Does this plugin modify my database?
-
-No. This plugin only syncs files between your WordPress site and GitHub. It doesn't modify your database content.
-
-### What happens if a deployment fails?
-
-If a deployment fails and you have backups enabled (on by default), the plugin will automatically restore your site to the previous working state.
-
-## Hooks and Filters
-
-The plugin provides several hooks and filters for developers to extend its functionality:
-
-### Actions
-
-- `wp_github_sync_before_deploy`: Runs before deploying a new version
-- `wp_github_sync_after_deploy`: Runs after deployment with a success/failure flag
-
-### Filters
-
-- `wp_github_sync_ignore_paths`: Modify which paths to ignore during sync
-- `wp_github_sync_commit_message`: Customize how commit messages are displayed in the UI
+- `WP_GitHub_Sync`: Main plugin class
+- `API_Client`: GitHub API communication
+- `Repository`: Repository operations
+- `Repository_Uploader`: File upload to GitHub
+- `Sync_Manager`: Manages synchronization between WordPress and GitHub
+- `File_Sync`: Handles file synchronization
+- `Backup_Manager`: Creates and restores backups
+- `Settings`: Plugin settings management
+- `Admin`: Admin UI functionality
+- `Loader`: Hooks and filters registration
 
 ## License
 
-This WordPress Plugin is licensed under the GPL v2 or later.
-
-A copy of the license is included in the root of the plugin's directory. The file is named LICENSE.
+GPL v2 or later
