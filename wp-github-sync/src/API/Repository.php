@@ -143,10 +143,10 @@ class Repository {
                             $this->recursive_rmdir($item);
                         }
                     } else {
-                        if (!copy($item, $destination)) {
+                        if (!@copy($item, $destination)) {
                             wp_github_sync_log("Failed to copy file {$item} to {$destination}", 'error');
                         } else {
-                            unlink($item);
+                            @unlink($item);
                         }
                     }
                 }

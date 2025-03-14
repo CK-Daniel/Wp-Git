@@ -559,11 +559,24 @@ class Repository_Uploader {
                     }
                     
                     // Check if file is binary or text
-                    $finfo = new \finfo(FILEINFO_MIME);
-                    $mime_type = $finfo->file($path);
-                    $is_binary = (strpos($mime_type, 'text/') !== 0 && 
-                                 strpos($mime_type, 'application/json') !== 0 &&
-                                 strpos($mime_type, 'application/xml') !== 0);
+                    $is_binary = false;
+                    if (class_exists('\\finfo')) {
+                        try {
+                            $finfo = new \finfo(FILEINFO_MIME);
+                            $mime_type = $finfo->file($path);
+                            $is_binary = (strpos($mime_type, 'text/') !== 0 && 
+                                         strpos($mime_type, 'application/json') !== 0 &&
+                                         strpos($mime_type, 'application/xml') !== 0);
+                        } catch (\Exception $e) {
+                            // Fall back to a simple check if finfo fails
+                            wp_github_sync_log("finfo failed, falling back to simple binary check: " . $e->getMessage(), 'debug');
+                            $is_binary = $this->is_binary_file($path);
+                        }
+                    } else {
+                        // If finfo class is not available, fallback to a simple check
+                        wp_github_sync_log("finfo class not available, falling back to simple binary check", 'debug');
+                        $is_binary = $this->is_binary_file($path);
+                    }
                     
                     // Get file size
                     $file_size = filesize($path);
@@ -613,10 +626,19 @@ class Repository_Uploader {
                                 'encoding' => 'base64'
                             ];
                         } else {
-                            $blob_data = [
-                                'content' => $content,
-                                'encoding' => 'utf-8'
-                            ];
+                            // Check for valid UTF-8 to prevent API errors
+                            if (function_exists('mb_check_encoding') && mb_check_encoding($content, 'UTF-8')) {
+                                $blob_data = [
+                                    'content' => $content,
+                                    'encoding' => 'utf-8'
+                                ];
+                            } else {
+                                // If not valid UTF-8 or mb_check_encoding not available, use base64 encoding instead
+                                $blob_data = [
+                                    'content' => base64_encode($content),
+                                    'encoding' => 'base64'
+                                ];
+                            }
                         }
                         
                         $blob = $this->api_client->request(
@@ -757,5 +779,54 @@ class Repository_Uploader {
             
             return $new_tree['sha'];
         }
+    }
+    
+    /**
+     * Simple check to determine if a file is binary or text.
+     *
+     * @param string $file The path to the file to check.
+     * @return bool True if the file appears to be binary, false otherwise.
+     */
+    private function is_binary_file($file) {
+        if (!is_file($file) || !is_readable($file)) {
+            return false;
+        }
+        
+        // Read the first 1024 bytes of the file
+        $fh = fopen($file, 'r');
+        if (!$fh) {
+            return false;
+        }
+        
+        $sample = fread($fh, 1024);
+        fclose($fh);
+        
+        if ($sample === false) {
+            return false;
+        }
+        
+        // Check for null byte, which is a good indicator of binary content
+        if (strpos($sample, "\0") !== false) {
+            return true;
+        }
+        
+        // Check the ratio of control characters to printable characters
+        $control_chars = 0;
+        $printable_chars = 0;
+        
+        for ($i = 0; $i < strlen($sample); $i++) {
+            $char = ord($sample[$i]);
+            
+            // Control characters (except for whitespace like tab, CR, LF)
+            if (($char < 32 && !in_array($char, [9, 10, 13])) || $char > 126) {
+                $control_chars++;
+            } else {
+                $printable_chars++;
+            }
+        }
+        
+        // If more than 30% are control characters, it's probably binary
+        $total_chars = $control_chars + $printable_chars;
+        return ($total_chars > 0) && (($control_chars / $total_chars) > 0.3);
     }
 }

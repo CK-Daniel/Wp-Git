@@ -30,6 +30,13 @@ class WP_GitHub_Sync {
      * @var Loader
      */
     protected $loader;
+    
+    /**
+     * The sync manager instance.
+     *
+     * @var Sync_Manager
+     */
+    protected $sync_manager;
 
     /**
      * Define the core functionality of the plugin.
@@ -98,10 +105,10 @@ class WP_GitHub_Sync {
         // Background deployment hook
         $this->loader->add_action('wp_github_sync_background_deploy', $sync_manager, 'background_deploy');
         
-        // Activation/deactivation hooks are registered separately in the main plugin file, but we also
-        // need to keep these methods accessible for the plugin.php file to call them.
-        register_activation_hook(WP_GITHUB_SYNC_DIR . 'wp-github-sync.php', array($sync_manager, 'activate'));
-        register_deactivation_hook(WP_GITHUB_SYNC_DIR . 'wp-github-sync.php', array($sync_manager, 'deactivate'));
+        // We need to store these methods for the global activation hook to call
+        // The actual hooks are registered in the main plugin file, not here
+        // This avoids duplicate registration that could cause conflicts
+        $this->sync_manager = $sync_manager;
     }
 
     /**

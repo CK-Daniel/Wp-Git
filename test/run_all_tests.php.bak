@@ -8,19 +8,16 @@
 echo "WordPress GitHub Sync Test Runner\n";
 echo "================================\n\n";
 
-// Note: These tests require a valid GitHub token to run properly
-// Since we're using mocks, we'll get authentication errors, but the tests will still validate
-// the plugin's code structure and functionality
 $tests = [
-    // Core GitHub API functionality tests
-    'test_webhook_handler.php',      // Tests webhook signature verification
-    'test_enhanced_rollback.php',    // Tests rollback functionality
+    // Original tests - GitHub functionality
+    'test_initial_sync.php',
+    'test_download_repository.php',
+    'test_repository_compare.php',
+    'test_rollback.php',
     
-    // Repository interaction tests (these will show auth errors with mock token)
-    'test_initial_sync.php',         // Tests initial repository sync
-    'test_download_repository.php',  // Tests downloading a repository
-    'test_repository_compare.php',   // Tests comparing repository versions
-    'test_rollback.php',             // Tests basic rollback functionality
+    // New tests for v2 - GitHub functionality only
+    'test_webhook_handler.php',
+    'test_enhanced_rollback.php'
 ];
 
 foreach ($tests as $index => $test) {

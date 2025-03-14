@@ -39,7 +39,7 @@ class API_Client {
     private $owner;
 
     /**
-     * GitHub repository name.analyze
+     * GitHub repository name.
      *
      * @var string
      */
@@ -568,7 +568,7 @@ class API_Client {
             
             return $response_data;
             
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             // Catch any exceptions during the request
             $error_message = "Exception during API request: " . $e->getMessage();
             wp_github_sync_log($error_message, 'error');

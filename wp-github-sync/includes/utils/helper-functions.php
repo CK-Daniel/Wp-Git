@@ -221,7 +221,7 @@ function wp_github_sync_log($message, $level = 'info', $force = false) {
     
     // Get timestamp with microseconds for precise logging
     $timestamp = microtime(true);
-    $date = new DateTime(date('Y-m-d H:i:s', $timestamp));
+    $date = new \DateTime(date('Y-m-d H:i:s', $timestamp));
     $date->modify('+' . (int)(($timestamp - floor($timestamp)) * 1000000) . ' microseconds');
     $formatted_timestamp = $date->format('Y-m-d H:i:s.u');
     
@@ -264,6 +264,50 @@ function wp_github_sync_log($message, $level = 'info', $force = false) {
     if (file_exists($log_file) && filesize($log_file) > $max_size) {
         wp_github_sync_rotate_logs($log_file);
     }
+}
+
+/**
+ * Rotate log files when they get too large.
+ *
+ * @param string $log_file The path to the log file to rotate.
+ * @return bool True on success, false on failure.
+ */
+function wp_github_sync_rotate_logs($log_file) {
+    if (!file_exists($log_file)) {
+        return false;
+    }
+    
+    // Create a backup log file with timestamp
+    $backup_file = $log_file . '.' . date('Y-m-d-H-i-s') . '.bak';
+    
+    // Try to rename the old log file
+    if (!@rename($log_file, $backup_file)) {
+        // If renaming fails, try to copy and then delete
+        if (!@copy($log_file, $backup_file)) {
+            return false;
+        }
+        
+        // Clear the contents of the original log file
+        @file_put_contents($log_file, '');
+    }
+    
+    // Limit the number of backup log files to keep
+    $max_backups = apply_filters('wp_github_sync_max_log_backups', 5);
+    $backup_pattern = $log_file . '.*.bak';
+    $backup_files = glob($backup_pattern);
+    
+    if (count($backup_files) > $max_backups) {
+        // Sort backups by name (oldest first)
+        sort($backup_files);
+        
+        // Remove the oldest backups
+        $backups_to_remove = count($backup_files) - $max_backups;
+        for ($i = 0; $i < $backups_to_remove; $i++) {
+            @unlink($backup_files[$i]);
+        }
+    }
+    
+    return true;
 }
 
 /**

@@ -46,6 +46,9 @@ define('WP_GITHUB_SYNC_URL', plugin_dir_url(__FILE__));
  * Loads all the plugin components
  */
 
+// Load helper functions first to ensure they're available for everything else
+require_once WP_GITHUB_SYNC_DIR . 'includes/utils/helper-functions.php';
+
 // Load the autoloader
 require_once WP_GITHUB_SYNC_DIR . 'includes/autoload.php';
 
