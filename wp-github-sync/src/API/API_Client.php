@@ -146,7 +146,6 @@ class API_Client {
                     // We'll generate the token later when needed in the request method
                 }
             }
-            }
         }
         
         // Load cached API metadata

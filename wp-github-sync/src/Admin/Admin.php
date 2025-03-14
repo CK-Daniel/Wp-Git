@@ -1514,36 +1514,6 @@ class Admin {
     }
 
     /**
-     * Handle AJAX log error request.
-     */
-    public function handle_ajax_log_error() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            return;
-        }
-        
-        // Get error details from AJAX request
-        $error_context = isset($_POST['error_context']) ? sanitize_text_field($_POST['error_context']) : 'Unknown context';
-        $error_status = isset($_POST['error_status']) ? sanitize_text_field($_POST['error_status']) : 'Unknown status';
-        $error_message = isset($_POST['error_message']) ? sanitize_text_field($_POST['error_message']) : 'Unknown error';
-        
-        // Log error with detailed information
-        wp_github_sync_log(
-            "JavaScript Error - Context: {$error_context}, Status: {$error_status}, Message: {$error_message}",
-            'error',
-            true // Force logging even if debug mode is off
-        );
-        
-        // No need to send a detailed response
-        wp_send_json_success();
-    }
-    
-    /**
      * Handle OAuth callback.
      */
     public function handle_oauth_callback() {
