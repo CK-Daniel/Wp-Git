@@ -39,7 +39,7 @@ class API_Client {
     private $owner;
 
     /**
-     * GitHub repository name.
+     * GitHub repository name.analyze
      *
      * @var string
      */
@@ -237,12 +237,13 @@ class API_Client {
     /**
      * Make a request to the GitHub API.
      *
-     * @param string $endpoint The API endpoint (without the base URL).
-     * @param string $method   The HTTP method (GET, POST, etc.).
-     * @param array  $data     The data to send with the request.
+     * @param string $endpoint                The API endpoint (without the base URL).
+     * @param string $method                  The HTTP method (GET, POST, etc.).
+     * @param array  $data                    The data to send with the request.
+     * @param bool   $handle_empty_repo_error Whether to handle empty repository error specially.
      * @return array|WP_Error The response or WP_Error on failure.
      */
-    public function request($endpoint, $method = 'GET', $data = []) {
+    public function request($endpoint, $method = 'GET', $data = [], $handle_empty_repo_error = false) {
         try {
             // Generate token for GitHub App if needed
             if ($this->auth_method === 'github_app' && empty($this->token)) {
@@ -395,6 +396,15 @@ class API_Client {
             if ($response_body && json_last_error() !== JSON_ERROR_NONE) {
                 wp_github_sync_log("JSON parse error: " . json_last_error_msg(), 'error');
                 wp_github_sync_log("Response body (first 200 chars): " . substr($response_body, 0, 200), 'error');
+                
+                // Check for empty repository message in non-JSON response (some errors aren't returned as JSON)
+                if ($handle_empty_repo_error && 
+                    (strpos($response_body, 'Git Repository is empty') !== false || 
+                     strpos($response_body, 'empty repository') !== false)) {
+                    wp_github_sync_log("Detected empty repository error in non-JSON response", 'info');
+                    return new \WP_Error('github_empty_repository', 'Git Repository is empty');
+                }
+                
                 return new \WP_Error('github_api_json_error', __('Failed to parse GitHub API response as JSON.', 'wp-github-sync'));
             }
             
@@ -619,6 +629,42 @@ class API_Client {
         }
         
         return $commits[0];
+    }
+    
+    /**
+     * Get the SHA of a branch's HEAD.
+     *
+     * @param string $branch The branch name.
+     * @return string|\WP_Error The SHA of the branch HEAD or WP_Error on failure.
+     */
+    public function get_branch_sha($branch = '') {
+        // Use provided branch or get default branch
+        $branchToUse = !empty($branch) ? $branch : $this->get_default_branch();
+        
+        $reference = $this->request("repos/{$this->owner}/{$this->repo}/git/refs/heads/{$branchToUse}");
+        
+        if (is_wp_error($reference)) {
+            return $reference;
+        }
+        
+        if (!isset($reference['object']['sha'])) {
+            return new \WP_Error('missing_sha', __('Branch reference does not contain a SHA.', 'wp-github-sync'));
+        }
+        
+        wp_github_sync_log("Got reference SHA: {$reference['object']['sha']}", 'debug');
+        
+        return $reference['object']['sha'];
+    }
+    
+    /**
+     * Alias for get_commits() for compatibility with test cases.
+     *
+     * @param string $branch The branch name.
+     * @param int    $count  The number of commits to fetch.
+     * @return array|\WP_Error List of commits or WP_Error on failure.
+     */
+    public function list_commits($branch = '', $count = 10) {
+        return $this->get_commits($branch, $count);
     }
 
     /**
@@ -1097,16 +1143,71 @@ class API_Client {
     /**
      * Get the default branch for a repository.
      *
-     * @return string The default branch (e.g., 'main' or 'master').
+     * @return string|\WP_Error The default branch (e.g., 'main' or 'master') or WP_Error.
      */
     public function get_default_branch() {
         $repo_info = $this->get_repository();
         
-        if (is_wp_error($repo_info) || !isset($repo_info['default_branch'])) {
+        if (is_wp_error($repo_info)) {
+            // Check if this is an empty repository error
+            $error_message = $repo_info->get_error_message();
+            if (strpos($error_message, 'Git Repository is empty') !== false) {
+                wp_github_sync_log("Repository is empty, attempting to initialize it", 'info');
+                
+                // Initialize the repository with a README
+                $result = $this->initialize_repository();
+                if (is_wp_error($result)) {
+                    return $result; // Return the initialization error
+                }
+                
+                // Try getting the repository info again
+                $repo_info = $this->get_repository();
+                if (is_wp_error($repo_info) || !isset($repo_info['default_branch'])) {
+                    return 'main'; // Default fallback if still can't get info
+                }
+                
+                return $repo_info['default_branch'];
+            }
+            
+            return $repo_info; // Return the original error
+        }
+        
+        if (!isset($repo_info['default_branch'])) {
             return 'main'; // Default fallback
         }
         
         return $repo_info['default_branch'];
+    }
+    
+    /**
+     * Initialize empty repository with a README file.
+     *
+     * @param string $branch The branch to initialize.
+     * @return array|\WP_Error Result of the operation or WP_Error on failure.
+     */
+    public function initialize_repository($branch = 'main') {
+        wp_github_sync_log("Initializing empty repository with README.md on branch: {$branch}", 'info');
+        
+        try {
+            // Create README content
+            $site_name = get_bloginfo('name');
+            $site_url = get_bloginfo('url');
+            $readme_content = "# {$site_name}\n\nWordPress site synced with GitHub.\n\nSite URL: {$site_url}\n";
+            
+            // Create README file using the contents API directly
+            return $this->request(
+                "repos/{$this->owner}/{$this->repo}/contents/README.md",
+                'PUT',
+                [
+                    'message' => 'Initial commit',
+                    'content' => base64_encode($readme_content),
+                    'branch' => $branch
+                ]
+            );
+        } catch (\Exception $e) {
+            wp_github_sync_log("Exception during repository initialization: " . $e->getMessage(), 'error');
+            return new \WP_Error('initialization_failed', __('Failed to initialize repository: ', 'wp-github-sync') . $e->getMessage());
+        }
     }
     
     /**

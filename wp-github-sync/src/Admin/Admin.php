@@ -1244,6 +1244,22 @@ class Admin {
                         wp_github_sync_log("Attempting initial file sync to repository", 'info');
                         
                         try {
+                            // Before attempting sync, check if we need to initialize an empty repository
+                            try {
+                                $repo_info = $this->github_api->get_repository();
+                                if (is_wp_error($repo_info) && strpos($repo_info->get_error_message(), 'Git Repository is empty') !== false) {
+                                    wp_github_sync_log("Empty repository detected before sync, initializing", 'info');
+                                    $init_result = $this->github_api->initialize_repository($branch);
+                                    if (is_wp_error($init_result)) {
+                                        wp_github_sync_log("Failed to initialize repository: " . $init_result->get_error_message(), 'error');
+                                    } else {
+                                        wp_github_sync_log("Repository successfully initialized before sync", 'info');
+                                    }
+                                }
+                            } catch (\Exception $e) {
+                                wp_github_sync_log("Exception checking repository before sync: " . $e->getMessage(), 'error');
+                            }
+                            
                             // Create Repository instance with the API client
                             $repository = new \WPGitHubSync\API\Repository($this->github_api);
                             $sync_result = $repository->initial_sync($branch);
@@ -1352,6 +1368,22 @@ class Admin {
         update_option('wp_github_sync_sync_in_progress', true);
         
         // Execute the initial sync operation
+        // First check for empty repository and initialize if needed
+        try {
+            $repo_info = $this->github_api->get_repository();
+            if (is_wp_error($repo_info) && strpos($repo_info->get_error_message(), 'Git Repository is empty') !== false) {
+                wp_github_sync_log("Empty repository detected during full sync, initializing first", 'info');
+                $init_result = $this->github_api->initialize_repository($branch);
+                if (is_wp_error($init_result)) {
+                    wp_github_sync_log("Failed to initialize repository: " . $init_result->get_error_message(), 'error');
+                } else {
+                    wp_github_sync_log("Repository successfully initialized", 'info');
+                }
+            }
+        } catch (\Exception $e) {
+            wp_github_sync_log("Exception checking repository status: " . $e->getMessage(), 'error');
+        }
+        
         // Create Repository instance with the API client
         $repository = new \WPGitHubSync\API\Repository($this->github_api);
         $result = $repository->initial_sync($branch);

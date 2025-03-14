@@ -82,8 +82,13 @@ class Repository {
         
         // Initialize the WordPress filesystem
         if (empty($wp_filesystem)) {
-            require_once ABSPATH . '/wp-admin/includes/file.php';
-            WP_Filesystem();
+            // Check if we're in test mode
+            if (defined('WP_GITHUB_SYNC_TESTING') && WP_GITHUB_SYNC_TESTING) {
+                WP_Filesystem();
+            } else {
+                require_once ABSPATH . '/wp-admin/includes/file.php';
+                WP_Filesystem();
+            }
         }
         
         wp_github_sync_log("Extracting zip file to: {$target_dir}", 'debug');
@@ -189,6 +194,27 @@ class Repository {
         if ($auth_test !== true) {
             wp_github_sync_log("Initial sync authentication test failed: " . $auth_test, 'error');
             return new \WP_Error('github_auth_failed', sprintf(__('GitHub authentication failed: %s', 'wp-github-sync'), $auth_test));
+        }
+        
+        // Verify repository exists and initialize it if needed
+        $repo_info = $this->api_client->get_repository();
+        if (is_wp_error($repo_info)) {
+            $error_message = $repo_info->get_error_message();
+            // Check if this is an empty repository error
+            if (strpos($error_message, 'Git Repository is empty') !== false) {
+                wp_github_sync_log("Repository is empty, initializing it before proceeding", 'info');
+                $init_result = $this->api_client->initialize_repository($branch);
+                
+                if (is_wp_error($init_result)) {
+                    wp_github_sync_log("Failed to initialize repository: " . $init_result->get_error_message(), 'error');
+                    return new \WP_Error('repo_init_failed', sprintf(__('Failed to initialize repository: %s', 'wp-github-sync'), $init_result->get_error_message()));
+                }
+                
+                wp_github_sync_log("Repository initialized successfully, continuing with sync", 'info');
+            } else {
+                wp_github_sync_log("Failed to access repository: " . $error_message, 'error');
+                return new \WP_Error('repo_access_failed', sprintf(__('Failed to access repository: %s', 'wp-github-sync'), $error_message));
+            }
         }
         
         // Set up basic commit information

@@ -62,6 +62,12 @@ class Repository_Uploader {
             return new \WP_Error('invalid_branch', __('Invalid branch name', 'wp-github-sync'));
         }
         
+        // Check directory is not empty
+        $dir_contents = array_diff(scandir($directory), array('.', '..'));
+        if (empty($dir_contents)) {
+            return new \WP_Error('empty_directory', __('Directory is empty, nothing to upload', 'wp-github-sync'));
+        }
+        
         // Check rate limit before starting expensive operation
         $rate_limit = $this->api_client->request('rate_limit');
         if (!is_wp_error($rate_limit) && isset($rate_limit['resources']['core']['remaining'])) {
@@ -213,7 +219,10 @@ class Repository_Uploader {
             
             // Get the SHA of the default branch
             $default_ref = $this->api_client->request(
-                "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/refs/heads/{$default_branch}"
+                "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/refs/heads/{$default_branch}",
+                'GET',
+                [],
+                true // Set last parameter to true to explicitly handle empty repository error
             );
             
             if (is_wp_error($default_ref)) {
@@ -221,14 +230,38 @@ class Repository_Uploader {
                 
                 // Check if this is an empty repository (no default branch exists yet)
                 $error_message = $default_ref->get_error_message();
-                if (strpos($error_message, 'Not Found') !== false || strpos($error_message, '404') !== false) {
-                    wp_github_sync_log("Default branch not found. This may be an empty repository. Creating initial branch.", 'info');
-                    $reference = $this->create_initial_branch($branch);
-                    if (is_wp_error($reference)) {
-                        wp_github_sync_log("Failed to create initial branch: " . $reference->get_error_message(), 'error');
+                if (strpos($error_message, 'Not Found') !== false || 
+                    strpos($error_message, '404') !== false || 
+                    strpos($error_message, 'Git Repository is empty') !== false) {
+                    
+                    wp_github_sync_log("Default branch not found. Attempting to initialize empty repository.", 'info');
+                    
+                    // Try to initialize the repository
+                    $init_result = $this->api_client->initialize_repository($branch);
+                    if (is_wp_error($init_result)) {
+                        wp_github_sync_log("Repository initialization failed, trying fallback method: " . $init_result->get_error_message(), 'warning');
+                        
+                        // Fall back to our manual method
+                        $reference = $this->create_initial_branch($branch);
+                        if (is_wp_error($reference)) {
+                            wp_github_sync_log("Failed to create initial branch: " . $reference->get_error_message(), 'error');
+                            return $reference;
+                        }
                         return $reference;
                     }
-                    return $reference;
+                    
+                    // Repository was initialized, now get the reference
+                    $ref = $this->api_client->request(
+                        "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/refs/heads/{$branch}"
+                    );
+                    
+                    if (is_wp_error($ref)) {
+                        wp_github_sync_log("Failed to get branch reference after initialization: " . $ref->get_error_message(), 'error');
+                        return new \WP_Error('ref_not_found', __('Repository initialized but branch reference could not be retrieved.', 'wp-github-sync'));
+                    }
+                    
+                    wp_github_sync_log("Repository initialized and reference retrieved successfully", 'info');
+                    return $ref;
                 } else {
                     // Some other error occurred
                     return new \WP_Error('github_api_error', sprintf(__('Failed to get default branch reference: %s', 'wp-github-sync'), $error_message));
@@ -492,9 +525,10 @@ class Repository_Uploader {
         $total_size = 0;
         $upload_limit = 50 * 1024 * 1024; // 50MB recommended limit to avoid issues
         $max_files = 1000; // GitHub has limits on tree size
+        $skipped_files = [];
         
         // Recursive function to process directories
-        $process_directory = function($dir, $base_path = '') use (&$process_directory, &$tree_items, &$files_processed, &$total_size, $upload_limit, $max_files) {
+        $process_directory = function($dir, $base_path = '') use (&$process_directory, &$tree_items, &$files_processed, &$total_size, &$skipped_files, $upload_limit, $max_files) {
             $files = scandir($dir);
             
             foreach ($files as $file) {
@@ -537,12 +571,22 @@ class Repository_Uploader {
                     // Skip if file is too large (GitHub API has a 100MB limit)
                     if ($file_size > 50 * 1024 * 1024) {
                         wp_github_sync_log("Skipping file {$relative_path} (too large: " . round($file_size/1024/1024, 2) . "MB)", 'warning');
+                        $skipped_files[] = [
+                            'path' => $relative_path,
+                            'reason' => 'too_large',
+                            'size' => $file_size
+                        ];
                         continue;
                     }
                     
                     // Check if this file would exceed our total size limit
                     if ($total_size + $file_size > $upload_limit) {
                         wp_github_sync_log("Total upload limit reached. Skipping remaining files.", 'warning');
+                        $skipped_files[] = [
+                            'path' => $relative_path,
+                            'reason' => 'upload_limit_reached',
+                            'size' => $file_size
+                        ];
                         return;
                     }
                     
@@ -553,6 +597,11 @@ class Repository_Uploader {
                         // Skip if file couldn't be read
                         if ($content === false) {
                             wp_github_sync_log("Skipping file {$relative_path} (couldn't read file)", 'warning');
+                            $skipped_files[] = [
+                                'path' => $relative_path,
+                                'reason' => 'unreadable',
+                                'size' => $file_size
+                            ];
                             continue;
                         }
                         
@@ -578,6 +627,11 @@ class Repository_Uploader {
                         
                         if (is_wp_error($blob)) {
                             wp_github_sync_log("Failed to create blob for {$relative_path}: " . $blob->get_error_message(), 'error');
+                            $skipped_files[] = [
+                                'path' => $relative_path,
+                                'reason' => 'blob_creation_failed',
+                                'error' => $blob->get_error_message()
+                            ];
                             continue;
                         }
                         
@@ -602,6 +656,11 @@ class Repository_Uploader {
                         }
                     } catch (\Exception $e) {
                         wp_github_sync_log("Error processing file {$relative_path}: " . $e->getMessage(), 'error');
+                        $skipped_files[] = [
+                            'path' => $relative_path,
+                            'reason' => 'exception',
+                            'error' => $e->getMessage()
+                        ];
                         continue;
                     }
                 }
@@ -610,6 +669,29 @@ class Repository_Uploader {
         
         // Process the directory
         $process_directory($directory);
+        
+        // Log skipped files summary if any
+        if (!empty($skipped_files)) {
+            $skipped_count = count($skipped_files);
+            wp_github_sync_log("Skipped {$skipped_count} files during processing", 'warning');
+            
+            // Group by reason
+            $reasons = [];
+            foreach ($skipped_files as $skip) {
+                $reason = $skip['reason'];
+                if (!isset($reasons[$reason])) {
+                    $reasons[$reason] = 0;
+                }
+                $reasons[$reason]++;
+            }
+            
+            foreach ($reasons as $reason => $count) {
+                wp_github_sync_log("Reason '{$reason}': {$count} files", 'debug');
+            }
+            
+            // Store skipped files in a transient for user feedback
+            set_transient('wp_github_sync_skipped_files', $skipped_files, HOUR_IN_SECONDS);
+        }
         
         return $tree_items;
     }
