@@ -1471,11 +1471,40 @@ class Admin {
         
         // If a temporary token was provided, use it instead of the stored one
         if (!empty($temp_token)) {
+            // Log token length and format for debugging without revealing the actual token
+            $token_length = strlen($temp_token);
+            $token_prefix = substr($temp_token, 0, 8);
+            $token_suffix = substr($temp_token, -4);
+            
+            wp_github_sync_log("Test Connection AJAX: Using temporary token with length {$token_length}, prefix {$token_prefix}..., suffix ...{$token_suffix}", 'debug');
+            
+            // Validate token format before proceeding
+            $is_valid_format = false;
+            
+            if (strpos($temp_token, 'github_pat_') === 0) {
+                wp_github_sync_log("Test Connection AJAX: Token appears to be a fine-grained PAT", 'debug');
+                $is_valid_format = true;
+            } else if (strpos($temp_token, 'ghp_') === 0) {
+                wp_github_sync_log("Test Connection AJAX: Token appears to be a classic PAT", 'debug');
+                $is_valid_format = true;
+            } else if (strpos($temp_token, 'gho_') === 0) {
+                wp_github_sync_log("Test Connection AJAX: Token appears to be an OAuth token", 'debug');
+                $is_valid_format = true;
+            } else if (strlen($temp_token) === 40 && ctype_xdigit($temp_token)) {
+                wp_github_sync_log("Test Connection AJAX: Token appears to be a classic PAT (40 char hex)", 'debug');
+                $is_valid_format = true;
+            } else {
+                wp_github_sync_log("Test Connection AJAX: Warning - Token format doesn't match known GitHub token patterns", 'warning');
+            }
+            
             // Set the token directly on the API client (bypassing encryption)
             $this->github_api->set_temporary_token($temp_token);
+        } else {
+            wp_github_sync_log("Test Connection AJAX: Using previously stored token", 'debug');
         }
         
         // Test authentication
+        wp_github_sync_log("Test Connection AJAX: Starting authentication test", 'debug');
         $auth_test = $this->github_api->test_authentication();
         
         if ($auth_test === true) {

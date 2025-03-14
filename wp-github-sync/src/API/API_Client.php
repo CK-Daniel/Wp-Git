@@ -763,6 +763,29 @@ class API_Client {
         $token_masked = substr($this->token, 0, 4) . '...' . substr($this->token, -4);
         wp_github_sync_log("Testing authentication with token length: {$token_length}, token: {$token_masked}", 'debug');
         
+        // Validate token format before attempting to use it
+        $valid_token_format = false;
+        
+        if (strpos($this->token, 'github_pat_') === 0) {
+            wp_github_sync_log("Token appears to be a fine-grained PAT", 'debug');
+            $valid_token_format = true;
+        } else if (strpos($this->token, 'ghp_') === 0) {
+            wp_github_sync_log("Token appears to be a classic PAT", 'debug');
+            $valid_token_format = true;
+        } else if (strpos($this->token, 'gho_') === 0) {
+            wp_github_sync_log("Token appears to be an OAuth token", 'debug');
+            $valid_token_format = true;
+        } else if (strpos($this->token, 'ghs_') === 0) {
+            wp_github_sync_log("Token appears to be a GitHub App token", 'debug');
+            $valid_token_format = true;
+        } else if (strlen($this->token) === 40 && ctype_xdigit($this->token)) {
+            wp_github_sync_log("Token appears to be a classic PAT (40 char hex)", 'debug');
+            $valid_token_format = true;
+        } else {
+            wp_github_sync_log("Token format doesn't match known GitHub token patterns", 'warning');
+            // Continue anyway, but log a warning - GitHub might accept other formats in the future
+        }
+        
         try {
             // Make a simple request directly to the GitHub API to avoid any internal abstractions
             $url = $this->api_base_url . '/user';
@@ -816,7 +839,25 @@ class API_Client {
                 
                 // For bad credentials, provide more details
                 if ($error_message === 'Bad credentials') {
-                    return 'Invalid GitHub token (Bad credentials). Please check your token and make sure it has the necessary permissions.';
+                    // Log token format for better debugging
+                    if (!empty($this->token)) {
+                        $token_prefix = substr($this->token, 0, 10);
+                        if (strpos($this->token, 'github_pat_') === 0) {
+                            wp_github_sync_log("Token appears to be a fine-grained PAT", 'debug');
+                        } else if (strpos($this->token, 'ghp_') === 0) {
+                            wp_github_sync_log("Token appears to be a classic PAT", 'debug');
+                        } else if (strpos($this->token, 'gho_') === 0) {
+                            wp_github_sync_log("Token appears to be an OAuth token", 'debug');
+                        } else if (strpos($this->token, 'ghs_') === 0) {
+                            wp_github_sync_log("Token appears to be a GitHub App token", 'debug');
+                        } else if (strlen($this->token) === 40 && ctype_xdigit($this->token)) {
+                            wp_github_sync_log("Token appears to be a classic PAT (40 char hex)", 'debug');
+                        } else {
+                            wp_github_sync_log("Token format doesn't match known GitHub token patterns", 'error');
+                        }
+                    }
+                    
+                    return 'Invalid GitHub token (Bad credentials). Please check your token and make sure it has the necessary permissions. Ensure you\'re using a valid token format (e.g., github_pat_*, ghp_*, or a 40-character classic PAT).';
                 }
                 
                 return $error_message;

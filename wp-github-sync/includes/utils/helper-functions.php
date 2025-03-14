@@ -27,6 +27,16 @@ function wp_github_sync_encrypt($data) {
         wp_github_sync_log("Skipping encryption for masked placeholder", 'debug');
         return false;
     }
+    
+    // Validate GitHub token format
+    if (strpos($data, 'github_pat_') === 0 || strpos($data, 'ghp_') === 0 || 
+        strpos($data, 'gho_') === 0 || strpos($data, 'ghs_') === 0 ||
+        (strlen($data) === 40 && ctype_xdigit($data))) {
+        // Token format is valid
+        wp_github_sync_log("Token format validation passed", 'debug');
+    } else {
+        wp_github_sync_log("Invalid token format detected", 'warning');
+    }
 
     // Check if we have a predefined encryption key
     $encryption_key = defined('WP_GITHUB_SYNC_ENCRYPTION_KEY') ? WP_GITHUB_SYNC_ENCRYPTION_KEY : false;
@@ -483,45 +493,3 @@ function wp_github_sync_get_repository_url() {
     return get_option('wp_github_sync_repository', '');
 }
 
-/**
- * Rotate log files when they get too large.
- *
- * @param string $log_file Path to the log file to rotate.
- * @param int    $max_backups Maximum number of backup files to keep.
- */
-function wp_github_sync_rotate_logs($log_file, $max_backups = 5) {
-    // Make sure the log file exists
-    if (!file_exists($log_file)) {
-        return;
-    }
-    
-    // Get the directory and filename
-    $dir = dirname($log_file);
-    $filename = basename($log_file);
-    
-    // Remove oldest backup if we have reached max_backups
-    for ($i = $max_backups; $i > 0; $i--) {
-        $old_backup = $dir . '/' . $filename . '.' . $i;
-        
-        if ($i == $max_backups && file_exists($old_backup)) {
-            @unlink($old_backup);
-        }
-        
-        if ($i > 1) {
-            $prev_backup = $dir . '/' . $filename . '.' . ($i - 1);
-            if (file_exists($prev_backup)) {
-                @rename($prev_backup, $old_backup);
-            }
-        }
-    }
-    
-    // Rename current log file to .1
-    $new_backup = $dir . '/' . $filename . '.1';
-    @rename($log_file, $new_backup);
-    
-    // Create a new empty log file
-    @file_put_contents($log_file, "--- Log rotated at " . date('Y-m-d H:i:s') . " ---" . PHP_EOL);
-    
-    // Log the rotation
-    wp_github_sync_log("Log file rotated. Previous log saved as {$new_backup}", 'info', true);
-}
