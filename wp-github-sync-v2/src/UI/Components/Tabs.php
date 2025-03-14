@@ -67,12 +67,17 @@ class Tabs {
      * @param string $icon    Optional dashicon name (without dashicons- prefix).
      * @return $this For method chaining.
      */
-    public function add_tab( $id, $title, $content, $icon = 'admin-generic' ) {
-        $this->tabs[ preg_replace('/[^a-z0-9_-]/', '', strtolower($id)) ] = [
+    public function add_tab( $id, $title, $content = '', $icon = 'admin-generic' ) {
+        // Clean and sanitize the ID
+        $clean_id = preg_replace('/[^a-z0-9_-]/', '', strtolower($id));
+        
+        $this->tabs[$clean_id] = [
             'title'   => $title,
             'content' => $content,
             'icon'    => sanitize_html_class($icon),
+            'id'      => $clean_id, // Store the sanitized ID for reference
         ];
+        
         return $this;
     }
     

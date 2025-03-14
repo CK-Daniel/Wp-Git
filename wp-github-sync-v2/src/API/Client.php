@@ -61,11 +61,44 @@ class Client implements ClientInterface {
     /**
      * Constructor
      *
-     * @param string $version Plugin version.
+     * @param string $version  Plugin version.
+     * @param array  $settings Optional custom settings to override defaults.
      */
-    public function __construct( $version ) {
+    public function __construct( $version, $settings = null ) {
         $this->version = $version;
-        $this->load_settings();
+        
+        if ($settings !== null) {
+            $this->apply_settings($settings);
+        } else {
+            $this->load_settings();
+        }
+    }
+    
+    /**
+     * Apply custom settings
+     *
+     * @param array $settings Custom settings.
+     */
+    protected function apply_settings( $settings ) {
+        // Parse repository URL if provided
+        if (!empty($settings['repo_url'])) {
+            $repo_parts = $this->parse_repo_url($settings['repo_url']);
+            $this->owner = $repo_parts['owner'];
+            $this->repo = $repo_parts['repo'];
+        }
+        
+        // Set authentication method
+        $this->auth_method = !empty($settings['auth_method']) ? $settings['auth_method'] : 'pat';
+        
+        // Set token based on auth method
+        if ($this->auth_method === 'pat' && !empty($settings['access_token'])) {
+            $this->token = $settings['access_token'];
+        } elseif ($this->auth_method === 'oauth' && !empty($settings['oauth_token'])) {
+            $this->token = $settings['oauth_token'];
+        } elseif ($this->auth_method === 'github_app') {
+            // GitHub App authentication is more complex and would need additional code
+            // For now, we'll just handle the basic token-based methods
+        }
     }
 
     /**

@@ -144,20 +144,31 @@ if ( ! current_user_can( 'manage_options' ) ) {
 
 <script>
     jQuery(document).ready(function($) {
+        // Log for debugging
+        console.log('Settings page loaded');
+        
+        // Check if tab contents exist
+        console.log('Tab content elements:', $('.tab-content').length);
+        $('.tab-content').each(function() {
+            console.log('Tab:', $(this).data('tab'), 'Content length:', $(this).html().length);
+        });
+        
         // Enhanced tab switching with animation
         $('.wp-github-sync-tab').on('click', function() {
             var tab = $(this).data('tab');
+            console.log('Tab clicked:', tab);
             
             // Update active tab
             $('.wp-github-sync-tab').removeClass('active');
             $(this).addClass('active');
             
             // Show/hide tab content with fade effect
-            $('.tab-content').fadeOut(200);
-            setTimeout(function() {
-                $('.tab-content').removeClass('active');
-                $('.tab-content[data-tab="' + tab + '"]').addClass('active').fadeIn(300);
-            }, 200);
+            $('.tab-content').hide();
+            $('.tab-content').removeClass('active');
+            var $targetTab = $('.tab-content[data-tab="' + tab + '"]');
+            $targetTab.addClass('active').fadeIn(300);
+            
+            console.log('Showing tab content:', tab, 'Found:', $targetTab.length);
             
             // Update URL hash
             if (history.pushState) {

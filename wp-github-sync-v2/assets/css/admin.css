@@ -442,7 +442,9 @@
 .wp-github-sync-tab-content.active,
 .tab-content.active,
 .wp-github-sync-tab-content.active {
-  display: block;
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
 }
 
 /* Progress Bar */

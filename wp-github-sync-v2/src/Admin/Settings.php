@@ -106,8 +106,8 @@ class Settings {
         // Branch
         $sanitized['sync_branch'] = isset($input['sync_branch']) ? sanitize_text_field($input['sync_branch']) : 'main';
         
-        // Auth method
-        $sanitized['auth_method'] = isset($input['auth_method']) && in_array($input['auth_method'], array('pat', 'oauth')) 
+        // Auth method (include 'github_app' in allowed methods)
+        $sanitized['auth_method'] = isset($input['auth_method']) && in_array($input['auth_method'], array('pat', 'oauth', 'github_app')) 
             ? $input['auth_method'] 
             : 'pat';
         
@@ -133,14 +133,40 @@ class Settings {
             $sanitized['oauth_token'] = isset($current_settings['oauth_token']) ? $current_settings['oauth_token'] : '';
         }
         
+        // GitHub App settings
+        $github_app_settings = array(
+            'github_app_id', 
+            'github_app_installation_id', 
+            'github_app_key'
+        );
+        
+        foreach ($github_app_settings as $key) {
+            if (isset($input[$key])) {
+                if ($key === 'github_app_key') {
+                    $sanitized[$key] = $input[$key]; // Don't sanitize private key content
+                } else {
+                    $sanitized[$key] = sanitize_text_field($input[$key]);
+                }
+            } else {
+                $sanitized[$key] = isset($current_settings[$key]) ? $current_settings[$key] : '';
+            }
+        }
+        
         // Boolean settings
         $boolean_settings = array(
+            'auto_sync',
+            'auto_deploy',
             'auto_backup',
             'backup_themes',
             'backup_plugins',
             'backup_uploads',
             'backup_config',
             'maintenance_mode',
+            'auto_rollback',
+            'notify_updates',
+            'webhook_sync',
+            'webhook_auto_deploy',
+            'webhook_specific_branch',
             'delete_removed',
             'debug_mode'
         );
@@ -157,6 +183,19 @@ class Settings {
         
         foreach ($numeric_settings as $key => $default) {
             $sanitized[$key] = isset($input[$key]) ? absint($input[$key]) : $default;
+        }
+        
+        // Dropdown settings
+        if (isset($input['sync_interval'])) {
+            $allowed_intervals = array('hourly', 'twicedaily', 'daily', 'weekly');
+            $sanitized['sync_interval'] = in_array($input['sync_interval'], $allowed_intervals) ? $input['sync_interval'] : 'daily';
+        }
+        
+        // Webhook secret
+        if (isset($input['webhook_secret'])) {
+            $sanitized['webhook_secret'] = sanitize_text_field($input['webhook_secret']);
+        } else {
+            $sanitized['webhook_secret'] = isset($current_settings['webhook_secret']) ? $current_settings['webhook_secret'] : '';
         }
         
         // For backward compatibility, also update individual options

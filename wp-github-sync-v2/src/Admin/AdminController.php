@@ -391,6 +391,19 @@ class AdminController {
         $tabs->add_tab( 'backup', __( 'Backup', 'wp-github-sync' ), '', 'backup' );
         $tabs->add_tab( 'advanced', __( 'Advanced', 'wp-github-sync' ), '', 'admin-tools' );
         
+        // Debug: Ensure settings content exists
+        if (empty($general_settings)) {
+            $general_settings = '<div class="wp-github-sync-notice wp-github-sync-error">General settings could not be loaded.</div>';
+        }
+        
+        if (empty($backup_settings)) {
+            $backup_settings = '<div class="wp-github-sync-notice wp-github-sync-error">Backup settings could not be loaded.</div>';
+        }
+        
+        if (empty($advanced_settings)) {
+            $advanced_settings = '<div class="wp-github-sync-notice wp-github-sync-error">Advanced settings could not be loaded.</div>';
+        }
+        
         // Render the page
         include WP_GITHUB_SYNC_DIR . 'templates/settings.php';
     }
@@ -1207,7 +1220,7 @@ class AdminController {
      * Handle AJAX test connection request
      */
     public function handle_test_connection() {
-        check_ajax_referer( 'wp_github_sync_nonce', 'nonce' );
+        check_ajax_referer( 'wp_rest', 'nonce' ); // Updated to use the correct nonce
         
         if ( ! current_user_can( 'manage_options' ) ) {
             wp_send_json_error( array(
@@ -1215,9 +1228,18 @@ class AdminController {
             ) );
         }
         
+        // Get and sanitize all input fields
         $repo_url = isset( $_POST['repo_url'] ) ? sanitize_text_field( wp_unslash( $_POST['repo_url'] ) ) : '';
         $auth_method = isset( $_POST['auth_method'] ) ? sanitize_text_field( wp_unslash( $_POST['auth_method'] ) ) : 'pat';
-        $access_token = isset( $_POST['access_token'] ) ? sanitize_text_field( wp_unslash( $_POST['access_token'] ) ) : '';
+        $token = isset( $_POST['token'] ) ? sanitize_text_field( wp_unslash( $_POST['token'] ) ) : '';
+        $branch = isset( $_POST['branch'] ) ? sanitize_text_field( wp_unslash( $_POST['branch'] ) ) : 'main';
+        
+        // Debug logging
+        error_log('Test connection requested:');
+        error_log('- Auth Method: ' . $auth_method);
+        error_log('- Repo URL: ' . $repo_url);
+        error_log('- Branch: ' . $branch);
+        error_log('- Token provided: ' . (!empty($token) ? 'Yes' : 'No'));
         
         if ( empty( $repo_url ) ) {
             wp_send_json_error( array(
@@ -1225,32 +1247,48 @@ class AdminController {
             ) );
         }
         
-        if ( empty( $access_token ) ) {
+        if ( empty( $token ) ) {
             wp_send_json_error( array(
                 'message' => __( 'Access token is required.', 'wp-github-sync' ),
             ) );
         }
         
-        // Test connection
+        // Build settings array based on auth method
         $settings = array(
-            'repo_url'    => $repo_url,
-            'auth_method' => $auth_method,
-            'access_token' => $access_token,
+            'repo_url'     => $repo_url,
+            'sync_branch'  => $branch,
+            'auth_method'  => $auth_method,
         );
         
-        update_option( 'wp_github_sync_settings', $settings );
-        
-        $result = $this->client->test_authentication();
-        
-        if ( is_wp_error( $result ) ) {
-            wp_send_json_error( array(
-                'message' => $result->get_error_message(),
-            ) );
+        // Add token to appropriate field based on auth method
+        if ($auth_method === 'pat') {
+            $settings['access_token'] = $token;
+        } elseif ($auth_method === 'oauth') {
+            $settings['oauth_token'] = $token;
         }
         
-        wp_send_json_success( array(
-            'message' => __( 'Connection successful!', 'wp-github-sync' ),
-        ) );
+        // Don't update options yet, just test with temporary settings
+        
+        try {
+            // Temporarily init the client with new settings
+            $test_client = new Client( $this->version, $settings );
+            $result = $test_client->test_authentication();
+            
+            if ( is_wp_error( $result ) ) {
+                wp_send_json_error( array(
+                    'message' => $result->get_error_message(),
+                ) );
+            }
+            
+            wp_send_json_success( array(
+                'message' => __( 'Connection successful!', 'wp-github-sync' ),
+            ) );
+            
+        } catch ( \Exception $e ) {
+            wp_send_json_error( array(
+                'message' => $e->getMessage(),
+            ) );
+        }
     }
     
     /**
