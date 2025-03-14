@@ -302,22 +302,39 @@ class API_Client {
             // From GitHub docs: "In most cases, you can use Authorization: Bearer or Authorization: token to pass a token.
             // However, if you are passing a JSON web token (JWT), you must use Authorization: Bearer."
             
-            // Always use Bearer for GitHub App installation tokens (ghs_) and JSON Web Tokens
-            if (strpos($this->token, 'ghs_') === 0 || strpos($this->token, 'ey') === 0) { // JWT tokens start with "ey"
+            // GitHub API now accepts both formats, but some tokens might require a specific format
+            
+            // First try to identify the token type for debugging purposes
+            if (strpos($this->token, 'ghs_') === 0) {
+                wp_github_sync_log("Token identified as GitHub App installation token", 'debug');
+                $token_type = 'app_token';
+            } else if (strpos($this->token, 'gho_') === 0) {
+                wp_github_sync_log("Token identified as OAuth token", 'debug');
+                $token_type = 'oauth';
+            } else if (strpos($this->token, 'github_pat_') === 0) {
+                wp_github_sync_log("Token identified as fine-grained PAT", 'debug');
+                $token_type = 'fine_grained_pat';
+            } else if (strpos($this->token, 'ghp_') === 0) {
+                wp_github_sync_log("Token identified as classic PAT (ghp_ prefix)", 'debug');
+                $token_type = 'classic_pat';
+            } else if (strlen($this->token) === 40 && ctype_xdigit($this->token)) {
+                wp_github_sync_log("Token identified as classic PAT (40 char hex)", 'debug');
+                $token_type = 'classic_pat_hex';
+            } else {
+                wp_github_sync_log("Token format not recognized, using default auth method", 'warning');
+                $token_type = 'unknown';
+            }
+            
+            // Always use Bearer format for app tokens and OAuth tokens
+            // Use token format for classic PATs to ensure backward compatibility
+            if ($token_type === 'app_token' || $token_type === 'oauth' || $token_type === 'fine_grained_pat') {
                 $headers['Authorization'] = 'Bearer ' . $this->token;
-            } 
-            // For all other tokens (PAT, OAuth, etc), use Bearer per GitHub's recommendations
-            else {
-                $headers['Authorization'] = 'Bearer ' . $this->token;
-                
-                // Log the token type being used (for debugging)
-                if (strpos($this->token, 'gho_') === 0) {
-                    wp_github_sync_log("Using OAuth token format", 'debug');
-                } else if (strpos($this->token, 'github_pat_') === 0) {
-                    wp_github_sync_log("Using fine-grained PAT token format", 'debug');
-                } else if (strlen($this->token) === 40 && ctype_xdigit($this->token)) {
-                    wp_github_sync_log("Using classic PAT token format", 'debug');
-                }
+                wp_github_sync_log("Using 'Bearer' authorization header", 'debug');
+            } else {
+                // For classic PATs, try both formats since GitHub API accepts both
+                // Use 'token' format first which has been more reliable for classic PATs
+                $headers['Authorization'] = 'token ' . $this->token;
+                wp_github_sync_log("Using 'token' authorization header", 'debug');
             }
             
             // Add conditional request header if we have an etag
@@ -790,8 +807,32 @@ class API_Client {
             // Make a simple request directly to the GitHub API to avoid any internal abstractions
             $url = $this->api_base_url . '/user';
             
-            // Determine the authorization header format based on the token type
-            $auth_header = 'Bearer ' . $this->token;
+            // Determine the appropriate authorization format based on the token type
+            $auth_format = 'Bearer'; // Default to Bearer
+            
+            // Use different auth format for different token types
+            if (strpos($this->token, 'ghs_') === 0) {
+                // App installation tokens
+                $auth_format = 'Bearer';
+                wp_github_sync_log("Using Bearer format for GitHub App token", 'debug');
+            } else if (strpos($this->token, 'gho_') === 0) {
+                // OAuth tokens
+                $auth_format = 'Bearer';
+                wp_github_sync_log("Using Bearer format for OAuth token", 'debug');
+            } else if (strpos($this->token, 'github_pat_') === 0) {
+                // Fine-grained PATs
+                $auth_format = 'Bearer';
+                wp_github_sync_log("Using Bearer format for fine-grained PAT", 'debug');
+            } else if (strpos($this->token, 'ghp_') === 0 || (strlen($this->token) === 40 && ctype_xdigit($this->token))) {
+                // Classic PATs - these work better with 'token' format in some cases
+                $auth_format = 'token';
+                wp_github_sync_log("Using token format for classic PAT", 'debug');
+            } else {
+                wp_github_sync_log("Token format not recognized, trying token format", 'warning');
+                $auth_format = 'token';
+            }
+            
+            $auth_header = $auth_format . ' ' . $this->token;
             
             // Add headers according to GitHub documentation
             $args = array(
@@ -837,6 +878,38 @@ class API_Client {
                 $error_message = isset($error_data['message']) ? $error_data['message'] : "HTTP error {$response_code}";
                 wp_github_sync_log("API error: {$error_message}", 'error');
                 
+                // For bad credentials, try the alternative auth format before giving up
+                if ($error_message === 'Bad credentials' && !isset($tried_alternative_auth)) {
+                    // Try alternative auth format
+                    $alternative_format = ($auth_format === 'Bearer') ? 'token' : 'Bearer';
+                    wp_github_sync_log("Trying alternative auth format: {$alternative_format}", 'debug');
+                    
+                    // Set up new request with alternative auth format
+                    $alternative_auth_header = $alternative_format . ' ' . $this->token;
+                    $args['headers']['Authorization'] = $alternative_auth_header;
+                    
+                    // Make the alternative request
+                    wp_github_sync_log("Making alternative request with {$alternative_format} auth", 'debug');
+                    $alternative_response = wp_remote_get($url, $args);
+                    
+                    if (!is_wp_error($alternative_response)) {
+                        $alternative_response_code = wp_remote_retrieve_response_code($alternative_response);
+                        $alternative_body = wp_remote_retrieve_body($alternative_response);
+                        
+                        wp_github_sync_log("Alternative auth response code: {$alternative_response_code}", 'debug');
+                        
+                        if ($alternative_response_code === 200) {
+                            wp_github_sync_log("Alternative auth format succeeded! Using {$alternative_format} for future requests", 'info');
+                            // Return success with the alternative response
+                            return json_decode($alternative_body, true);
+                        } else {
+                            wp_github_sync_log("Alternative auth format also failed", 'warning');
+                            // Continue to regular error handling
+                        }
+                    }
+                }
+                
+                // Standard error handling
                 // For bad credentials, provide more details
                 if ($error_message === 'Bad credentials') {
                     // Log token format for better debugging
@@ -856,6 +929,8 @@ class API_Client {
                             wp_github_sync_log("Token format doesn't match known GitHub token patterns", 'error');
                         }
                     }
+                    
+                    wp_github_sync_log("Tried both 'Bearer' and 'token' auth formats - all failed", 'error');
                     
                     return 'Invalid GitHub token (Bad credentials). Please check your token and make sure it has the necessary permissions. Ensure you\'re using a valid token format (e.g., github_pat_*, ghp_*, or a 40-character classic PAT).';
                 }
