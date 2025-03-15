@@ -2,7 +2,7 @@
     'use strict';
 
     $(document).ready(function() {
-        
+
         /**
          * Show the loading overlay
          */
@@ -73,8 +73,9 @@
             console.log('WP GitHub Sync: Tabs initialized');
         }
         
-        // Initialize tabs
+        // Initialize tabs and setup global tracking variable
         initializeTabs();
+        window.lastStep = -1;
         
         // Define sync steps for progress tracking
         var syncSteps = [
@@ -172,7 +173,7 @@
                 
                 $statusDetail.append('<div>' + timestamp + detail + '</div>');
                 
-                // Check if element exists before accessing scrollHeight
+                // Scroll to the bottom if the element exists
                 if ($statusDetail.length && $statusDetail[0]) {
                     $statusDetail.scrollTop($statusDetail[0].scrollHeight);
                 }
@@ -260,6 +261,7 @@
         $('#initial_sync_button').on('click', function() {
             var createNewRepo = $('#create_new_repo').is(':checked');
             var repoName = $('#new_repo_name').val();
+            var runInBackground = $('#run_in_background').is(':checked');
             
             if (createNewRepo && !repoName) {
                 alert('Please enter a repository name.');
@@ -287,14 +289,19 @@
                     updateProgress(0, 'Connecting to existing repository...');
                 }
                 
+                if (runInBackground) {
+                    updateProgress(0, 'Initiating background sync process...');
+                }
+                
                 // Setup polling for progress updates
                 var lastProgressTime = Date.now();
                 var lastProgressStep = -1;
                 var lastProgressDetail = '';
                 var noProgressCount = 0;
                 var maxNoProgressCount = 10; // About 15 seconds without progress
+                var progressCheck;
             
-                var progressCheck = setInterval(function() {
+                progressCheck = setInterval(function() {
                     // Check if we haven't seen progress for a while
                     var currentTime = Date.now();
                     if (lastProgressStep >= 0 && (currentTime - lastProgressTime) > 30000) {
@@ -344,24 +351,58 @@
                                     var fakeSubStep = Math.floor((noProgressCount - 2) / 2) % syncSteps[5].subSteps.length;
                                     updateProgress(5, null, fakeSubStep);
                                 }
+                                
+                                // If progress data indicates completion or failure for background process
+                                if (runInBackground && (progressData.data.status === 'complete' || progressData.data.status === 'failed')) {
+                                    clearInterval(progressCheck);
+                                    
+                                    if (progressData.data.status === 'complete') {
+                                        updateProgress(syncSteps.length - 1, 'Sync completed successfully!');
+                                        $('.wp-github-sync-loading-message').text('Success!');
+                                        $('.wp-github-sync-loading-submessage').text(progressData.data.message || 'Synchronization completed successfully.');
+                                        
+                                        // Redirect to dashboard after 2 seconds
+                                        setTimeout(function() {
+                                            window.location.href = wpGitHubSync.adminUrl + '?page=wp-github-sync';
+                                        }, 2000);
+                                    } else {
+                                        updateProgress(0, 'Error: ' + (progressData.data.message || 'Unknown error'));
+                                        $('.wp-github-sync-loading-message').text('Error');
+                                        $('.wp-github-sync-loading-submessage').text(progressData.data.message || 'An error occurred');
+                                        
+                                        // Hide overlay after 3 seconds
+                                        setTimeout(function() {
+                                            hideOverlay();
+                                        }, 3000);
+                                    }
+                                }
                             }
                         }
                     });
                 }, 1500);
                 
                 $.ajax({
-                        url: wpGitHubSync.ajaxUrl,
-                        type: 'POST',
-                        data: {
-                            action: 'wp_github_sync_initial_sync',
-                            create_new_repo: createNewRepo ? 1 : 0,
-                            repo_name: repoName,
-                            nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce for initial sync
-                        },
-                        success: function(response) {
+                    url: wpGitHubSync.ajaxUrl,
+                    type: 'POST',
+                    data: {
+                        action: runInBackground ? 'wp_github_sync_background_initial_sync' : 'wp_github_sync_initial_sync',
+                        create_new_repo: createNewRepo ? 1 : 0,
+                        repo_name: repoName,
+                        run_in_background: runInBackground ? 1 : 0,
+                        nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce for initial sync
+                    },
+                    success: function(response) {
+                        if (!runInBackground) {
                             clearInterval(progressCheck);
-                            
-                            if (response.success) {
+                        }
+                        
+                        if (response.success) {
+                            if (runInBackground) {
+                                updateProgress(1, 'Background sync process started successfully.');
+                                $('.wp-github-sync-loading-message').text('Background Sync Started');
+                                $('.wp-github-sync-loading-submessage').text(response.data.message || 'Background synchronization is now running.');
+                                // For background mode, keep the overlay open to allow progress monitoring
+                            } else {
                                 updateProgress(syncSteps.length - 1, 'Sync completed successfully!');
                                 $('.wp-github-sync-loading-message').text('Success!');
                                 $('.wp-github-sync-loading-submessage').text(response.data.message);
@@ -370,54 +411,54 @@
                                 setTimeout(function() {
                                     window.location.href = wpGitHubSync.adminUrl + '?page=wp-github-sync';
                                 }, 2000);
-                            } else {
-                                // Handle error response
-                                updateProgress(0, 'Error: ' + (response.data && response.data.message ? response.data.message : 'Unknown error'));
-                                $('.wp-github-sync-loading-message').text('Error');
-                                $('.wp-github-sync-loading-submessage').text(response.data && response.data.message ? response.data.message : 'An error occurred');
-                                
-                                // Hide overlay after 3 seconds
-                                setTimeout(function() {
-                                    hideOverlay();
-                                }, 3000);
                             }
-                        },
-                        error: function(xhr, status, error) {
-                            clearInterval(progressCheck);
-                            updateProgress(0, 'AJAX Error: ' + error);
+                        } else {
+                            // Handle error response
+                            clearInterval(progressCheck);  // Stop progress checking on error
+                            updateProgress(0, 'Error: ' + (response.data && response.data.message ? response.data.message : 'Unknown error'));
                             $('.wp-github-sync-loading-message').text('Error');
-                            $('.wp-github-sync-loading-submessage').text('Communication error with server: ' + error);
-                            
-                            // Log detailed error to console
-                            console.error("AJAX Error:", status, error);
-                            
-                            if (xhr.responseText) {
-                                console.error("Response:", xhr.responseText);
-                                
-                                // Try to parse response for more details
-                                try {
-                                    var responseObj = JSON.parse(xhr.responseText);
-                                    if (responseObj && responseObj.data && responseObj.data.message) {
-                                        $('.wp-github-sync-loading-submessage').text(responseObj.data.message);
-                                        console.error("Parsed error:", responseObj.data.message);
-                                    } else {
-                                        // Look for WordPress critical error
-                                        if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
-                                            $('.wp-github-sync-loading-submessage').text('WordPress encountered a critical error. Check server logs for details.');
-                                        }
-                                    }
-                                } catch (e) {
-                                    // Not JSON, might be HTML error
-                                    console.error("Error parsing response:", e);
-                                }
-                            }
+                            $('.wp-github-sync-loading-submessage').text(response.data && response.data.message ? response.data.message : 'An error occurred');
                             
                             // Hide overlay after 3 seconds
                             setTimeout(function() {
                                 hideOverlay();
                             }, 3000);
                         }
-                    });
+                    },
+                    error: function(xhr, status, error) {
+                        clearInterval(progressCheck);
+                        updateProgress(0, 'AJAX Error: ' + error);
+                        $('.wp-github-sync-loading-message').text('Error');
+                        $('.wp-github-sync-loading-submessage').text('Communication error with server: ' + error);
+                        
+                        // Log detailed error to console
+                        console.error("AJAX Error:", status, error);
+                        
+                        if (xhr.responseText) {
+                            console.error("Response:", xhr.responseText);
+                            
+                            // Try to parse response for more details
+                            try {
+                                var responseObj = JSON.parse(xhr.responseText);
+                                if (responseObj && responseObj.data && responseObj.data.message) {
+                                    $('.wp-github-sync-loading-submessage').text(responseObj.data.message);
+                                    console.error("Parsed error:", responseObj.data.message);
+                                } else {
+                                    // Look for WordPress critical error
+                                    if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
+                                        $('.wp-github-sync-loading-submessage').text('WordPress encountered a critical error. Check server logs for details.');
+                                    }
+                                }
+                            } catch (e) {
+                                console.error("Error parsing response:", e);
+                            }
+                        }
+                        
+                        // Hide overlay after 3 seconds
+                        setTimeout(function() {
+                            hideOverlay();
+                        }, 3000);
+                    }
                 });
             });
         });
@@ -514,7 +555,7 @@
             var $code = $(this).siblings('code');
             var text = $code.text();
             
-            // Create temp element to copy from
+            // Create a temporary element to copy from
             var $temp = $('<textarea>');
             $('body').append($temp);
             $temp.val(text).select();

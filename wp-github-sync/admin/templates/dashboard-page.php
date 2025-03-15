@@ -125,10 +125,21 @@ $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] :
                     
                         <div class="wp-github-sync-action-buttons">
                             <?php if ($update_available && !$deployment_in_progress) : ?>
-                                <button class="wp-github-sync-button success wp-github-sync-deploy">
-                                    <span class="dashicons dashicons-cloud-upload"></span>
-                                    <?php _e('Deploy Latest Changes', 'wp-github-sync'); ?>
-                                </button>
+                                <div class="wp-github-sync-button-group">
+                                    <button class="wp-github-sync-button success wp-github-sync-deploy">
+                                        <span class="dashicons dashicons-cloud-upload"></span>
+                                        <?php _e('Deploy Latest Changes', 'wp-github-sync'); ?>
+                                    </button>
+                                    <button class="wp-github-sync-button success wp-github-sync-dropdown-toggle">
+                                        <span class="dashicons dashicons-arrow-down-alt2"></span>
+                                    </button>
+                                    <div class="wp-github-sync-dropdown-menu">
+                                        <a href="#" class="wp-github-sync-background-deploy">
+                                            <span class="dashicons dashicons-backup"></span>
+                                            <?php _e('Run in Background', 'wp-github-sync'); ?>
+                                        </a>
+                                    </div>
+                                </div>
                             <?php endif; ?>
                             
                             <button class="wp-github-sync-button secondary wp-github-sync-check-updates">
@@ -136,10 +147,21 @@ $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] :
                                 <?php _e('Check for Updates', 'wp-github-sync'); ?>
                             </button>
                             
-                            <button class="wp-github-sync-button wp-github-sync-full-sync">
-                                <span class="dashicons dashicons-upload"></span>
-                                <?php _e('Sync All to GitHub', 'wp-github-sync'); ?>
-                            </button>
+                            <div class="wp-github-sync-button-group">
+                                <button class="wp-github-sync-button wp-github-sync-full-sync">
+                                    <span class="dashicons dashicons-upload"></span>
+                                    <?php _e('Sync All to GitHub', 'wp-github-sync'); ?>
+                                </button>
+                                <button class="wp-github-sync-button wp-github-sync-dropdown-toggle">
+                                    <span class="dashicons dashicons-arrow-down-alt2"></span>
+                                </button>
+                                <div class="wp-github-sync-dropdown-menu">
+                                    <a href="#" class="wp-github-sync-background-full-sync">
+                                        <span class="dashicons dashicons-backup"></span>
+                                        <?php _e('Run in Background', 'wp-github-sync'); ?>
+                                    </a>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

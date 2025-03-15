@@ -84,6 +84,38 @@
             });
         });
         
+        // Background deploy option
+        $('.wp-github-sync-background-deploy').on('click', function(e) {
+            e.preventDefault();
+            
+            if (!confirm(wpGitHubSync.strings.confirmDeploy + ' ' + wpGitHubSync.strings.backgroundProcessInfo)) {
+                return;
+            }
+            
+            showOverlay(wpGitHubSync.strings.deploying + ' ' + wpGitHubSync.strings.inBackground);
+            
+            $.ajax({
+                url: wpGitHubSync.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'wp_github_sync_background_deploy',
+                    nonce: nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        showOverlay(wpGitHubSync.strings.backgroundSyncStarted, response.data.message);
+                        
+                        // Set up progress polling for background deploy
+                        setupBackgroundSyncProgress();
+                    } else {
+                        showOverlay(wpGitHubSync.strings.error, response.data.message);
+                        setTimeout(hideOverlay, 3000);
+                    }
+                },
+                error: handleAjaxError
+            });
+        });
+        
         // Check for updates button
         $('.wp-github-sync-check-updates').on('click', function() {
             showOverlay(wpGitHubSync.strings.checkingUpdates);
@@ -139,6 +171,108 @@
                 error: handleAjaxError
             });
         });
+        
+        // Background full sync option
+        $('.wp-github-sync-background-full-sync').on('click', function(e) {
+            e.preventDefault();
+            
+            if (!confirm(wpGitHubSync.strings.confirmFullSync + ' ' + wpGitHubSync.strings.backgroundProcessInfo)) {
+                return;
+            }
+            
+            showOverlay(wpGitHubSync.strings.syncing + ' ' + wpGitHubSync.strings.inBackground);
+            
+            $.ajax({
+                url: wpGitHubSync.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'wp_github_sync_background_full_sync',
+                    nonce: nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        showOverlay(wpGitHubSync.strings.backgroundSyncStarted, response.data.message);
+                        
+                        // Set up progress polling for background sync
+                        setupBackgroundSyncProgress();
+                    } else {
+                        showOverlay(wpGitHubSync.strings.error, response.data.message);
+                        setTimeout(hideOverlay, 3000);
+                    }
+                },
+                error: handleAjaxError
+            });
+        });
+        
+        // Toggle dropdown
+        $('.wp-github-sync-dropdown-toggle').on('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            $(this).siblings('.wp-github-sync-dropdown-menu').toggleClass('active');
+        });
+        
+        // Close dropdown when clicking outside
+        $(document).on('click', function() {
+            $('.wp-github-sync-dropdown-menu').removeClass('active');
+        });
+        
+        // Setup background sync progress monitoring
+        function setupBackgroundSyncProgress() {
+            let progressCheck = setInterval(function() {
+                $.ajax({
+                    url: wpGitHubSync.ajaxUrl,
+                    type: 'POST',
+                    data: {
+                        action: 'wp_github_sync_check_progress',
+                        nonce: nonce
+                    },
+                    success: function(response) {
+                        if (response.success && response.data.status) {
+                            updateProgressOverlay(response.data);
+                            
+                            // If process completed or failed, stop checking
+                            if (response.data.status === 'complete' || response.data.status === 'failed') {
+                                clearInterval(progressCheck);
+                                
+                                if (response.data.status === 'complete') {
+                                    setTimeout(function() {
+                                        window.location.reload();
+                                    }, 2000);
+                                } else {
+                                    setTimeout(hideOverlay, 5000); // Hide overlay after 5 seconds if failed
+                                }
+                            }
+                        }
+                    }
+                });
+            }, 2000); // Check every 2 seconds
+        }
+        
+        // Update progress overlay with background process information
+        function updateProgressOverlay(progressData) {
+            const step = progressData.step;
+            const detail = progressData.detail || '';
+            const statusText = progressData.status === 'complete' ? 'Success!' : 
+                              (progressData.status === 'failed' ? 'Error:' : 'Processing:');
+            
+            $('.wp-github-sync-loading-message').text(statusText);
+            $('.wp-github-sync-loading-submessage').text(detail);
+            
+            // If we have stats, show additional details
+            if (progressData.stats) {
+                let statsText = '';
+                if (progressData.stats.files_included > 0) {
+                    statsText += 'Files included: ' + progressData.stats.files_included + ' ';
+                }
+                if (progressData.stats.files_skipped > 0) {
+                    statsText += 'Files skipped: ' + progressData.stats.files_skipped + ' ';
+                }
+                if (statsText) {
+                    $('.wp-github-sync-loading-submessage').append('<br><small>' + statsText + '</small>');
+                }
+            }
+        }
+        
     }
     
     // Branch management functionality

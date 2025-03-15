@@ -975,3 +975,59 @@ mark {
     color: #f0c674;
     font-weight: bold;
 }
+
+/* Button groups and dropdowns */
+.wp-github-sync-button-group {
+    display: inline-flex;
+    position: relative;
+}
+
+.wp-github-sync-button-group .wp-github-sync-button {
+    border-radius: 4px 0 0 4px;
+}
+
+.wp-github-sync-button-group .wp-github-sync-dropdown-toggle {
+    border-radius: 0 4px 4px 0;
+    padding: 8px 10px;
+    margin-left: 1px;
+}
+
+.wp-github-sync-button-group .wp-github-sync-dropdown-toggle .dashicons {
+    margin-right: 0;
+}
+
+.wp-github-sync-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: white;
+    border: 1px solid var(--wp-github-sync-border);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    min-width: 180px;
+    z-index: 100;
+    display: none;
+    margin-top: 4px;
+}
+
+.wp-github-sync-dropdown-menu.active {
+    display: block;
+}
+
+.wp-github-sync-dropdown-menu a {
+    display: flex;
+    align-items: center;
+    padding: 10px 15px;
+    color: #333;
+    text-decoration: none;
+    transition: background-color 0.2s ease;
+}
+
+.wp-github-sync-dropdown-menu a:hover {
+    background-color: #f5f6f7;
+}
+
+.wp-github-sync-dropdown-menu a .dashicons {
+    margin-right: 8px;
+    color: var(--wp-github-sync-primary);
+}

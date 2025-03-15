@@ -51,6 +51,13 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
             </div>
         </div>
         
+        <div class="wp-github-sync-toggle-option">
+            <input type="checkbox" id="run_in_background" name="run_in_background" value="1" class="wp-github-sync-toggle"/>
+            <label for="run_in_background"><?php _e('Run sync in background (bypasses PHP timeout limits)', 'wp-github-sync'); ?></label>
+            <div class="wp-github-sync-toggle-slider"></div>
+            <p class="description" style="margin-top: 5px;"><?php _e('Enable this option for large repositories or if you experience timeout errors', 'wp-github-sync'); ?></p>
+        </div>
+        
         <button type="button" id="initial_sync_button" class="wp-github-sync-button primary wp-github-sync-initial-sync-button">
             <span class="dashicons dashicons-update"></span>
             <?php _e('Start Initial Sync', 'wp-github-sync'); ?>
