@@ -1,0 +1,483 @@
+/**
+ * Jobs Monitor styles for WordPress GitHub Sync plugin.
+ */
+
+/* Jobs Monitor Header */
+.wp-github-sync-jobs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 20px 0;
+    padding-bottom: 15px;
+    border-bottom: 1px solid var(--wp-github-sync-border);
+    position: relative;
+}
+
+.wp-github-sync-job-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.wp-github-sync-job-info {
+    background: #f9fafb;
+    padding: 10px 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    color: #5a6070;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    border: 1px solid #e5e7eb;
+}
+
+/* Job Status Controls */
+.wp-github-sync-card-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    background: var(--wp-github-sync-light);
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--wp-github-sync-border);
+}
+
+.wp-github-sync-card-controls label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    color: #4b5563;
+    cursor: pointer;
+}
+
+.wp-github-sync-card-controls button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    font-weight: 500;
+    border-radius: 6px;
+    border: 1px solid #d2d4d7;
+    background: #fff;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.wp-github-sync-card-controls button:hover {
+    background: #f8f9fa;
+    border-color: #c0c4c9;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 5px rgba(0,0,0,0.08);
+}
+
+.wp-github-sync-card-controls button:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.wp-github-sync-card-controls .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+.refresh-status {
+    font-style: italic;
+    color: #64748b;
+    font-size: 13px;
+}
+
+.refresh-info {
+    color: #64748b;
+    font-size: 13px;
+    margin-left: auto;
+}
+
+/* Active Job Cards */
+.wp-github-sync-active-job-card {
+    background: #fff;
+    border-left: 4px solid var(--wp-github-sync-primary);
+    padding: 18px;
+    margin-bottom: 20px;
+    border-radius: 0 8px 8px 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    border-top: 1px solid var(--wp-github-sync-border);
+    border-right: 1px solid var(--wp-github-sync-border);
+    border-bottom: 1px solid var(--wp-github-sync-border);
+    animation: fadeIn 0.3s ease;
+}
+
+.wp-github-sync-active-job-card h3.job-title {
+    margin-top: 0;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    color: #1e293b;
+    border-bottom: 1px solid #f0f0f5;
+}
+
+.wp-github-sync-active-job-card h3.job-title .dashicons {
+    color: var(--wp-github-sync-primary);
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+}
+
+.job-details {
+    padding-left: 28px;
+}
+
+.job-details p {
+    margin-bottom: 12px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #4b5563;
+}
+
+.job-details p strong {
+    color: #1e293b;
+    font-weight: 600;
+    display: inline-block;
+    min-width: 80px;
+}
+
+.job-actions {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #f0f0f5;
+    display: flex;
+    gap: 12px;
+}
+
+/* Auto-refresh Toggle */
+.wp-github-sync-auto-refresh-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.wp-github-sync-auto-refresh-toggle:hover {
+    background: #f3f4f6;
+}
+
+.wp-github-sync-auto-refresh-toggle.active {
+    background-color: #ecfdf5;
+    border-color: #10b981;
+}
+
+.wp-github-sync-auto-refresh-toggle .dashicons {
+    color: #10b981;
+    transition: transform 0.3s ease;
+}
+
+.wp-github-sync-auto-refresh-toggle.active .dashicons {
+    animation: spin 1.5s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Spinning animation */
+.wp-github-spin {
+    animation: wp-github-sync-spin 2s linear infinite;
+}
+
+@keyframes wp-github-sync-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Scheduled Jobs Table */
+.wp-github-sync-scheduled-jobs {
+    max-height: 500px;
+    overflow-y: auto;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.wp-github-sync-scheduled-jobs table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    table-layout: fixed;
+}
+
+.wp-github-sync-scheduled-jobs th {
+    position: sticky;
+    top: 0;
+    background: #f9fafb;
+    padding: 14px 18px;
+    text-align: left;
+    font-weight: 600;
+    color: #374151;
+    border-bottom: 1px solid #e5e7eb;
+    z-index: 1;
+    font-size: 14px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+
+.wp-github-sync-scheduled-jobs td {
+    padding: 14px 18px;
+    vertical-align: top;
+    border-bottom: 1px solid #f0f0f5;
+    word-break: break-word;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.wp-github-sync-scheduled-jobs tr:last-child td {
+    border-bottom: none;
+}
+
+.wp-github-sync-scheduled-jobs tr:hover {
+    background-color: #f8fafc;
+}
+
+/* JSON Formatting */
+.wp-github-sync-scheduled-jobs pre {
+    background: #f5f5f5;
+    padding: 8px 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+    max-width: 100%;
+    margin: 0;
+    font-size: 12px;
+    color: #334155;
+    border: 1px solid #e5e7eb;
+}
+
+/* Card Actions */
+.wp-github-sync-card-actions {
+    padding: 16px 20px;
+    border-top: 1px solid #f0f0f5;
+    text-align: right;
+    background: #f9fafb;
+    border-radius: 0 0 8px 8px;
+}
+
+/* Information Box */
+.wp-github-sync-info-box {
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    border-radius: 8px;
+    margin: 20px 0;
+}
+
+.wp-github-sync-info-box-icon {
+    display: flex;
+    align-items: flex-start;
+}
+
+.wp-github-sync-info-box-icon .dashicons {
+    font-size: 24px;
+    width: 24px;
+    height: 24px;
+}
+
+.wp-github-sync-info-box-content {
+    flex: 1;
+}
+
+.wp-github-sync-info-box-title {
+    margin: 0 0 8px 0;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.wp-github-sync-info-box-message {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.wp-github-sync-info-box.info {
+    background-color: #eff6ff;
+    border-left: 4px solid var(--wp-github-sync-info);
+}
+
+.wp-github-sync-info-box.info .wp-github-sync-info-box-icon .dashicons {
+    color: var(--wp-github-sync-info);
+}
+
+.wp-github-sync-info-box.success {
+    background-color: #ecfdf5;
+    border-left: 4px solid var(--wp-github-sync-success);
+}
+
+.wp-github-sync-info-box.success .wp-github-sync-info-box-icon .dashicons {
+    color: var(--wp-github-sync-success);
+}
+
+.wp-github-sync-info-box.warning {
+    background-color: #fffbeb;
+    border-left: 4px solid var(--wp-github-sync-warning);
+}
+
+.wp-github-sync-info-box.warning .wp-github-sync-info-box-icon .dashicons {
+    color: var(--wp-github-sync-warning);
+}
+
+.wp-github-sync-info-box.error {
+    background-color: #fef2f2;
+    border-left: 4px solid var(--wp-github-sync-error);
+}
+
+.wp-github-sync-info-box.error .wp-github-sync-info-box-icon .dashicons {
+    color: var(--wp-github-sync-error);
+}
+
+/* Job Type List */
+.wp-github-sync-info-list {
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
+}
+
+.wp-github-sync-info-list li {
+    margin-bottom: 12px;
+    padding-left: 24px;
+    position: relative;
+    line-height: 1.6;
+    color: #4b5563;
+    font-size: 14px;
+}
+
+.wp-github-sync-info-list li:before {
+    content: "•";
+    position: absolute;
+    left: 8px;
+    top: 0;
+    color: var(--wp-github-sync-primary);
+    font-weight: bold;
+}
+
+.wp-github-sync-info-list li strong {
+    color: #1e293b;
+    font-weight: 600;
+}
+
+/* Card Header with Action Button Group */
+.wp-github-sync-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: #f9fafb;
+    border-bottom: 1px solid var(--wp-github-sync-border);
+}
+
+/* Special Status Colors */
+.chunked-sync-status {
+    font-weight: 600;
+    color: var(--wp-github-sync-primary);
+}
+
+/* Buttons */
+.wp-github-sync-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 14px;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-weight: 500;
+    transition: var(--wp-github-sync-transition);
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border: 1px solid transparent;
+    text-decoration: none;
+}
+
+.wp-github-sync-button.primary {
+    background: var(--wp-github-sync-primary);
+    color: white;
+    border-color: var(--wp-github-sync-primary);
+}
+
+.wp-github-sync-button.primary:hover {
+    background: var(--wp-github-sync-primary-dark);
+    border-color: var(--wp-github-sync-primary-dark);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 6px rgba(0, 115, 170, 0.2);
+}
+
+.wp-github-sync-button.secondary {
+    background: white;
+    color: #4b5563;
+    border-color: #e5e7eb;
+}
+
+.wp-github-sync-button.secondary:hover {
+    background: var(--wp-github-sync-light);
+    color: #1f2937;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
+}
+
+.wp-github-sync-button.danger {
+    background: #fee2e2;
+    color: #b91c1c;
+    border-color: #fecaca;
+}
+
+.wp-github-sync-button.danger:hover {
+    background: #fecaca;
+    border-color: #ef4444;
+    color: #991b1b;
+}
+
+.wp-github-sync-button.warning {
+    background: #fffbeb;
+    color: #d97706;
+    border-color: #fef3c7;
+}
+
+.wp-github-sync-button.warning:hover {
+    background: #fef3c7;
+    border-color: #f59e0b;
+    color: #b45309;
+}
+
+/* Responsive Adjustments */
+@media screen and (max-width: 782px) {
+    .wp-github-sync-card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 15px;
+    }
+    
+    .wp-github-sync-card-controls {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    
+    .refresh-info {
+        margin-left: 0;
+    }
+    
+    .job-details {
+        padding-left: 0;
+    }
+}

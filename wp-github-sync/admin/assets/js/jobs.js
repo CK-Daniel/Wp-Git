@@ -5,11 +5,12 @@ jQuery(document).ready(function($) {
     // Initialize refresh timer
     let refreshTimerId;
     const refreshInterval = 5000; // 5 seconds
+    let autoRefreshEnabled = true;
     
     // Function to refresh the jobs page
     function refreshJobsStatus() {
         // Only refresh if auto-refresh is enabled
-        if ($('#auto-refresh-toggle').is(':checked')) {
+        if (autoRefreshEnabled) {
             $.ajax({
                 url: ajaxurl,
                 type: 'POST',
@@ -33,8 +34,10 @@ jQuery(document).ready(function($) {
                         // Increment refresh count
                         updateRefreshCounter();
                         
-                        // Schedule next refresh
-                        scheduleNextRefresh();
+                        // Schedule next refresh if auto-refresh is still enabled
+                        if (autoRefreshEnabled) {
+                            scheduleNextRefresh();
+                        }
                     } else {
                         console.error('Error checking jobs status:', response);
                     }
@@ -42,8 +45,10 @@ jQuery(document).ready(function($) {
                 error: function(xhr, status, error) {
                     console.error('AJAX error:', status, error);
                     
-                    // Even on error, schedule next refresh
-                    scheduleNextRefresh();
+                    // Even on error, schedule next refresh if auto-refresh is enabled
+                    if (autoRefreshEnabled) {
+                        scheduleNextRefresh();
+                    }
                 }
             });
         }
@@ -61,21 +66,23 @@ jQuery(document).ready(function($) {
         refreshTimerId = setTimeout(refreshJobsStatus, refreshInterval);
     }
     
-    // Toggle auto-refresh when checkbox changes
-    $('#auto-refresh-toggle').on('change', function() {
-        if ($(this).is(':checked')) {
+    // Toggle auto-refresh when clicking the toggle button
+    $('.wp-github-sync-auto-refresh-toggle').on('click', function() {
+        autoRefreshEnabled = !autoRefreshEnabled;
+        
+        if (autoRefreshEnabled) {
             // Start auto-refresh
-            $('.refresh-status').text('Auto-refresh enabled');
+            $(this).addClass('active');
             scheduleNextRefresh();
         } else {
             // Stop auto-refresh
-            $('.refresh-status').text('Auto-refresh disabled');
+            $(this).removeClass('active');
             clearTimeout(refreshTimerId);
         }
     });
     
-    // Initial refresh if auto-refresh is enabled
-    if ($('#auto-refresh-toggle').is(':checked')) {
+    // Initial auto-refresh
+    if (autoRefreshEnabled) {
         scheduleNextRefresh();
     }
     

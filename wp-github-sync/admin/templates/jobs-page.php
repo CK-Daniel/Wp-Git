@@ -20,21 +20,26 @@ if (!wp_github_sync_current_user_can()) {
     
     <?php settings_errors('wp_github_sync_jobs'); ?>
     
+    <div class="wp-github-sync-jobs-header">
+        <div class="wp-github-sync-job-actions">
+            <button type="button" id="manual-refresh-button" class="button">
+                <span class="dashicons dashicons-update"></span>
+                <?php _e('Refresh Now', 'wp-github-sync'); ?>
+            </button>
+            <div class="wp-github-sync-auto-refresh-toggle active">
+                <span class="dashicons dashicons-update"></span>
+                <span class="wp-github-sync-auto-refresh-label"><?php _e('Auto-refresh', 'wp-github-sync'); ?></span>
+            </div>
+        </div>
+        
+        <div class="wp-github-sync-job-info">
+            <span class="refresh-info">(<?php _e('Refreshed', 'wp-github-sync'); ?>: <span id="refresh-count">0</span> <?php _e('times', 'wp-github-sync'); ?>)</span>
+        </div>
+    </div>
+    
     <div class="wp-github-sync-card">
         <div class="wp-github-sync-card-header">
             <h2><span class="dashicons dashicons-update"></span> <?php _e('Active Background Jobs', 'wp-github-sync'); ?></h2>
-            
-            <div class="wp-github-sync-card-controls">
-                <label for="auto-refresh-toggle">
-                    <input type="checkbox" id="auto-refresh-toggle" checked="checked">
-                    <?php _e('Auto-refresh', 'wp-github-sync'); ?>
-                </label>
-                <button type="button" id="manual-refresh-button" class="button button-secondary">
-                    <span class="dashicons dashicons-update"></span> <?php _e('Refresh Now', 'wp-github-sync'); ?>
-                </button>
-                <span class="refresh-status"><?php _e('Auto-refresh enabled', 'wp-github-sync'); ?></span>
-                <span class="refresh-info">(<?php _e('Refreshed', 'wp-github-sync'); ?>: <span id="refresh-count">0</span> <?php _e('times', 'wp-github-sync'); ?>)</span>
-            </div>
         </div>
         
         <div class="wp-github-sync-card-content">
@@ -191,46 +196,48 @@ if (!wp_github_sync_current_user_can()) {
         
         <div class="wp-github-sync-card-content">
             <?php if (!empty($cron_events)): ?>
-                <table class="wp-list-table widefat fixed striped">
-                    <thead>
-                        <tr>
-                            <th><?php _e('Hook', 'wp-github-sync'); ?></th>
-                            <th><?php _e('Next Run', 'wp-github-sync'); ?></th>
-                            <th><?php _e('Arguments', 'wp-github-sync'); ?></th>
-                            <th><?php _e('Interval', 'wp-github-sync'); ?></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($cron_events as $event): ?>
+                <div class="wp-github-sync-scheduled-jobs">
+                    <table>
+                        <thead>
                             <tr>
-                                <td><?php echo esc_html($event['hook']); ?></td>
-                                <td>
-                                    <?php echo esc_html($event['next_run']); ?>
-                                    <br>
-                                    <small>(<?php echo esc_html($event['scheduled']); ?>)</small>
-                                </td>
-                                <td>
-                                    <?php 
-                                    if (!empty($event['args'])) {
-                                        echo '<pre>' . esc_html(json_encode($event['args'], JSON_PRETTY_PRINT)) . '</pre>';
-                                    } else {
-                                        echo '<em>' . __('No arguments', 'wp-github-sync') . '</em>';
-                                    }
-                                    ?>
-                                </td>
-                                <td>
-                                    <?php 
-                                    if ($event['interval'] > 0) {
-                                        echo esc_html(human_time_diff(0, $event['interval']));
-                                    } else {
-                                        echo '<em>' . __('One-time', 'wp-github-sync') . '</em>';
-                                    }
-                                    ?>
-                                </td>
+                                <th><?php _e('Hook', 'wp-github-sync'); ?></th>
+                                <th><?php _e('Next Run', 'wp-github-sync'); ?></th>
+                                <th><?php _e('Arguments', 'wp-github-sync'); ?></th>
+                                <th><?php _e('Interval', 'wp-github-sync'); ?></th>
                             </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($cron_events as $event): ?>
+                                <tr>
+                                    <td><?php echo esc_html($event['hook']); ?></td>
+                                    <td>
+                                        <?php echo esc_html($event['next_run']); ?>
+                                        <br>
+                                        <small>(<?php echo esc_html($event['scheduled']); ?>)</small>
+                                    </td>
+                                    <td>
+                                        <?php 
+                                        if (!empty($event['args'])) {
+                                            echo '<pre>' . esc_html(json_encode($event['args'], JSON_PRETTY_PRINT)) . '</pre>';
+                                        } else {
+                                            echo '<em>' . __('No arguments', 'wp-github-sync') . '</em>';
+                                        }
+                                        ?>
+                                    </td>
+                                    <td>
+                                        <?php 
+                                        if ($event['interval'] > 0) {
+                                            echo esc_html(human_time_diff(0, $event['interval']));
+                                        } else {
+                                            echo '<em>' . __('One-time', 'wp-github-sync') . '</em>';
+                                        }
+                                        ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
                 
                 <div class="wp-github-sync-card-actions">
                     <?php 
@@ -307,76 +314,4 @@ if (!wp_github_sync_current_user_can()) {
     </div>
 </div>
 
-<style>
-/* Jobs monitor specific styles */
-.wp-github-sync-active-job-card {
-    background: #f8f8f8;
-    border-left: 4px solid #0073aa;
-    padding: 15px;
-    margin-bottom: 20px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-}
-
-.wp-github-sync-active-job-card h3.job-title {
-    margin-top: 0;
-    display: flex;
-    align-items: center;
-}
-
-.wp-github-sync-active-job-card h3.job-title .dashicons {
-    margin-right: 5px;
-}
-
-.wp-github-spin {
-    animation: wp-github-sync-spin 2s linear infinite;
-}
-
-@keyframes wp-github-sync-spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-.job-details {
-    margin-left: 20px;
-}
-
-.job-actions {
-    margin-top: 15px;
-}
-
-.wp-github-sync-card-controls {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 15px;
-}
-
-.refresh-status {
-    font-style: italic;
-    color: #666;
-}
-
-.refresh-info {
-    font-size: 0.9em;
-    color: #666;
-}
-
-pre {
-    background: #f5f5f5;
-    padding: 5px;
-    border-radius: 3px;
-    overflow-x: auto;
-    max-width: 300px;
-    margin: 0;
-}
-
-/* List styling */
-.wp-github-sync-info-list {
-    list-style-type: disc;
-    margin-left: 20px;
-}
-
-.wp-github-sync-info-list li {
-    margin-bottom: 10px;
-}
-</style>
+<!-- Jobs monitor styles loaded from jobs.css -->

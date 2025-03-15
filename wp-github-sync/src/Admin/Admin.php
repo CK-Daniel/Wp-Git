@@ -104,6 +104,17 @@ class Admin {
                 'all'
             );
         }
+        
+        // Load Jobs Monitor specific CSS
+        if (strpos($screen->id, 'wp-github-sync-jobs') !== false) {
+            wp_enqueue_style(
+                'wp-github-sync-jobs',
+                WP_GITHUB_SYNC_URL . 'admin/assets/css/jobs.css',
+                array('wp-github-sync-admin'),
+                $this->version,
+                'all'
+            );
+        }
     }
 
     /**

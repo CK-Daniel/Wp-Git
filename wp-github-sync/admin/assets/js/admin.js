@@ -102,7 +102,7 @@
         var subStepStartTime = 0;
         
         // Progress update function
-        function updateProgress(step, detail, subStep) {
+        function updateProgress(step, detail, subStep, packageInfo) {
             if (step < 0 || step >= syncSteps.length) return;
             
             var currentStep = syncSteps[step];
@@ -153,6 +153,34 @@
                 }
             } else {
                 $('.wp-github-sync-loading-submessage').text(currentStep.name);
+            }
+            
+            // Handle package-specific progress data
+            if (packageInfo) {
+                // Create package progress section if it doesn't exist
+                if ($('.chunked-sync-progress-detail').length === 0) {
+                    $('.wp-github-sync-loading-submessage').after(
+                        '<div class="chunked-sync-progress-detail">' +
+                        '<p><strong>Package:</strong> <span id="current-package"></span></p>' +
+                        '<p><strong>Item:</strong> <span id="current-item"></span></p>' +
+                        '<div class="package-progress-bar"><div class="progress-inner"></div></div>' +
+                        '</div>'
+                    );
+                }
+                
+                // Update package and item information
+                if (packageInfo.current_package) {
+                    $('#current-package').text(packageInfo.current_package);
+                }
+                
+                if (packageInfo.current_item) {
+                    $('#current-item').text(packageInfo.current_item);
+                }
+                
+                // Update progress bar if percentage is available
+                if (packageInfo.progress_percentage) {
+                    $('.chunked-sync-progress-detail .progress-inner').css('width', packageInfo.progress_percentage + '%');
+                }
             }
             
             // Update progress bar
@@ -345,7 +373,20 @@
                                     noProgressCount++;
                                 }
                                 
-                                updateProgress(newStep, newDetail, subStep);
+                                // Extract package-specific information if available
+                                var packageInfo = null;
+                                if (progressData.data.current_package || 
+                                    progressData.data.current_item || 
+                                    progressData.data.progress_percentage) {
+                                    
+                                    packageInfo = {
+                                        current_package: progressData.data.current_package,
+                                        current_item: progressData.data.current_item,
+                                        progress_percentage: progressData.data.progress_percentage
+                                    };
+                                }
+                                
+                                updateProgress(newStep, newDetail, subStep, packageInfo);
                                 
                                 // Auto advance sub-steps if we're stuck at the "Creating initial commit" stage
                                 if (newStep === 5 && subStep === undefined && noProgressCount > 2) {

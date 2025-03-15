@@ -25,6 +25,28 @@ $has_synced = !empty(get_option('wp_github_sync_last_deployed_commit', ''));
 $site_url = parse_url(get_site_url(), PHP_URL_HOST);
 $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
 ?>
+<style>
+    .package-progress-bar {
+        width: 100%;
+        height: 20px;
+        background-color: #f1f1f1;
+        border-radius: 4px;
+        margin: 10px 0;
+        overflow: hidden;
+    }
+    .progress-inner {
+        height: 100%;
+        background-color: #0073aa;
+        transition: width 0.3s ease;
+    }
+    .chunked-sync-progress-detail {
+        margin-top: 15px;
+        padding: 10px;
+        background-color: #f9f9f9;
+        border-radius: 4px;
+    }
+</style>
+
 <div class="wrap wp-github-sync-wrap">
     <h1><?php _e('GitHub Sync Settings', 'wp-github-sync'); ?></h1>
     

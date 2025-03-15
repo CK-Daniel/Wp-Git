@@ -93,10 +93,14 @@ class Repository_Uploader {
      * @param string $directory      Directory containing files to upload
      * @param string $branch         Branch to upload to
      * @param string $commit_message Commit message
+     * @param string $github_path    Optional GitHub path where files should be placed
      * @return bool|\WP_Error True on success or WP_Error on failure
      */
-    public function upload_files_to_github($directory, $branch, $commit_message) {
+    public function upload_files_to_github($directory, $branch, $commit_message, $github_path = '') {
         wp_github_sync_log("Starting GitHub upload process for branch: {$branch}", 'info');
+        if (!empty($github_path)) {
+            wp_github_sync_log("Using custom GitHub path: {$github_path}", 'info');
+        }
         
         // Check if directory exists and is readable
         if (!is_dir($directory) || !is_readable($directory)) {
@@ -187,7 +191,7 @@ class Repository_Uploader {
         wp_github_sync_log("Got base tree SHA: {$base_tree_sha}", 'debug');
         
         // Step 3: Create tree items from the files in the directory
-        $tree_items = $this->create_tree_items($directory);
+        $tree_items = $this->create_tree_items($directory, $github_path);
         
         if (empty($tree_items)) {
             return new \WP_Error('github_api_error', __('No files to upload', 'wp-github-sync'));
@@ -611,9 +615,10 @@ class Repository_Uploader {
      * Create tree items from files in a directory.
      *
      * @param string $directory The directory containing files to upload.
+     * @param string $github_path Optional path prefix for GitHub
      * @return array The tree items.
      */
-    private function create_tree_items($directory) {
+    private function create_tree_items($directory, $github_path = '') {
         $tree_items = [];
         $files_processed = 0;
         $total_size = 0;
@@ -641,8 +646,21 @@ class Repository_Uploader {
         // Create a reference to $this for use in the closure
         $self = $this;
         
+        // Normalize and sanitize GitHub path if provided
+        if (!empty($github_path)) {
+            // Remove leading and trailing slashes
+            $github_path = trim($github_path, '/');
+            
+            // If it's not empty after trimming, make sure it ends with a slash
+            if (!empty($github_path)) {
+                $github_path = rtrim($github_path, '/') . '/';
+            }
+            
+            wp_github_sync_log("Using normalized GitHub path prefix: {$github_path}", 'debug');
+        }
+        
         // Recursive function to process directories
-        $process_directory = function($dir, $base_path = '') use (&$process_directory, &$tree_items, &$files_processed, &$total_size, &$skipped_files, $upload_limit, $max_files, $self) {
+        $process_directory = function($dir, $base_path = '') use (&$process_directory, &$tree_items, &$files_processed, &$total_size, &$skipped_files, $upload_limit, $max_files, $self, $github_path) {
             wp_github_sync_log("Processing directory: {$dir} (base path: {$base_path})", 'debug');
             
             // Update directory processing progress
@@ -681,12 +699,15 @@ class Repository_Uploader {
                 // Normalize the path to use forward slashes for GitHub
                 $relative_path = str_replace('\\', '/', $relative_path);
                 
+                // Apply GitHub path prefix if provided
+                $github_relative_path = empty($github_path) ? $relative_path : $github_path . $relative_path;
+                
                 if (is_dir($path)) {
                     // For directories, recursively process them
                     wp_github_sync_log("Recursing into directory: {$path}", 'debug');
                     $process_directory($path, $relative_path);
                 } else {
-                    wp_github_sync_log("Processing file: {$path}", 'debug');
+                    wp_github_sync_log("Processing file: {$path} (GitHub path: {$github_relative_path})", 'debug');
                     
                     // Check file limits
                     if ($files_processed >= $max_files) {
@@ -759,9 +780,9 @@ class Repository_Uploader {
                     
                     // Skip if file is too large (GitHub API has a 100MB limit)
                     if ($file_size > 50 * 1024 * 1024) {
-                        wp_github_sync_log("Skipping file {$relative_path} (too large: " . round($file_size/1024/1024, 2) . "MB)", 'warning');
+                        wp_github_sync_log("Skipping file {$github_relative_path} (too large: " . round($file_size/1024/1024, 2) . "MB)", 'warning');
                         $skipped_files[] = [
-                            'path' => $relative_path,
+                            'path' => $github_relative_path,
                             'reason' => 'too_large',
                             'size' => $file_size
                         ];
@@ -772,7 +793,7 @@ class Repository_Uploader {
                     if ($total_size + $file_size > $upload_limit) {
                         wp_github_sync_log("Total upload limit reached. Skipping remaining files.", 'warning');
                         $skipped_files[] = [
-                            'path' => $relative_path,
+                            'path' => $github_relative_path,
                             'reason' => 'upload_limit_reached',
                             'size' => $file_size
                         ];
@@ -785,9 +806,9 @@ class Repository_Uploader {
                         
                         // Skip if file couldn't be read
                         if ($content === false) {
-                            wp_github_sync_log("Skipping file {$relative_path} (couldn't read file)", 'warning');
+                            wp_github_sync_log("Skipping file {$github_relative_path} (couldn't read file)", 'warning');
                             $skipped_files[] = [
-                                'path' => $relative_path,
+                                'path' => $github_relative_path,
                                 'reason' => 'unreadable',
                                 'size' => $file_size
                             ];
@@ -839,7 +860,7 @@ class Repository_Uploader {
                             // For text files, try to detect the best encoding
                             // First check for null bytes which indicate binary content
                             if (strpos($content, "\0") !== false) {
-                                wp_github_sync_log("File {$relative_path} contains null bytes, treating as binary", 'debug');
+                                wp_github_sync_log("File {$github_relative_path} contains null bytes, treating as binary", 'debug');
                                 $blob_data = [
                                     'content' => base64_encode($content),
                                     'encoding' => 'base64'
@@ -884,10 +905,10 @@ class Repository_Uploader {
                         // Update progress before blob creation
                         $self->file_stats['processed_files'] = $files_processed;
                         if ($files_processed % 5 == 0 || $file_ext === 'po') { // Update more frequently for translation files
-                            $self->update_progress(3, "Processing file: {$relative_path} ({$files_processed}/{$self->file_stats['total_files']})");
+                            $self->update_progress(3, "Processing file: {$github_relative_path} ({$files_processed}/{$self->file_stats['total_files']})");
                         }
                         
-                        wp_github_sync_log("Creating blob for file: {$relative_path}", 'debug');
+                        wp_github_sync_log("Creating blob for file: {$github_relative_path}", 'debug');
                         
                         // Handle large files (>3MB) differently - they may need special handling
                         $large_file_threshold = 3 * 1024 * 1024; // 3MB
@@ -936,7 +957,7 @@ class Repository_Uploader {
                         
                         if (is_wp_error($blob)) {
                             $error_message = $blob->get_error_message();
-                            wp_github_sync_log("Failed to create blob for {$relative_path}: " . $error_message, 'error');
+                            wp_github_sync_log("Failed to create blob for {$github_relative_path}: " . $error_message, 'error');
                             
                             // Enhanced retry strategy with more robust error detection
                             // Check for encoding errors, bad requests, or any 400-level errors
@@ -958,7 +979,7 @@ class Repository_Uploader {
                                 
                                 // For .po files or 412 errors, add a status update
                                 if ($file_ext === 'po' || strpos($error_message, '412') !== false) {
-                                    $self->update_progress(3, "Special retry for translation file: {$relative_path}");
+                                    $self->update_progress(3, "Special retry for translation file: {$github_relative_path}");
                                 }
                                 
                                 $retry_blob = $self->api_client->request(
@@ -975,8 +996,8 @@ class Repository_Uploader {
                                 } else if (($file_ext === 'po' || strpos($error_message, '412') !== false) && 
                                          function_exists('mb_convert_encoding')) {
                                     // Second retry attempt with sanitized content for .po files with 412 errors
-                                    wp_github_sync_log("Translation file still failing, trying with sanitized content: {$relative_path}", 'warning');
-                                    $self->update_progress(3, "Final retry with sanitized content: {$relative_path}");
+                                    wp_github_sync_log("Translation file still failing, trying with sanitized content: {$github_relative_path}", 'warning');
+                                    $self->update_progress(3, "Final retry with sanitized content: {$github_relative_path}");
                                     
                                     // Sanitize content using MB functions
                                     $sanitized_content = mb_convert_encoding($content, 'UTF-8', 'UTF-8');
@@ -998,7 +1019,7 @@ class Repository_Uploader {
                                         // Track successful retry
                                         $self->file_stats['blobs_created']++;
                                     } else {
-                                        wp_github_sync_log("Final retry also failed for {$relative_path}", 'error');
+                                        wp_github_sync_log("Final retry also failed for {$github_relative_path}", 'error');
                                         $self->file_stats['failures']++;
                                     }
                                 } else {
@@ -1031,7 +1052,7 @@ class Repository_Uploader {
                                     } else {
                                         wp_github_sync_log("All retries failed: " . $final_retry_blob->get_error_message(), 'error');
                                         $skipped_files[] = [
-                                            'path' => $relative_path,
+                                            'path' => $github_relative_path,
                                             'reason' => 'blob_creation_failed_on_multiple_retries',
                                             'error' => $final_retry_blob->get_error_message()
                                         ];
@@ -1041,7 +1062,7 @@ class Repository_Uploader {
                             } else {
                                 // Non-encoding errors (e.g., permissions, rate limits)
                                 $skipped_files[] = [
-                                    'path' => $relative_path,
+                                    'path' => $github_relative_path,
                                     'reason' => 'blob_creation_failed',
                                     'error' => $error_message
                                 ];
@@ -1055,9 +1076,9 @@ class Repository_Uploader {
                             $file_mode = '100755'; // Executable file
                         }
                         
-                        wp_github_sync_log("Adding tree item for {$relative_path} with SHA: {$blob['sha']}", 'debug');
+                        wp_github_sync_log("Adding tree item for {$github_relative_path} with SHA: {$blob['sha']}", 'debug');
                         $tree_items[] = [
-                            'path' => $relative_path,
+                            'path' => $github_relative_path,
                             'mode' => $file_mode,
                             'type' => 'blob',
                             'sha' => $blob['sha']
@@ -1070,10 +1091,10 @@ class Repository_Uploader {
                             wp_github_sync_log("Processed {$files_processed} files, total size: " . round($total_size/1024/1024, 2) . "MB", 'info');
                         }
                     } catch (\Exception $e) {
-                        wp_github_sync_log("Error processing file {$relative_path}: " . $e->getMessage(), 'error');
+                        wp_github_sync_log("Error processing file {$github_relative_path}: " . $e->getMessage(), 'error');
                         wp_github_sync_log("Exception stack trace: " . $e->getTraceAsString(), 'debug');
                         $skipped_files[] = [
-                            'path' => $relative_path,
+                            'path' => $github_relative_path,
                             'reason' => 'exception',
                             'error' => $e->getMessage()
                         ];

@@ -734,7 +734,7 @@ class Repository {
             $include = $paths_to_sync[$current_path];
             
             if ($include) {
-                $this->update_progress(5, "Processing directory {$current_path_index + 1}/{" . count($path_keys) . "}: {$current_path}");
+                $this->update_progress(5, "Processing directory " . ($current_path_index + 1) . "/" . count($path_keys) . ": " . $current_path);
                 wp_github_sync_log("Processing directory chunk: {$current_path}", 'info');
                 
                 // Using WP_CONTENT_DIR directly to make testing easier
@@ -761,9 +761,6 @@ class Repository {
                     return $this->continue_chunked_sync($sync_state, $branch);
                 }
                 
-                // Safely combine paths to prevent directory traversal
-                $dest_path = $temp_dir . '/' . $this->normalize_path($current_path);
-                
                 // Make sure source path exists and is within the allowed WP directory
                 if (!file_exists($source_path) || !$this->is_within_wordpress($source_path)) {
                     wp_github_sync_log("Source path doesn't exist or is outside WordPress: {$source_path}, skipping", 'warning');
@@ -774,44 +771,206 @@ class Repository {
                     return $this->continue_chunked_sync($sync_state, $branch);
                 }
                 
-                // Create destination directory
-                wp_mkdir_p(dirname($dest_path));
-                
-                // Copy directory in smaller chunks if needed
-                if (!isset($sync_state['subdir_queue'])) {
-                    // Initialize subdirectory queue for chunked processing
-                    $sync_state['subdir_queue'] = [$source_path];
-                    $sync_state['dest_base_path'] = $dest_path;
-                    $sync_state['source_base_path'] = $source_path;
-                    $sync_state['files_copied'] = 0;
-                    update_option('wp_github_sync_chunked_sync_state', $sync_state);
-                }
-                
-                return $this->process_chunked_directory($sync_state, $branch);
+                // Create temporary directory for this package
+                $package_temp_dir = $temp_dir . '/' . $this->normalize_path($current_path);
+                wp_mkdir_p($package_temp_dir);
+
+                // Process this package directory
+                return $this->process_and_push_package($source_path, $package_temp_dir, $current_path, $sync_state, $branch);
             } else {
-                // Path is disabled, skip to next
+                // Skip disabled paths
                 $sync_state['current_path_index'] = $current_path_index + 1;
                 update_option('wp_github_sync_chunked_sync_state', $sync_state);
                 return $this->continue_chunked_sync($sync_state, $branch);
             }
         } else {
-            // All paths processed, move to next stage
-            wp_github_sync_log("All directories processed, moving to upload stage", 'info');
-            
-            // Add standard files like README.md and .gitignore
-            $this->update_progress(6, "Creating standard repository files");
-            $result = $this->create_standard_repo_files($temp_dir, $branch);
-            if (is_wp_error($result)) {
-                $this->recursive_rmdir($temp_dir);
-                delete_option('wp_github_sync_chunked_sync_state');
-                return $result;
-            }
-            
-            // Move to upload stage
-            $sync_state['stage'] = 'uploading_files';
-            $sync_state['progress_step'] = 7;
+            // All paths processed, we're done!
+            wp_github_sync_log("All packages processed successfully", 'info');
+            $this->update_progress(8, "Initial sync completed successfully");
+
+            // Clean up
+            $this->recursive_rmdir($temp_dir);
+            delete_option('wp_github_sync_chunked_sync_state');
+            return true;
+        }
+    }
+    
+    /**
+     * Process and push a package to GitHub
+     *
+     * @param string $source_path The source path of the package
+     * @param string $package_temp_dir The temporary directory for the package
+     * @param string $package_path The package path (relative to wp-content)
+     * @param array $sync_state The sync state
+     * @param string $branch The branch to push to
+     * @return bool|\WP_Error True on success or WP_Error on failure
+     */
+    private function process_and_push_package($source_path, $package_temp_dir, $package_path, $sync_state, $branch) {
+        // Determine package type (theme, plugin, etc)
+        $package_type = $this->get_package_type($package_path);
+
+        // Get individual items to process (e.g., specific plugins or themes)
+        $items = $this->get_package_items($source_path, $package_type);
+
+        // Process one subpackage at a time (e.g., one plugin or theme)
+        if (!isset($sync_state['subpackage_index'])) {
+            $sync_state['subpackage_index'] = 0;
+            $sync_state['subpackage_items'] = $items;
+        }
+
+        $subpackage_index = $sync_state['subpackage_index'];
+        $subpackage_items = $sync_state['subpackage_items'];
+
+        if ($subpackage_index >= count($subpackage_items)) {
+            // All subpackages processed, move to next main package
+            wp_github_sync_log("All items in {$package_path} processed", 'info');
+
+            $sync_state['current_path_index'] = $sync_state['current_path_index'] + 1;
+            unset($sync_state['subpackage_index']);
+            unset($sync_state['subpackage_items']);
             update_option('wp_github_sync_chunked_sync_state', $sync_state);
+
             return $this->continue_chunked_sync($sync_state, $branch);
+        }
+
+        // Get current subpackage
+        $subpackage = $subpackage_items[$subpackage_index];
+        $subpackage_name = basename($subpackage);
+
+        // Create temporary directory for this subpackage
+        $subpackage_temp_dir = $package_temp_dir . '/' . basename($subpackage);
+        wp_mkdir_p($subpackage_temp_dir);
+
+        $this->update_progress(5, "Processing {$package_type}: {$subpackage_name}");
+        wp_github_sync_log("Processing {$package_type}: {$subpackage_name}", 'info');
+
+        // Copy files for this subpackage
+        if (!isset($sync_state['files_copied_for_subpackage'])) {
+            $sync_state['files_copied_for_subpackage'] = 0;
+        }
+
+        // Copy the subpackage files (use a modified copy_directory that returns stats)
+        $copy_result = $this->copy_package_directory($subpackage, $subpackage_temp_dir, $sync_state);
+
+        if (is_wp_error($copy_result)) {
+            // Log error but continue with next subpackage
+            wp_github_sync_log("Error copying {$subpackage_name}: " . $copy_result->get_error_message(), 'error');
+
+            $sync_state['subpackage_index'] = $subpackage_index + 1;
+            unset($sync_state['files_copied_for_subpackage']);
+            update_option('wp_github_sync_chunked_sync_state', $sync_state);
+
+            return $this->continue_chunked_sync($sync_state, $branch);
+        }
+
+        // Files copied successfully, push to GitHub
+        $this->update_progress(6, "Uploading {$package_type}: {$subpackage_name} to GitHub");
+        wp_github_sync_log("Uploading {$package_type}: {$subpackage_name} to GitHub", 'info');
+
+        // Calculate GitHub path for this subpackage
+        $relative_path = $this->get_relative_path_for_github($package_path, $subpackage_name);
+
+        // Create an uploader instance
+        $uploader = new Repository_Uploader($this->api_client);
+
+        // Set progress callback
+        $uploader->set_progress_callback([$this, 'update_progress']);
+
+        // Construct commit message
+        $site_name = isset($sync_state['site_name']) ? $sync_state['site_name'] : get_bloginfo('name');
+        $commit_message = "Sync {$package_type}: {$subpackage_name} from {$site_name}";
+
+        // Upload this subpackage to GitHub
+        $result = $uploader->upload_files_to_github(
+            $subpackage_temp_dir,
+            $branch,
+            $commit_message,
+            $relative_path // Upload to specific path in repo
+        );
+
+        if (is_wp_error($result)) {
+            wp_github_sync_log("Error uploading {$subpackage_name}: " . $result->get_error_message(), 'error');
+            // Continue with next subpackage despite error
+        } else {
+            wp_github_sync_log("Successfully uploaded {$package_type}: {$subpackage_name}", 'info');
+        }
+
+        // Clean up this subpackage's temp dir to save space
+        $this->recursive_rmdir($subpackage_temp_dir);
+
+        // Move to next subpackage
+        $sync_state['subpackage_index'] = $subpackage_index + 1;
+        unset($sync_state['files_copied_for_subpackage']);
+        update_option('wp_github_sync_chunked_sync_state', $sync_state);
+
+        return $this->continue_chunked_sync($sync_state, $branch);
+    }
+
+    /**
+     * Determine package type from path
+     *
+     * @param string $package_path The path to check
+     * @return string The package type
+     */
+    private function get_package_type($package_path) {
+        if (strpos($package_path, 'wp-content/themes') !== false) {
+            return 'theme';
+        } elseif (strpos($package_path, 'wp-content/plugins') !== false) {
+            return 'plugin';
+        } elseif (strpos($package_path, 'wp-content/uploads') !== false) {
+            return 'upload';
+        } else {
+            return 'misc';
+        }
+    }
+
+    /**
+     * Get individual items within a package
+     *
+     * @param string $source_path The source path
+     * @param string $package_type The package type
+     * @return array The list of package items
+     */
+    private function get_package_items($source_path, $package_type) {
+        $items = [];
+
+        if (!is_dir($source_path)) {
+            return $items;
+        }
+
+        $contents = scandir($source_path);
+
+        foreach ($contents as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+
+            $item_path = $source_path . '/' . $item;
+
+            if (is_dir($item_path)) {
+                // For themes and plugins, each directory is its own package
+                $items[] = $item_path;
+            } elseif ($package_type === 'misc') {
+                // For miscellaneous files, treat each file as a package
+                $items[] = $item_path;
+            }
+        }
+
+        return $items;
+    }
+
+    /**
+     * Generate relative GitHub path for a subpackage
+     *
+     * @param string $package_path The package path
+     * @param string $subpackage_name The subpackage name
+     * @return string The relative path for GitHub
+     */
+    private function get_relative_path_for_github($package_path, $subpackage_name) {
+        if (strpos($package_path, 'wp-content/') === 0) {
+            return $package_path;
+        } else {
+            return 'wp-content/' . $package_path;
         }
     }
     
@@ -900,6 +1059,118 @@ class Repository {
         } else {
             // Continue immediately with next directory
             return $this->continue_chunked_sync($sync_state, $branch);
+        }
+    }
+    
+    /**
+     * Optimized directory copy for package processing
+     *
+     * @param string $source The source directory
+     * @param string $dest The destination directory
+     * @param array &$sync_state The sync state by reference
+     * @return bool|\WP_Error True on success or WP_Error on failure
+     */
+    private function copy_package_directory($source, $dest, &$sync_state) {
+        // Start from where we left off
+        $files_copied = $sync_state['files_copied_for_subpackage'] ?? 0;
+        $max_files_per_chunk = 100; // Increased from 50
+
+        // Create destination directory
+        if (!file_exists($dest)) {
+            wp_mkdir_p($dest);
+        }
+
+        try {
+            // Process directory using RecursiveDirectoryIterator for better performance
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($source, \RecursiveDirectoryIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::SELF_FIRST
+            );
+
+            // If we already have a file iterator position, resume from there
+            if (isset($sync_state['file_iterator_position'])) {
+                $position = 0;
+                foreach ($iterator as $item) {
+                    if ($position++ < $sync_state['file_iterator_position']) {
+                        continue; // Skip until we reach the saved position
+                    }
+                    break;
+                }
+            }
+
+            $files_processed = 0;
+
+            foreach ($iterator as $item) {
+                // Track position for resuming
+                if (isset($sync_state['file_iterator_position'])) {
+                    if ($sync_state['file_iterator_position']++ < $position) {
+                        continue; // Already processed
+                    }
+                } else {
+                    $sync_state['file_iterator_position'] = 0;
+                }
+
+                $subpath = $iterator->getSubPathName();
+                $target_path = $dest . '/' . $subpath;
+
+                // Security check
+                if (!$this->is_safe_path($subpath)) {
+                    wp_github_sync_log("Skipping unsafe path: {$subpath}", 'warning');
+                    continue;
+                }
+
+                if ($item->isDir()) {
+                    if (!file_exists($target_path)) {
+                        wp_mkdir_p($target_path);
+                    }
+                } else {
+                    // Skip files with unsafe extensions
+                    $ext = strtolower(pathinfo($subpath, PATHINFO_EXTENSION));
+                    $skip_extensions = array('php', 'phtml', 'php5', 'php7', 'phar', 'phps', 'pht', 'phtm', 'phhtml');
+                    
+                    if (in_array($ext, $skip_extensions)) {
+                        wp_github_sync_log("Skipping file with unsafe extension: {$subpath}", 'warning');
+                        continue;
+                    }
+                    
+                    // GitHub file size limits (skip files over 25MB)
+                    $file_size = $item->getSize();
+                    if ($file_size > 26214400) { // 25MB
+                        wp_github_sync_log("Skipping large file: {$subpath} (" . round($file_size / 1048576, 2) . "MB)", 'warning');
+                        continue;
+                    }
+
+                    // Copy file
+                    if (copy($item->getPathname(), $target_path)) {
+                        $files_copied++;
+                        $files_processed++;
+                        $sync_state['files_copied_for_subpackage'] = $files_copied;
+                        $sync_state['file_iterator_position']++;
+
+                        // Update progress occasionally
+                        if ($files_processed % 20 == 0) {
+                            $this->update_progress(5, "Copied {$files_copied} files from " . basename($source));
+                        }
+
+                        // Break after processing enough files for this chunk
+                        if ($files_processed >= $max_files_per_chunk) {
+                            update_option('wp_github_sync_chunked_sync_state', $sync_state);
+                            wp_schedule_single_event(time(), 'wp_github_sync_process_chunk');
+                            return true; // Continue in next chunk
+                        }
+                    } else {
+                        wp_github_sync_log("Failed to copy file: {$subpath}", 'error');
+                    }
+                }
+            }
+
+            // Completed copying all files
+            unset($sync_state['file_iterator_position']);
+            return true;
+
+        } catch (\Exception $e) {
+            wp_github_sync_log("Exception during directory copy: " . $e->getMessage(), 'error');
+            return new \WP_Error('copy_exception', $e->getMessage());
         }
     }
     
@@ -1053,6 +1324,7 @@ class Repository {
                 if ($item->isDir()) {
                     // Create directory if it doesn't exist
                     if (!file_exists($target_path)) {
+                        wp_mithub_sync_log("Creating directory: {$target_path}", 'debug');
                         wp_mkdir_p($target_path);
                     }
                 } else {
