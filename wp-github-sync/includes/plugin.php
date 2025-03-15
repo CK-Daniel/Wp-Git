@@ -137,15 +137,19 @@ function wp_github_sync_activate() {
     
     // Flush rewrite rules to register the webhook endpoint
     flush_rewrite_rules();
+    
+    // Register chunked sync handler
+    add_action('wp_github_sync_process_chunk', 'wp_github_sync_process_chunk_handler');
 }
 
 /**
  * Plugin deactivation hook.
  */
 function wp_github_sync_deactivate() {
-    // Clear scheduled cron job
+    // Clear scheduled cron jobs
     wp_clear_scheduled_hook('wp_github_sync_cron_hook');
     wp_clear_scheduled_hook('wp_github_sync_background_deploy');
+    wp_clear_scheduled_hook('wp_github_sync_process_chunk');
 
     // Flush rewrite rules
     flush_rewrite_rules();
@@ -180,6 +184,7 @@ function wp_github_sync_uninstall() {
         'wp_github_sync_deployment_history',
         'wp_github_sync_last_backup',
         'wp_github_sync_encryption_key',
+        'wp_github_sync_chunked_sync_state',
     );
 
     // Delete all options
@@ -228,4 +233,61 @@ function wp_github_sync_recursive_rmdir($dir) {
     }
     
     return rmdir($dir);
+}
+
+/**
+ * Handler for processing chunks of the initial sync operation.
+ * This function processes a single chunk of work and then schedules
+ * the next chunk if more work remains.
+ */
+function wp_github_sync_process_chunk_handler() {
+    // Get the current sync state
+    $sync_state = get_option('wp_github_sync_chunked_sync_state', null);
+    
+    // Skip if no sync is in progress
+    if (!$sync_state) {
+        return;
+    }
+    
+    // Check if temp directory still exists
+    if (!empty($sync_state['temp_dir']) && !is_dir($sync_state['temp_dir'])) {
+        wp_github_sync_log("Temporary directory missing, aborting chunked sync", 'error');
+        delete_option('wp_github_sync_chunked_sync_state');
+        return;
+    }
+    
+    // Create the repository object
+    try {
+        $api_client = new \WPGitHubSync\API\API_Client();
+        $repository = new \WPGitHubSync\API\Repository($api_client);
+        
+        // Get the branch
+        $branch = isset($sync_state['branch']) ? $sync_state['branch'] : 'main';
+        
+        // Continue the chunked sync
+        wp_github_sync_log("Continuing chunked sync operation in stage: " . $sync_state['stage'], 'info');
+        $result = $repository->continue_chunked_sync($sync_state, $branch);
+        
+        // If the result is a WP_Error with code 'sync_in_progress', processing is continuing in chunks
+        if (is_wp_error($result) && $result->get_error_code() === 'sync_in_progress') {
+            wp_github_sync_log("Chunk processed successfully, continuing...", 'info');
+        } 
+        // If true, process has more work but next chunk is already scheduled
+        else if ($result === true) {
+            wp_github_sync_log("Chunk processed, next chunk scheduled", 'info');
+        }
+        // If we got an error, log it and stop chunked processing
+        else if (is_wp_error($result)) {
+            wp_github_sync_log("Error during chunked sync: " . $result->get_error_message(), 'error');
+            delete_option('wp_github_sync_chunked_sync_state');
+        }
+        // If we got something else, assume sync is complete
+        else {
+            wp_github_sync_log("Chunked sync completed successfully", 'info');
+            delete_option('wp_github_sync_chunked_sync_state');
+        }
+    } catch (\Exception $e) {
+        wp_github_sync_log("Exception during chunked sync: " . $e->getMessage(), 'error');
+        delete_option('wp_github_sync_chunked_sync_state');
+    }
 }

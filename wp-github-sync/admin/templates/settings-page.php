@@ -436,6 +436,7 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                     action: 'wp_github_sync_initial_sync',
                     create_new_repo: createNewRepo ? 1 : 0,
                     repo_name: repoName,
+                    background: $('#run_in_background').is(':checked') ? 1 : 0,
                     nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce provided by the Admin class
                 },
                 success: function(response) {
@@ -448,69 +449,100 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                             window.location.href = '<?php echo admin_url('admin.php?page=wp-github-sync'); ?>';
                         }, 2000);
                     } else {
-                        $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                        $('.wp-github-sync-loading-submessage').text(response.data.message);
-                        
-                        // Hide overlay after 3 seconds
-                        setTimeout(function() {
-                            $('.wp-github-sync-overlay').hide();
-                        }, 3000);
+                        // Check if this is a "sync in progress" message (special case for chunked sync)
+                        if (response.data && response.data.code === 'sync_in_progress') {
+                            $('.wp-github-sync-loading-message').text('<?php _e('Sync in Progress', 'wp-github-sync'); ?>');
+                            $('.wp-github-sync-loading-submessage').html(response.data.message + '<br><br><?php _e('This will take a few minutes. The page will refresh automatically when complete.', 'wp-github-sync'); ?>');
+                            
+                            // Start polling for completion
+                            setTimeout(checkSyncStatus, 5000);
+                        } else {
+                            $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
+                            $('.wp-github-sync-loading-submessage').text(response.data.message);
+                            
+                            // Hide overlay after 3 seconds
+                            setTimeout(function() {
+                                $('.wp-github-sync-overlay').hide();
+                            }, 3000);
+                        }
                     }
                 },
                 error: function(xhr, status, error) {
                     console.error("AJAX Error:", status, error);
+                    $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
+                    
                     if (xhr.responseText) {
-                        console.error("Response:", xhr.responseText);
-                        
-                        // Try to parse response for more details
                         try {
-                            var responseObj = JSON.parse(xhr.responseText);
-                            if (responseObj && responseObj.data && responseObj.data.message) {
-                                $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                                $('.wp-github-sync-loading-submessage').text(responseObj.data.message);
-                            } else {
-                                // Look for WordPress critical error
-                                if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
-                                    $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                                    $('.wp-github-sync-loading-submessage').text('<?php _e('WordPress encountered a critical error. Check server logs for details.', 'wp-github-sync'); ?>');
-                                } else {
-                                    $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                                    $('.wp-github-sync-loading-submessage').text('<?php _e('An unexpected error occurred. Please check server logs for details.', 'wp-github-sync'); ?>');
-                                }
+                            var respData = JSON.parse(xhr.responseText);
+                            if (respData && respData.data && respData.data.code === 'sync_in_progress') {
+                                // This is a chunked sync in progress - handle it specially
+                                $('.wp-github-sync-loading-message').text('<?php _e('Sync in Progress', 'wp-github-sync'); ?>');
+                                $('.wp-github-sync-loading-submessage').html(respData.data.message + '<br><br><?php _e('This will take a few minutes. The page will refresh automatically when complete.', 'wp-github-sync'); ?>');
+                                
+                                // Start polling for completion
+                                setTimeout(checkSyncStatus, 5000);
+                                return;
                             }
                         } catch (e) {
-                            // If we can't parse JSON, check for WordPress error page
-                            if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
-                                $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                                $('.wp-github-sync-loading-submessage').text('<?php _e('WordPress encountered a critical error. Check server logs for details.', 'wp-github-sync'); ?>');
-                            } else {
-                                $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                                $('.wp-github-sync-loading-submessage').text('<?php _e('An unexpected error occurred. Please check server logs for details.', 'wp-github-sync'); ?>');
-                            }
+                            console.error("Failed to parse response JSON", e);
                         }
-                    } else {
-                        $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                        $('.wp-github-sync-loading-submessage').text('<?php _e('An unexpected error occurred. Please try again.', 'wp-github-sync'); ?>');
                     }
                     
-                    // Hide overlay after a longer time so user can read message
+                    $('.wp-github-sync-loading-submessage').text('<?php _e('An unexpected error occurred. Please try again.', 'wp-github-sync'); ?>');
                     setTimeout(function() {
                         $('.wp-github-sync-overlay').hide();
                     }, 5000);
-                    
-                    // Log error to plugin's log file if possible
-                    if (typeof wpGitHubSync !== 'undefined' && wpGitHubSync.ajaxUrl) {
-                        $.post(wpGitHubSync.ajaxUrl, {
-                            action: 'wp_github_sync_log_error',
-                            nonce: wpGitHubSync.nonce,
-                            error_context: 'Initial sync AJAX error',
-                            error_status: status,
-                            error_message: error
-                        });
-                    }
                 }
             });
+            
+            // Function to check sync status
+            function checkSyncStatus() {
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'wp_github_sync_check_status',
+                        nonce: wpGitHubSync.nonce
+                    },
+                    success: function(statusResponse) {
+                        if (statusResponse.success) {
+                            if (statusResponse.data.in_progress) {
+                                // Still in progress, update status message
+                                if (statusResponse.data.stage && statusResponse.data.progress) {
+                                    $('.wp-github-sync-loading-submessage').html(
+                                        '<?php _e('Stage', 'wp-github-sync'); ?>: ' + statusResponse.data.stage + 
+                                        '<br><?php _e('Progress', 'wp-github-sync'); ?>: ' + statusResponse.data.progress + 
+                                        '<br><br><?php _e('This will take a few minutes. The page will refresh automatically when complete.', 'wp-github-sync'); ?>'
+                                    );
+                                }
+                                // Check again in 5 seconds
+                                setTimeout(checkSyncStatus, 5000);
+                            } else {
+                                // Sync is complete
+                                $('.wp-github-sync-loading-message').text('<?php _e('Sync Completed!', 'wp-github-sync'); ?>');
+                                $('.wp-github-sync-loading-submessage').text('<?php _e('Redirecting to dashboard...', 'wp-github-sync'); ?>');
+                                
+                                // Redirect to dashboard
+                                setTimeout(function() {
+                                    window.location.href = '<?php echo admin_url('admin.php?page=wp-github-sync'); ?>';
+                                }, 2000);
+                            }
+                        } else {
+                            // Error checking status, still retry
+                            console.error("Error checking sync status:", statusResponse);
+                            setTimeout(checkSyncStatus, 8000); // Longer delay on error
+                        }
+                    },
+                    error: function() {
+                        // Network error, still retry
+                        console.error("Network error checking sync status");
+                        setTimeout(checkSyncStatus, 8000); // Longer delay on network error
+                    }
+                });
+            }
         });
+        
+        // End of initial sync AJAX call
         
         // GitHub App Connection testing
         $('.wp-github-sync-test-github-app').on('click', function() {

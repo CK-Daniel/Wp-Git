@@ -232,15 +232,22 @@ class Repository {
     
     /**
      * Create an initial commit with WordPress files to a new repository.
+     * This implementation uses a chunked processing approach to avoid timeouts.
      * 
      * @param string $branch The branch name to commit to.
      * @return bool|\WP_Error True on success or WP_Error on failure.
      */
     public function initial_sync($branch = 'main') {
-        // Enforce timeout limit for this potentially long-running process
+        // Check if we're in a chunked sync process already
+        $sync_state = get_option('wp_github_sync_chunked_sync_state', null);
+        if ($sync_state) {
+            return $this->continue_chunked_sync($sync_state, $branch);
+        }
+        
+        // Enforce reasonable timeout limit without being too aggressive
         $current_timeout = ini_get('max_execution_time');
-        if ($current_timeout > 0 && $current_timeout < 300) { // Only increase if it's not already high enough
-            set_time_limit(300); // 5 minutes should be enough for most syncs
+        if ($current_timeout > 0 && $current_timeout < 120) {
+            set_time_limit(120); // Just 2 minutes per chunk is reasonable
         }
         
         // Also increase memory limit if possible
@@ -274,12 +281,15 @@ class Repository {
             'skipped_files' => []
         ];
         
-        // Create a checkpoint system to potentially resume sync if it fails
-        update_option('wp_github_sync_sync_checkpoint', [
+        // Setup chunked sync state
+        $chunked_sync_state = [
             'timestamp' => time(),
             'branch' => $branch,
-            'stage' => 'starting'
-        ]);
+            'stage' => 'authentication',
+            'progress_step' => 0
+        ];
+        
+        update_option('wp_github_sync_chunked_sync_state', $chunked_sync_state);
         
         // Register a shutdown function to catch fatal errors
         register_shutdown_function(function() {
@@ -288,15 +298,14 @@ class Repository {
                 // Log the fatal error
                 wp_github_sync_log("Fatal error during sync: " . $error['message'] . " in " . $error['file'] . " on line " . $error['line'], 'error');
                 
-                // Update checkpoint with error
-                $checkpoint = get_option('wp_github_sync_sync_checkpoint', []);
-                $checkpoint['fatal_error'] = $error;
-                $checkpoint['status'] = 'failed';
-                update_option('wp_github_sync_sync_checkpoint', $checkpoint);
+                // Update chunked sync state with error
+                $sync_state = get_option('wp_github_sync_chunked_sync_state', []);
+                $sync_state['fatal_error'] = $error;
+                $sync_state['status'] = 'failed';
+                update_option('wp_github_sync_chunked_sync_state', $sync_state);
                 
-                // Clear the in-progress flag for future attempts
-                delete_option('wp_github_sync_sync_in_progress');
-                delete_option('wp_github_sync_sync_start_time');
+                // Schedule a recovery attempt
+                wp_schedule_single_event(time() + 30, 'wp_github_sync_process_chunk');
             }
         });
         // First verify authentication is working
@@ -305,8 +314,15 @@ class Repository {
         if ($auth_test !== true) {
             wp_github_sync_log("Initial sync authentication test failed: " . $auth_test, 'error');
             $this->update_progress(0, "Authentication failed: " . $auth_test);
+            delete_option('wp_github_sync_chunked_sync_state');
             return new \WP_Error('github_auth_failed', sprintf(__('GitHub authentication failed: %s', 'wp-github-sync'), $auth_test));
         }
+        
+        $chunked_sync_state = get_option('wp_github_sync_chunked_sync_state');
+        $chunked_sync_state['stage'] = 'repository_check';
+        $chunked_sync_state['progress_step'] = 1;
+        update_option('wp_github_sync_chunked_sync_state', $chunked_sync_state);
+        
         $this->update_progress(1, "Authentication verified successfully");
         
         // Verify repository exists and initialize it if needed
@@ -354,12 +370,14 @@ class Repository {
                         
                         if (is_wp_error($alt_init_result)) {
                             wp_github_sync_log("Alternative initialization also failed: " . $alt_init_result->get_error_message(), 'error');
+                            delete_option('wp_github_sync_chunked_sync_state');
                             return new \WP_Error('repo_init_failed', sprintf(__('Failed to initialize repository: %s', 'wp-github-sync'), $alt_init_result->get_error_message()));
                         }
                         
                         wp_github_sync_log("Repository initialized successfully through alternative method, continuing with sync", 'info');
                     } else {
                         wp_github_sync_log("Failed to create temporary directory for alternative initialization", 'error');
+                        delete_option('wp_github_sync_chunked_sync_state');
                         return new \WP_Error('repo_init_failed', sprintf(__('Failed to initialize repository: %s. Could not create temporary directory.', 'wp-github-sync'), $init_result->get_error_message()));
                     }
                 } else {
@@ -367,9 +385,16 @@ class Repository {
                 }
             } else {
                 wp_github_sync_log("Failed to access repository: " . $error_message, 'error');
+                delete_option('wp_github_sync_chunked_sync_state');
                 return new \WP_Error('repo_access_failed', sprintf(__('Failed to access repository: %s', 'wp-github-sync'), $error_message));
             }
         }
+        
+        // Update chunked sync state to move to the next phase
+        $chunked_sync_state = get_option('wp_github_sync_chunked_sync_state');
+        $chunked_sync_state['stage'] = 'prepare_temp_directory';
+        $chunked_sync_state['progress_step'] = 3;
+        update_option('wp_github_sync_chunked_sync_state', $chunked_sync_state);
         
         // Set up basic commit information
         try {
@@ -378,6 +403,7 @@ class Repository {
             if (is_wp_error($user)) {
                 $error_message = $user->get_error_message();
                 wp_github_sync_log("Failed to get user info: " . $error_message, 'error');
+                delete_option('wp_github_sync_chunked_sync_state');
                 return new \WP_Error('github_api_user_error', sprintf(__('Failed to get GitHub user info: %s', 'wp-github-sync'), $error_message));
             }
             
@@ -392,31 +418,35 @@ class Repository {
             
             wp_github_sync_log("Creating initial sync for site: {$site_name} ({$site_url})", 'info');
             
-            // Create a temporary directory to prepare files
+            // Create temporary directory
             try {
                 $temp_dir = wp_tempnam('wp-github-sync-');
                 if (empty($temp_dir)) {
                     wp_github_sync_log("Failed to create temporary filename with wp_tempnam", 'error');
+                    delete_option('wp_github_sync_chunked_sync_state');
                     return new \WP_Error('temp_name_failed', __('Failed to create temporary filename for sync', 'wp-github-sync'));
                 }
                 
-                @unlink($temp_dir); // Remove the file so we can create a directory with the same name
+                @unlink($temp_dir); // Remove the file so we can create a directory
                 wp_github_sync_log("Creating temporary directory for initial sync: {$temp_dir}", 'debug');
                 
                 if (!wp_mkdir_p($temp_dir)) {
                     wp_github_sync_log("Failed to create temporary directory: {$temp_dir}", 'error');
+                    delete_option('wp_github_sync_chunked_sync_state');
                     return new \WP_Error('temp_dir_creation_failed', sprintf(__('Failed to create temporary directory for sync: %s', 'wp-github-sync'), $temp_dir));
                 }
                 
-                if (!is_dir($temp_dir)) {
-                    wp_github_sync_log("Directory does not exist after creation: {$temp_dir}", 'error');
-                    return new \WP_Error('temp_dir_not_found', sprintf(__('Temporary directory does not exist after creation: %s', 'wp-github-sync'), $temp_dir));
+                if (!is_dir($temp_dir) || !is_writable($temp_dir)) {
+                    wp_github_sync_log("Temporary directory is not accessible or writable: {$temp_dir}", 'error');
+                    delete_option('wp_github_sync_chunked_sync_state');
+                    return new \WP_Error('temp_dir_not_writable', sprintf(__('Temporary directory not accessible or writable: %s', 'wp-github-sync'), $temp_dir));
                 }
                 
-                if (!is_writable($temp_dir)) {
-                    wp_github_sync_log("Temporary directory not writable: {$temp_dir}", 'error');
-                    return new \WP_Error('temp_dir_not_writable', sprintf(__('Temporary directory not writable: %s', 'wp-github-sync'), $temp_dir));
-                }
+                // Update sync state with temporary directory location
+                $chunked_sync_state = get_option('wp_github_sync_chunked_sync_state');
+                $chunked_sync_state['temp_dir'] = $temp_dir;
+                $chunked_sync_state['site_name'] = $site_name;
+                $chunked_sync_state['site_url'] = $site_url;
                 
                 // Define paths to sync
                 $paths_to_sync = apply_filters('wp_github_sync_paths', [
@@ -425,141 +455,44 @@ class Repository {
                     'wp-content/uploads' => false, // Default to not sync media
                 ]);
                 
-                wp_github_sync_log("Preparing files for initial sync", 'info');
-                $this->update_progress(4, "Analyzing content folders to sync");
+                // Store paths in sync state
+                $chunked_sync_state['paths_to_sync'] = $paths_to_sync;
+                $chunked_sync_state['stage'] = 'collecting_files';
+                $chunked_sync_state['progress_step'] = 4;
+                $chunked_sync_state['current_path_index'] = 0;
+                update_option('wp_github_sync_chunked_sync_state', $chunked_sync_state);
                 
-                // Prepare files to sync
-                try {
-                    $this->update_progress(4, "Collecting files from WordPress content directory");
-                    $result = $this->prepare_files_for_initial_sync($temp_dir, $paths_to_sync);
-                    
-                    if (is_wp_error($result)) {
-                        $error_message = $result->get_error_message();
-                        wp_github_sync_log("Failed to prepare files: " . $error_message, 'error');
-                        // Clean up
-                        $this->recursive_rmdir($temp_dir);
-                        return new \WP_Error('file_preparation_failed', sprintf(__('Failed to prepare files: %s', 'wp-github-sync'), $error_message));
-                    }
-                } catch (\Exception $prep_exception) {
-                    wp_github_sync_log("Exception preparing files: " . $prep_exception->getMessage(), 'error');
-                    wp_github_sync_log("Stack trace: " . $prep_exception->getTraceAsString(), 'error');
-                    $this->recursive_rmdir($temp_dir);
-                    return new \WP_Error('file_preparation_exception', sprintf(__('Exception preparing files: %s', 'wp-github-sync'), $prep_exception->getMessage()));
-                }
+                wp_github_sync_log("Starting chunked file processing", 'info');
+                $this->update_progress(4, "Starting chunked file collection");
                 
-                // Create a README.md file at the root
-                try {
-                    // Sanitize site name and URL for security
-                    $site_name_safe = wp_strip_all_tags($site_name);
-                    $site_url_safe = esc_url($site_url);
-                    
-                    $readme_content = "# {$site_name_safe}\n\nWordPress site synced with GitHub.\n\nSite URL: {$site_url_safe}\n\n";
-                    $readme_content .= "## About\n\nThis repository contains the themes, plugins, and configuration for the WordPress site.\n";
-                    $readme_content .= "It is managed by the WordPress GitHub Sync plugin.\n";
-                    
-                    wp_github_sync_log("Creating README.md file", 'debug');
-                    
-                    $readme_path = $temp_dir . '/README.md';
-                    if (file_put_contents($readme_path, $readme_content) === false) {
-                        wp_github_sync_log("Failed to create README.md file at {$readme_path}", 'error');
-                        $this->recursive_rmdir($temp_dir);
-                        return new \WP_Error('readme_creation_failed', __('Failed to create README.md file', 'wp-github-sync'));
-                    }
-                    
-                    // Verify file was created
-                    if (!file_exists($readme_path)) {
-                        wp_github_sync_log("README.md file was not created at {$readme_path}", 'error');
-                        $this->recursive_rmdir($temp_dir);
-                        return new \WP_Error('readme_missing', __('README.md file was not created', 'wp-github-sync'));
-                    }
-                } catch (\Exception $readme_exception) {
-                    wp_github_sync_log("Exception creating README: " . $readme_exception->getMessage(), 'error');
-                    wp_github_sync_log("Stack trace: " . $readme_exception->getTraceAsString(), 'error');
-                    $this->recursive_rmdir($temp_dir);
-                    return new \WP_Error('readme_exception', sprintf(__('Exception creating README: %s', 'wp-github-sync'), $readme_exception->getMessage()));
-                }
+                // Schedule the first chunk
+                wp_schedule_single_event(time(), 'wp_github_sync_process_chunk');
                 
-                // Create a .gitignore file
-                try {
-                    $gitignore_content = "# WordPress core files\nwp-admin/\nwp-includes/\nwp-*.php\n\n";
-                    $gitignore_content .= "# Exclude sensitive files\nwp-config.php\n*.log\n.htaccess\n\n";
-                    $gitignore_content .= "# Exclude cache and backup files\n*.cache\n*.bak\n*~\n\n";
-                    
-                    wp_github_sync_log("Creating .gitignore file", 'debug');
-                    
-                    $gitignore_path = $temp_dir . '/.gitignore';
-                    if (file_put_contents($gitignore_path, $gitignore_content) === false) {
-                        wp_github_sync_log("Failed to create .gitignore file at {$gitignore_path}", 'error');
-                        $this->recursive_rmdir($temp_dir);
-                        return new \WP_Error('gitignore_creation_failed', __('Failed to create .gitignore file', 'wp-github-sync'));
-                    }
-                    
-                    // Verify file was created
-                    if (!file_exists($gitignore_path)) {
-                        wp_github_sync_log("Gitignore file was not created at {$gitignore_path}", 'error');
-                        $this->recursive_rmdir($temp_dir);
-                        return new \WP_Error('gitignore_missing', __('.gitignore file was not created', 'wp-github-sync'));
-                    }
-                } catch (\Exception $gitignore_exception) {
-                    wp_github_sync_log("Exception creating .gitignore: " . $gitignore_exception->getMessage(), 'error');
-                    wp_github_sync_log("Stack trace: " . $gitignore_exception->getTraceAsString(), 'error');
-                    $this->recursive_rmdir($temp_dir);
-                    return new \WP_Error('gitignore_exception', sprintf(__('Exception creating .gitignore: %s', 'wp-github-sync'), $gitignore_exception->getMessage()));
-                }
+                // Return a success message but note that processing will continue in the background
+                return new \WP_Error(
+                    'sync_in_progress', 
+                    __('The initial sync has started and will continue in the background. This may take several minutes depending on the size of your site.', 'wp-github-sync')
+                );
                 
-                // Create an uploader instance
-                try {
-                    $uploader = new Repository_Uploader($this->api_client);
-                    
-                    // Upload files to GitHub
-                    wp_github_sync_log("Starting upload to GitHub", 'info');
-                    $result = $uploader->upload_files_to_github($temp_dir, $branch, "Initial sync from {$site_name}");
-                    
-                    // Clean up temporary directory regardless of success or failure
-                    wp_github_sync_log("Cleaning up temporary directory", 'debug');
-                    $this->recursive_rmdir($temp_dir);
-                    
-                    if (is_wp_error($result)) {
-                        $error_message = $result->get_error_message();
-                        wp_github_sync_log("Upload failed: " . $error_message, 'error');
-                        return new \WP_Error('upload_failed', sprintf(__('Failed to upload to GitHub: %s', 'wp-github-sync'), $error_message));
-                    }
-                    
-                    wp_github_sync_log("Initial sync completed successfully", 'info');
-                    return $result;
-                } catch (\Exception $upload_exception) {
-                    // Clean up temporary directory on exception
-                    $this->recursive_rmdir($temp_dir);
-                    
-                    // Log exception details
-                    $error_message = $upload_exception->getMessage();
-                    $trace = $upload_exception->getTraceAsString();
-                    wp_github_sync_log("Exception during upload to GitHub: " . $error_message, 'error');
-                    wp_github_sync_log("Stack trace: " . $trace, 'error');
-                    
-                    return new \WP_Error('upload_exception', sprintf(__('Exception during upload to GitHub: %s', 'wp-github-sync'), $error_message));
-                }
             } catch (\Exception $temp_dir_exception) {
                 // Catch any exceptions during temporary directory setup
                 $error_message = $temp_dir_exception->getMessage();
-                $trace = $temp_dir_exception->getTraceAsString();
                 wp_github_sync_log("Exception during temporary directory setup: " . $error_message, 'error');
-                wp_github_sync_log("Stack trace: " . $trace, 'error');
                 
                 // Try to clean up if temp_dir is set
                 if (!empty($temp_dir) && is_dir($temp_dir)) {
                     $this->recursive_rmdir($temp_dir);
                 }
                 
+                delete_option('wp_github_sync_chunked_sync_state');
                 return new \WP_Error('temp_dir_exception', sprintf(__('Exception during temporary directory setup: %s', 'wp-github-sync'), $error_message));
             }
         } catch (\Exception $e) {
             // Catch any exceptions during the entire process
             $error_message = $e->getMessage();
-            $trace = $e->getTraceAsString();
-            wp_github_sync_log("Critical exception during initial sync: " . $error_message, 'error');
-            wp_github_sync_log("Stack trace: " . $trace, 'error');
-            return new \WP_Error('critical_sync_exception', sprintf(__('Critical error during initial sync: %s', 'wp-github-sync'), $error_message));
+            wp_github_sync_log("Critical exception during initial sync setup: " . $error_message, 'error');
+            delete_option('wp_github_sync_chunked_sync_state');
+            return new \WP_Error('critical_sync_exception', sprintf(__('Critical error during initial sync setup: %s', 'wp-github-sync'), $error_message));
         }
     }
     
@@ -743,6 +676,326 @@ class Repository {
             } else {
                 wp_github_sync_log("{$prefix}[FILE] {$file} (" . filesize($path) . " bytes)", 'debug');
             }
+        }
+    }
+    
+    /**
+     * Continue a chunked sync process based on saved state
+     *
+     * @param array $sync_state The saved sync state
+     * @param string $branch The branch name to commit to
+     * @return bool|\WP_Error True on success or WP_Error on failure
+     */
+    private function continue_chunked_sync($sync_state, $branch) {
+        wp_github_sync_log("Continuing chunked sync process at stage: " . $sync_state['stage'], 'info');
+        
+        // Ensure we have a temp directory
+        $temp_dir = isset($sync_state['temp_dir']) ? $sync_state['temp_dir'] : '';
+        if (empty($temp_dir) || !is_dir($temp_dir)) {
+            wp_github_sync_log("Temporary directory missing in chunked sync state", 'error');
+            delete_option('wp_github_sync_chunked_sync_state');
+            return new \WP_Error('chunked_sync_error', __('Temporary directory missing in chunked sync state', 'wp-github-sync'));
+        }
+        
+        // Update progress for user
+        $this->update_progress($sync_state['progress_step'] ?? 5, 
+                              "Resuming sync process - Stage: " . $sync_state['stage']);
+        
+        switch ($sync_state['stage']) {
+            case 'collecting_files':
+                return $this->process_chunked_file_collection($sync_state, $branch);
+                
+            case 'uploading_files':
+                return $this->process_chunked_upload($sync_state, $branch);
+                
+            default:
+                wp_github_sync_log("Unknown chunked sync stage: " . $sync_state['stage'], 'error');
+                delete_option('wp_github_sync_chunked_sync_state');
+                return new \WP_Error('chunked_sync_error', __('Unknown chunked sync stage', 'wp-github-sync'));
+        }
+    }
+    
+    /**
+     * Process chunked file collection
+     *
+     * @param array $sync_state The saved sync state
+     * @param string $branch The branch name to commit to
+     * @return bool|\WP_Error True on success or WP_Error on failure
+     */
+    private function process_chunked_file_collection($sync_state, $branch) {
+        $temp_dir = $sync_state['temp_dir'];
+        $paths_to_sync = $sync_state['paths_to_sync'];
+        $current_path_index = $sync_state['current_path_index'] ?? 0;
+        $path_keys = array_keys($paths_to_sync);
+        
+        // Process the current path
+        if (isset($path_keys[$current_path_index])) {
+            $current_path = $path_keys[$current_path_index];
+            $include = $paths_to_sync[$current_path];
+            
+            if ($include) {
+                $this->update_progress(5, "Processing directory {$current_path_index + 1}/{" . count($path_keys) . "}: {$current_path}");
+                wp_github_sync_log("Processing directory chunk: {$current_path}", 'info');
+                
+                // Using WP_CONTENT_DIR directly to make testing easier
+                if (strpos($current_path, 'wp-content/') === 0) {
+                    $rel_path = substr($current_path, strlen('wp-content/'));
+                    $source_path = rtrim(WP_CONTENT_DIR, '/') . '/' . $rel_path;
+                } else {
+                    // Don't allow paths outside of WordPress installation
+                    wp_github_sync_log("Only paths within wp-content are allowed: {$current_path}", 'error');
+                    
+                    // Skip to next path
+                    $sync_state['current_path_index'] = $current_path_index + 1;
+                    update_option('wp_github_sync_chunked_sync_state', $sync_state);
+                    return $this->continue_chunked_sync($sync_state, $branch);
+                }
+                
+                // Security: Prevent path traversal attacks
+                if (!$this->is_safe_path($source_path)) {
+                    wp_github_sync_log("Path traversal detected in: {$source_path}", 'error');
+                    
+                    // Skip to next path
+                    $sync_state['current_path_index'] = $current_path_index + 1;
+                    update_option('wp_github_sync_chunked_sync_state', $sync_state);
+                    return $this->continue_chunked_sync($sync_state, $branch);
+                }
+                
+                // Safely combine paths to prevent directory traversal
+                $dest_path = $temp_dir . '/' . $this->normalize_path($current_path);
+                
+                // Make sure source path exists and is within the allowed WP directory
+                if (!file_exists($source_path) || !$this->is_within_wordpress($source_path)) {
+                    wp_github_sync_log("Source path doesn't exist or is outside WordPress: {$source_path}, skipping", 'warning');
+                    
+                    // Skip to next path
+                    $sync_state['current_path_index'] = $current_path_index + 1;
+                    update_option('wp_github_sync_chunked_sync_state', $sync_state);
+                    return $this->continue_chunked_sync($sync_state, $branch);
+                }
+                
+                // Create destination directory
+                wp_mkdir_p(dirname($dest_path));
+                
+                // Copy directory in smaller chunks if needed
+                if (!isset($sync_state['subdir_queue'])) {
+                    // Initialize subdirectory queue for chunked processing
+                    $sync_state['subdir_queue'] = [$source_path];
+                    $sync_state['dest_base_path'] = $dest_path;
+                    $sync_state['source_base_path'] = $source_path;
+                    $sync_state['files_copied'] = 0;
+                    update_option('wp_github_sync_chunked_sync_state', $sync_state);
+                }
+                
+                return $this->process_chunked_directory($sync_state, $branch);
+            } else {
+                // Path is disabled, skip to next
+                $sync_state['current_path_index'] = $current_path_index + 1;
+                update_option('wp_github_sync_chunked_sync_state', $sync_state);
+                return $this->continue_chunked_sync($sync_state, $branch);
+            }
+        } else {
+            // All paths processed, move to next stage
+            wp_github_sync_log("All directories processed, moving to upload stage", 'info');
+            
+            // Add standard files like README.md and .gitignore
+            $this->update_progress(6, "Creating standard repository files");
+            $result = $this->create_standard_repo_files($temp_dir, $branch);
+            if (is_wp_error($result)) {
+                $this->recursive_rmdir($temp_dir);
+                delete_option('wp_github_sync_chunked_sync_state');
+                return $result;
+            }
+            
+            // Move to upload stage
+            $sync_state['stage'] = 'uploading_files';
+            $sync_state['progress_step'] = 7;
+            update_option('wp_github_sync_chunked_sync_state', $sync_state);
+            return $this->continue_chunked_sync($sync_state, $branch);
+        }
+    }
+    
+    /**
+     * Process a chunked directory copy
+     *
+     * @param array $sync_state The saved sync state
+     * @param string $branch The branch name to commit to
+     * @return bool|\WP_Error True on success or WP_Error on failure
+     */
+    private function process_chunked_directory($sync_state, $branch) {
+        $max_files_per_chunk = 50; // Process 50 files per chunk
+        $files_processed = 0;
+        
+        if (empty($sync_state['subdir_queue'])) {
+            // Queue empty, move to next path
+            $sync_state['current_path_index'] += 1;
+            unset($sync_state['subdir_queue']);
+            unset($sync_state['dest_base_path']);
+            unset($sync_state['source_base_path']);
+            update_option('wp_github_sync_chunked_sync_state', $sync_state);
+            return $this->continue_chunked_sync($sync_state, $branch);
+        }
+        
+        // Get current directory to process
+        $current_dir = array_shift($sync_state['subdir_queue']);
+        $source_base_path = $sync_state['source_base_path'];
+        $dest_base_path = $sync_state['dest_base_path'];
+        
+        // Calculate relative path
+        $rel_path = substr($current_dir, strlen($source_base_path));
+        $dest_dir = $dest_base_path . $rel_path;
+        
+        // Create destination directory
+        if (!file_exists($dest_dir)) {
+            wp_mkdir_p($dest_dir);
+        }
+        
+        // Process directory content
+        $items = scandir($current_dir);
+        $subdirs = [];
+        
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            
+            $source_path = $current_dir . '/' . $item;
+            $dest_path = $dest_dir . '/' . $item;
+            
+            if (is_dir($source_path)) {
+                // Add to subdirectory queue for later processing
+                $subdirs[] = $source_path;
+            } else {
+                // Copy file
+                if (copy($source_path, $dest_path)) {
+                    $files_processed++;
+                    $sync_state['files_copied']++;
+                    
+                    // Break if we've processed enough files for this chunk
+                    if ($files_processed >= $max_files_per_chunk) {
+                        break;
+                    }
+                } else {
+                    wp_github_sync_log("Failed to copy file: {$source_path}", 'error');
+                }
+            }
+        }
+        
+        // Update progress
+        $this->update_progress(5, "Copied {$sync_state['files_copied']} files so far");
+        
+        // If we have subdirectories, add them to the queue
+        if (!empty($subdirs)) {
+            $sync_state['subdir_queue'] = array_merge($subdirs, $sync_state['subdir_queue']);
+        }
+        
+        // Save state and continue
+        update_option('wp_github_sync_chunked_sync_state', $sync_state);
+        
+        if ($files_processed >= $max_files_per_chunk) {
+            // Schedule next chunk to run immediately
+            wp_schedule_single_event(time(), 'wp_github_sync_process_chunk');
+            wp_github_sync_log("Scheduled next chunk after processing {$files_processed} files", 'info');
+            return true; // Return true to indicate that processing will continue
+        } else {
+            // Continue immediately with next directory
+            return $this->continue_chunked_sync($sync_state, $branch);
+        }
+    }
+    
+    /**
+     * Process chunked file upload
+     *
+     * @param array $sync_state The saved sync state
+     * @param string $branch The branch name to commit to
+     * @return bool|\WP_Error True on success or WP_Error on failure
+     */
+    private function process_chunked_upload($sync_state, $branch) {
+        $temp_dir = $sync_state['temp_dir'];
+        $site_name = isset($sync_state['site_name']) ? $sync_state['site_name'] : get_bloginfo('name');
+        
+        try {
+            $this->update_progress(7, "Uploading files to GitHub");
+            wp_github_sync_log("Starting upload to GitHub", 'info');
+            
+            // Create an uploader instance
+            $uploader = new Repository_Uploader($this->api_client);
+            
+            // Upload files to GitHub
+            $result = $uploader->upload_files_to_github($temp_dir, $branch, "Initial sync from {$site_name}");
+            
+            // Clean up temporary directory
+            wp_github_sync_log("Cleaning up temporary directory", 'debug');
+            $this->recursive_rmdir($temp_dir);
+            
+            // Clean up chunked sync state
+            delete_option('wp_github_sync_chunked_sync_state');
+            
+            if (is_wp_error($result)) {
+                $error_message = $result->get_error_message();
+                wp_github_sync_log("Upload failed: " . $error_message, 'error');
+                return new \WP_Error('upload_failed', sprintf(__('Failed to upload to GitHub: %s', 'wp-github-sync'), $error_message));
+            }
+            
+            $this->update_progress(8, "Initial sync completed successfully");
+            wp_github_sync_log("Initial sync completed successfully", 'info');
+            return $result;
+        } catch (\Exception $upload_exception) {
+            // Clean up
+            $this->recursive_rmdir($temp_dir);
+            delete_option('wp_github_sync_chunked_sync_state');
+            
+            // Log exception details
+            $error_message = $upload_exception->getMessage();
+            $trace = $upload_exception->getTraceAsString();
+            wp_github_sync_log("Exception during upload to GitHub: " . $error_message, 'error');
+            wp_github_sync_log("Stack trace: " . $trace, 'error');
+            
+            return new \WP_Error('upload_exception', sprintf(__('Exception during upload to GitHub: %s', 'wp-github-sync'), $error_message));
+        }
+    }
+    
+    /**
+     * Create standard repository files (README.md, .gitignore)
+     *
+     * @param string $temp_dir The temporary directory
+     * @param string $branch The branch name
+     * @return bool|\WP_Error True on success or WP_Error on failure
+     */
+    private function create_standard_repo_files($temp_dir, $branch) {
+        try {
+            // Get site info for commit message
+            $site_url = get_bloginfo('url');
+            $site_name = get_bloginfo('name');
+            
+            // Sanitize site name and URL for security
+            $site_name_safe = wp_strip_all_tags($site_name);
+            $site_url_safe = esc_url($site_url);
+            
+            // Create README.md
+            $readme_content = "# {$site_name_safe}\n\nWordPress site synced with GitHub.\n\nSite URL: {$site_url_safe}\n\n";
+            $readme_content .= "## About\n\nThis repository contains the themes, plugins, and configuration for the WordPress site.\n";
+            $readme_content .= "It is managed by the WordPress GitHub Sync plugin.\n";
+            
+            $readme_path = $temp_dir . '/README.md';
+            if (file_put_contents($readme_path, $readme_content) === false) {
+                return new \WP_Error('readme_creation_failed', __('Failed to create README.md file', 'wp-github-sync'));
+            }
+            
+            // Create .gitignore
+            $gitignore_content = "# WordPress core files\nwp-admin/\nwp-includes/\nwp-*.php\n\n";
+            $gitignore_content .= "# Exclude sensitive files\nwp-config.php\n*.log\n.htaccess\n\n";
+            $gitignore_content .= "# Exclude cache and backup files\n*.cache\n*.bak\n*~\n\n";
+            
+            $gitignore_path = $temp_dir . '/.gitignore';
+            if (file_put_contents($gitignore_path, $gitignore_content) === false) {
+                return new \WP_Error('gitignore_creation_failed', __('Failed to create .gitignore file', 'wp-github-sync'));
+            }
+            
+            return true;
+        } catch (\Exception $e) {
+            wp_github_sync_log("Exception creating standard files: " . $e->getMessage(), 'error');
+            return new \WP_Error('standard_files_exception', sprintf(__('Exception creating standard files: %s', 'wp-github-sync'), $e->getMessage()));
         }
     }
     

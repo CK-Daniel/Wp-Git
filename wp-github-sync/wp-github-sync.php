@@ -70,5 +70,8 @@ function run_wp_github_sync() {
     $plugin->run();
 }
 
+// Add custom hooks
+add_action('wp_github_sync_process_chunk', 'wp_github_sync_process_chunk_handler');
+
 // Run the plugin
 run_wp_github_sync();

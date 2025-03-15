@@ -65,6 +65,7 @@ class Admin {
         add_action('wp_ajax_wp_github_sync_log_error', array($this, 'handle_ajax_log_error'));
         add_action('wp_ajax_wp_github_sync_check_progress', array($this, 'handle_ajax_check_progress'));
         add_action('wp_ajax_wp_github_sync_check_requirements', array($this, 'handle_ajax_check_requirements'));
+        add_action('wp_ajax_wp_github_sync_check_status', array($this, 'handle_ajax_check_status'));
         
         // Register action for background processing
         add_action('wp_github_sync_background_sync_process', array($this, 'process_background_sync'), 10, 2);
@@ -169,6 +170,17 @@ class Admin {
             );
         }
         
+        // Load jobs monitor page scripts
+        if (strpos($screen->id, 'wp-github-sync-jobs') !== false) {
+            wp_enqueue_script(
+                'wp-github-sync-jobs',
+                WP_GITHUB_SYNC_URL . 'admin/assets/js/jobs.js',
+                array('jquery', 'wp-github-sync-admin'),
+                $this->version,
+                false
+            );
+        }
+        
         // Load settings page specific scripts
         if (strpos($screen->id, 'wp-github-sync-settings') !== false) {
             // We're on the settings page - ensure CSS is properly loaded
@@ -251,6 +263,16 @@ class Admin {
             'manage_options',
             'wp-github-sync-history',
             array($this, 'display_history_page')
+        );
+        
+        // Jobs Monitor submenu
+        add_submenu_page(
+            'wp-github-sync',
+            __('Background Jobs', 'wp-github-sync'),
+            __('Jobs Monitor', 'wp-github-sync'),
+            'manage_options',
+            'wp-github-sync-jobs',
+            array($this, 'display_jobs_page')
         );
         
         // Logs submenu
@@ -1977,6 +1999,77 @@ class Admin {
     }
 
     /**
+     * Handle AJAX check status request.
+     * This checks the status of a chunked sync operation.
+     */
+    public function handle_ajax_check_status() {
+        // Check permissions
+        if (!wp_github_sync_current_user_can()) {
+            wp_send_json_error(array('message' => 'Permission denied'));
+            return;
+        }
+        
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
+            wp_send_json_error(array('message' => 'Invalid nonce'));
+            return;
+        }
+        
+        // Check the chunked sync state
+        $sync_state = get_option('wp_github_sync_chunked_sync_state', null);
+        
+        if ($sync_state) {
+            // Sync is in progress
+            $stage = isset($sync_state['stage']) ? $sync_state['stage'] : 'unknown';
+            $progress_step = isset($sync_state['progress_step']) ? $sync_state['progress_step'] : 0;
+            
+            // Format a human-readable progress message
+            $progress_message = '';
+            switch($stage) {
+                case 'authentication':
+                    $progress_message = __('Verifying authentication with GitHub...', 'wp-github-sync');
+                    break;
+                case 'repository_check':
+                    $progress_message = __('Checking repository access...', 'wp-github-sync');
+                    break;
+                case 'prepare_temp_directory':
+                    $progress_message = __('Preparing temporary directory...', 'wp-github-sync');
+                    break;
+                case 'collecting_files':
+                    $progress_message = __('Collecting files from WordPress...', 'wp-github-sync');
+                    // Add file count if available
+                    if (isset($sync_state['files_copied'])) {
+                        $progress_message .= ' (' . $sync_state['files_copied'] . ' files processed)';
+                    }
+                    break;
+                case 'uploading_files':
+                    $progress_message = __('Uploading files to GitHub...', 'wp-github-sync');
+                    break;
+                default:
+                    $progress_message = __('Processing...', 'wp-github-sync');
+            }
+            
+            // Return the status
+            wp_send_json_success(array(
+                'in_progress' => true,
+                'stage' => $stage,
+                'progress' => $progress_message,
+                'progress_step' => $progress_step,
+                'timestamp' => time()
+            ));
+            return;
+        } else {
+            // No sync in progress
+            wp_send_json_success(array(
+                'in_progress' => false,
+                'message' => __('No sync operation is currently in progress.', 'wp-github-sync'),
+                'timestamp' => time()
+            ));
+            return;
+        }
+    }
+
+    /**
      * Handle AJAX log error request.
      */
     public function handle_ajax_log_error() {
@@ -2402,5 +2495,92 @@ class Admin {
                 'details' => $requirements
             ));
         }
+    }
+    
+    /**
+     * Display the jobs monitor page.
+     */
+    public function display_jobs_page() {
+        // Validate user has permission
+        if (!wp_github_sync_current_user_can()) {
+            wp_die(__('You do not have sufficient permissions to access this page.', 'wp-github-sync'));
+        }
+        
+        // Process actions (cancel/clear jobs)
+        if (isset($_GET['action']) && check_admin_referer('wp_github_sync_jobs_action', 'nonce')) {
+            if ($_GET['action'] === 'cancel_chunked_sync' && current_user_can('manage_options')) {
+                delete_option('wp_github_sync_chunked_sync_state');
+                add_settings_error(
+                    'wp_github_sync_jobs',
+                    'job_canceled',
+                    __('Chunked sync job has been canceled.', 'wp-github-sync'),
+                    'updated'
+                );
+            } elseif ($_GET['action'] === 'clear_scheduled_jobs' && current_user_can('manage_options')) {
+                // Clear all scheduled cron events related to our plugin
+                $cron_events = _get_cron_array();
+                $cleared_count = 0;
+                
+                if (!empty($cron_events)) {
+                    foreach ($cron_events as $timestamp => $hooks) {
+                        foreach ($hooks as $hook => $events) {
+                            if (strpos($hook, 'wp_github_sync') !== false) {
+                                foreach ($events as $key => $event) {
+                                    wp_unschedule_event($timestamp, $hook, $event['args']);
+                                    $cleared_count++;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                add_settings_error(
+                    'wp_github_sync_jobs',
+                    'jobs_cleared',
+                    sprintf(_n('%d scheduled job has been cleared.', '%d scheduled jobs have been cleared.', $cleared_count, 'wp-github-sync'), $cleared_count),
+                    'updated'
+                );
+            }
+        }
+        
+        // Get any active chunked sync
+        $chunked_sync_state = get_option('wp_github_sync_chunked_sync_state', null);
+        
+        // Get scheduled cron events
+        $cron_events = array();
+        $cron_array = _get_cron_array();
+        
+        if (!empty($cron_array)) {
+            foreach ($cron_array as $timestamp => $hooks) {
+                foreach ($hooks as $hook => $events) {
+                    // Only show our plugin's events
+                    if (strpos($hook, 'wp_github_sync') !== false) {
+                        foreach ($events as $event_key => $event) {
+                            $cron_events[] = array(
+                                'timestamp' => $timestamp,
+                                'hook' => $hook,
+                                'args' => $event['args'],
+                                'interval' => isset($event['interval']) ? $event['interval'] : 0,
+                                'scheduled' => human_time_diff(time(), $timestamp) . ' ' . 
+                                              ($timestamp > time() ? __('from now', 'wp-github-sync') : __('ago', 'wp-github-sync')),
+                                'next_run' => date_i18n('Y-m-d H:i:s', $timestamp),
+                                'key' => $event_key
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Get deployment in progress
+        $deployment_in_progress = get_option('wp_github_sync_deployment_in_progress', false);
+        $deployment_start_time = get_option('wp_github_sync_last_deployment_time', 0);
+        
+        // Get sync in progress (for backward compatibility)
+        $sync_in_progress = get_option('wp_github_sync_sync_in_progress', false);
+        $sync_start_time = get_option('wp_github_sync_sync_start_time', 0);
+        
+        // Include the template file
+        include WP_GITHUB_SYNC_DIR . 'admin/templates/jobs-page.php';
     }
 }
