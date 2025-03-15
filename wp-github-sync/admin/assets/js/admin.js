@@ -300,6 +300,8 @@
                 var noProgressCount = 0;
                 var maxNoProgressCount = 10; // About 15 seconds without progress
                 var progressCheck;
+                // Always use the standard nonce for progress checking since the server handler expects it
+                var progressNonce = wpGitHubSync.nonce;
             
                 progressCheck = setInterval(function() {
                     // Check if we haven't seen progress for a while
@@ -324,7 +326,7 @@
                         type: 'POST',
                         data: {
                             action: 'wp_github_sync_check_progress',
-                            nonce: wpGitHubSync.nonce
+                            nonce: progressNonce
                         },
                         success: function(progressData) {
                             if (progressData.success && progressData.data.step !== undefined) {
@@ -389,7 +391,7 @@
                         create_new_repo: createNewRepo ? 1 : 0,
                         repo_name: repoName,
                         run_in_background: runInBackground ? 1 : 0,
-                        nonce: wpGitHubSync.nonce // Using the standard nonce
+                        nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce for initial sync
                     },
                     success: function(response) {
                         if (!runInBackground) {

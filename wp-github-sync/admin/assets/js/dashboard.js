@@ -52,7 +52,6 @@
     
     // Main action buttons functionality
     function bindActionButtons() {
-        const nonce = wpGitHubSync.nonce;
         
         // Deploy latest changes button
         $('.wp-github-sync-deploy').on('click', function() {
@@ -67,7 +66,7 @@
                 type: 'POST',
                 data: {
                     action: 'wp_github_sync_deploy',
-                    nonce: nonce
+                    nonce: wpGitHubSync.nonce
                 },
                 success: function(response) {
                     if (response.success) {
@@ -99,7 +98,7 @@
                 type: 'POST',
                 data: {
                     action: 'wp_github_sync_background_deploy',
-                    nonce: nonce
+                    nonce: wpGitHubSync.nonce
                 },
                 success: function(response) {
                     if (response.success) {
@@ -125,7 +124,7 @@
                 type: 'POST',
                 data: {
                     action: 'wp_github_sync_check_updates',
-                    nonce: nonce
+                    nonce: wpGitHubSync.nonce
                 },
                 success: function(response) {
                     if (response.success) {
@@ -155,7 +154,7 @@
                 type: 'POST',
                 data: {
                     action: 'wp_github_sync_full_sync',
-                    nonce: nonce
+                    nonce: wpGitHubSync.nonce
                 },
                 success: function(response) {
                     if (response.success) {
@@ -187,7 +186,7 @@
                 type: 'POST',
                 data: {
                     action: 'wp_github_sync_background_full_sync',
-                    nonce: nonce
+                    nonce: wpGitHubSync.nonce
                 },
                 success: function(response) {
                     if (response.success) {
@@ -224,7 +223,7 @@
                     type: 'POST',
                     data: {
                         action: 'wp_github_sync_check_progress',
-                        nonce: nonce
+                        nonce: wpGitHubSync.nonce
                     },
                     success: function(response) {
                         if (response.success && response.data.status) {
@@ -277,7 +276,6 @@
     
     // Branch management functionality
     function handleBranchManagement() {
-        const nonce = wpGitHubSync.nonce;
         
         // Switch branch button
         $('.wp-github-sync-switch-branch').on('click', function() {
@@ -294,7 +292,7 @@
                 type: 'POST',
                 data: {
                     action: 'wp_github_sync_switch_branch',
-                    nonce: nonce,
+                    nonce: wpGitHubSync.nonce,
                     branch: branch
                 },
                 success: function(response) {
@@ -321,7 +319,7 @@
                 type: 'POST',
                 data: {
                     action: 'wp_github_sync_refresh_branches',
-                    nonce: nonce
+                    nonce: wpGitHubSync.nonce
                 },
                 success: function(response) {
                     if (response.success) {
@@ -365,7 +363,7 @@
                 type: 'POST',
                 data: {
                     action: 'wp_github_sync_rollback',
-                    nonce: nonce,
+                    nonce: wpGitHubSync.nonce,
                     commit: commit
                 },
                 success: function(response) {
@@ -386,7 +384,6 @@
     
     // Developer tools functionality
     function setupDeveloperTools() {
-        const nonce = wpGitHubSync.nonce;
         
         // Component selection
         $('#wp-github-sync-component-select').on('change', function() {
@@ -413,7 +410,7 @@
                 type: 'POST',
                 data: {
                     action: 'wp_github_sync_regenerate_webhook',
-                    nonce: nonce
+                    nonce: wpGitHubSync.nonce
                 },
                 success: function(response) {
                     if (response.success) {
