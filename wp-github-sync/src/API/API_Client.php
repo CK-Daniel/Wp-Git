@@ -277,12 +277,38 @@ class API_Client {
      */
     public function request($endpoint, $method = 'GET', $data = [], $handle_empty_repo_error = false, $timeout = 30, $auto_retry = true, $max_retries = 2) {
         try {
+            // Log request details
+            wp_github_sync_log("GitHub API Request: {$method} {$endpoint}", 'debug', true);
+            
+            // Token diagnostics
+            if (!empty($this->token)) {
+                $token_type = "unknown";
+                $token_preview = substr($this->token, 0, 8) . '...';
+                
+                if (strpos($this->token, 'github_pat_') === 0) {
+                    $token_type = "fine-grained personal access token";
+                } elseif (strpos($this->token, 'ghp_') === 0) {
+                    $token_type = "personal access token";
+                } elseif (strpos($this->token, 'gho_') === 0) {
+                    $token_type = "OAuth token";
+                } elseif (strpos($this->token, 'ghu_') === 0) {
+                    $token_type = "GitHub App user token";
+                } elseif (strpos($this->token, 'ghs_') === 0) {
+                    $token_type = "GitHub App server token";
+                } elseif (strlen($this->token) === 40 && ctype_xdigit($this->token)) {
+                    $token_type = "classic OAuth token";
+                }
+                
+                wp_github_sync_log("Using token type: {$token_type} ({$token_preview})", 'debug', true);
+            }
+            
             // Generate token for GitHub App if needed
             if ($this->auth_method === 'github_app' && empty($this->token)) {
                 wp_github_sync_log("Generating GitHub App token for request", 'debug');
                 $token = $this->generate_github_app_token();
                 
                 if (is_wp_error($token)) {
+                    wp_github_sync_log("Failed to generate GitHub App token: " . $token->get_error_message(), 'error', true);
                     return $token;
                 }
                 
@@ -291,8 +317,15 @@ class API_Client {
             
             // Check if we have what we need to make a request
             if (empty($this->token)) {
-                wp_github_sync_log("API request failed: No GitHub token available", 'error');
+                wp_github_sync_log("API request failed: No GitHub token available", 'error', true);
                 return new \WP_Error('github_api_no_token', __('No GitHub authentication token available. Please check your settings.', 'wp-github-sync'));
+            }
+            
+            // Log repository details
+            if (isset($this->repo_owner) && isset($this->repo_name)) {
+                wp_github_sync_log("Target repository: {$this->repo_owner}/{$this->repo_name}", 'debug', true);
+            } else {
+                wp_github_sync_log("Warning: Repository owner or name not set", 'warning', true);
             }
             
             // Check rate limits before making a request (except for rate_limit endpoint itself)
@@ -497,17 +530,70 @@ class API_Client {
             
             $response_code = wp_remote_retrieve_response_code($response);
             $response_body = wp_remote_retrieve_body($response);
+            $response_headers = wp_remote_retrieve_headers($response);
             
-            // Debug log the response
-            wp_github_sync_log("Response code: {$response_code}", 'debug');
+            // Debug log the response with detailed diagnostics
+            wp_github_sync_log("Response code: {$response_code}", 'debug', true);
             
-            // Log the raw response body for debugging if there's an error
+            // Check if we got any response body at all
+            if (empty($response_body)) {
+                wp_github_sync_log("WARNING: Empty response body received from GitHub API", 'warning', true);
+            }
+            
+            // Log all headers for diagnostic purposes
+            if (is_object($response_headers)) {
+                wp_github_sync_log("Response headers:", 'debug', true);
+                foreach ($response_headers->getAll() as $header => $values) {
+                    $value_str = is_array($values) ? implode(', ', $values) : $values;
+                    wp_github_sync_log("  {$header}: {$value_str}", 'debug', true);
+                }
+            }
+            
+            // Log detailed info for error responses
             if ($response_code >= 400) {
-                wp_github_sync_log("Error response body: " . $response_body, 'error');
+                wp_github_sync_log("ERROR {$response_code} from GitHub API for {$endpoint}", 'error', true);
+                wp_github_sync_log("Error response body: " . $response_body, 'error', true);
+                
+                // Analyze common GitHub API errors
+                if ($response_code == 401) {
+                    wp_github_sync_log("AUTHENTICATION ERROR: Token is invalid or expired", 'error', true);
+                    wp_github_sync_log("Check if your token has been revoked or has expired", 'error', true);
+                } 
+                else if ($response_code == 403) {
+                    // Check if this is a rate limit issue
+                    if (strpos($response_body, 'rate limit') !== false) {
+                        wp_github_sync_log("RATE LIMIT EXCEEDED: GitHub API rate limit reached", 'error', true);
+                    } 
+                    // Check if this is a permission issue
+                    else if (strpos($response_body, 'permission') !== false || 
+                             strpos($response_body, 'not authorized') !== false) {
+                        wp_github_sync_log("PERMISSION ERROR: Token lacks required permissions", 'error', true);
+                        wp_github_sync_log("For fine-grained tokens, check that it has Contents:Read & Write permission", 'error', true);
+                        wp_github_sync_log("For classic tokens, ensure it has the 'repo' scope", 'error', true);
+                    }
+                    // Secondary rate limit
+                    else if (strpos($response_body, 'secondary') !== false) {
+                        wp_github_sync_log("SECONDARY RATE LIMIT: Too many operations in short time", 'error', true);
+                    }
+                }
+                else if ($response_code == 404) {
+                    wp_github_sync_log("NOT FOUND ERROR: Resource does not exist", 'error', true);
+                    wp_github_sync_log("Check if the repository exists and is accessible with your token", 'error', true);
+                    wp_github_sync_log("Repository: " . ($this->repo_owner ? $this->repo_owner . '/' . $this->repo_name : 'Not set'), 'error', true);
+                }
+                else if ($response_code == 422) {
+                    wp_github_sync_log("VALIDATION ERROR: GitHub API could not process the request", 'error', true);
+                }
             }
             
             // Parse the response body
             $response_data = json_decode($response_body, true);
+            
+            // Additional logging for JSON parsing
+            if ($response_body && json_last_error() !== JSON_ERROR_NONE) {
+                wp_github_sync_log("JSON PARSE ERROR: " . json_last_error_msg(), 'error', true);
+                wp_github_sync_log("First 200 chars of response: " . substr($response_body, 0, 200), 'error', true);
+            }
             
             // Check for JSON parsing errors
             if ($response_body && json_last_error() !== JSON_ERROR_NONE) {

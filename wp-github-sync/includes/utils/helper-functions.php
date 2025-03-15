@@ -215,6 +215,9 @@ function wp_github_sync_decrypt($encrypted_data) {
  * @param bool   $force   Whether to log even if WP_DEBUG is not enabled.
  */
 function wp_github_sync_log($message, $level = 'info', $force = false) {
+    // For this debugging session, force logging regardless of WP_DEBUG
+    $force = true;
+    
     // Check if we should log - either debug is enabled or force is true 
     // or a specific filter for GitHub Sync logging is enabled
     $should_log = (defined('WP_DEBUG') && WP_DEBUG) || 
@@ -245,35 +248,38 @@ function wp_github_sync_log($message, $level = 'info', $force = false) {
     // Format the log message
     $formatted_message = "[{$formatted_timestamp}] [{$level}] {$message}" . PHP_EOL;
     
-    // Get backtrace information (optional for debug level)
-    if ($level === 'debug' && apply_filters('wp_github_sync_detailed_debug_logs', false)) {
-        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
-        if (isset($backtrace[1])) {
-            $caller = $backtrace[1];
-            $caller_info = '';
-            
-            if (isset($caller['class'])) {
-                $caller_info .= $caller['class'] . $caller['type'];
-            }
-            
-            if (isset($caller['function'])) {
-                $caller_info .= $caller['function'] . '()';
-            }
-            
-            if (isset($caller['file']) && isset($caller['line'])) {
-                $file = basename($caller['file']);
-                $line = $caller['line'];
-                $caller_info .= " | {$file}:{$line}";
-            }
-            
-            if (!empty($caller_info)) {
-                $formatted_message = "[{$formatted_timestamp}] [{$level}] [{$caller_info}] {$message}" . PHP_EOL;
-            }
+    // Get backtrace information (always for debugging this issue)
+    $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
+    if (isset($backtrace[1])) {
+        $caller = $backtrace[1];
+        $caller_info = '';
+        
+        if (isset($caller['class'])) {
+            $caller_info .= $caller['class'] . $caller['type'];
+        }
+        
+        if (isset($caller['function'])) {
+            $caller_info .= $caller['function'] . '()';
+        }
+        
+        if (isset($caller['file']) && isset($caller['line'])) {
+            $file = basename($caller['file']);
+            $line = $caller['line'];
+            $caller_info .= " | {$file}:{$line}";
+        }
+        
+        if (!empty($caller_info)) {
+            $formatted_message = "[{$formatted_timestamp}] [{$level}] [{$caller_info}] {$message}" . PHP_EOL;
         }
     }
     
     // Write to log file
     error_log($formatted_message, 3, $log_file);
+    
+    // For severe errors, also log to PHP error log to ensure visibility
+    if ($level === 'error') {
+        error_log("WP GitHub Sync Error: {$message}");
+    }
     
     // Rotate log file if it gets too large (over 5MB by default)
     $max_size = apply_filters('wp_github_sync_log_max_size', 5 * 1024 * 1024); // 5MB

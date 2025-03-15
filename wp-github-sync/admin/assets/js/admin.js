@@ -474,11 +474,35 @@
                         $('.wp-github-sync-loading-message').text('Error');
                         $('.wp-github-sync-loading-submessage').text('Communication error with server: ' + error);
                         
-                        // Log detailed error to console
+                        // Add detailed error to status detail for better diagnostics
+                        var $statusDetail = $('.wp-github-sync-status-detail');
+                        $statusDetail.append('<div class="wp-github-sync-error-detail"><strong>Error Details:</strong></div>');
+                        $statusDetail.append('<div>Status: ' + status + '</div>');
+                        $statusDetail.append('<div>Error: ' + error + '</div>');
+                        
+                        // Log detailed diagnostic info to console
                         console.error("AJAX Error:", status, error);
+                        console.error("HTTP Status:", xhr.status);
+                        console.error("Status Text:", xhr.statusText);
+                        console.error("Ready State:", xhr.readyState);
+                        
+                        // Log token exists but not the actual token (security)
+                        if (typeof wpGitHubSync !== 'undefined') {
+                            console.log("Configuration: Nonce exists:", !!wpGitHubSync.initialSyncNonce);
+                            console.log("Authentication set:", !!wpGitHubSync.authSet);
+                        }
                         
                         if (xhr.responseText) {
                             console.error("Response:", xhr.responseText);
+                            $statusDetail.append('<div><strong>Response:</strong></div>');
+                            
+                            var responsePreview = xhr.responseText;
+                            if (responsePreview.length > 500) {
+                                responsePreview = responsePreview.substring(0, 500) + '... (truncated)';
+                            }
+                            
+                            // Display response in a readable format
+                            $statusDetail.append('<div class="wp-github-sync-error-response">' + responsePreview.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') + '</div>');
                             
                             // Try to parse response for more details
                             try {
@@ -486,21 +510,51 @@
                                 if (responseObj && responseObj.data && responseObj.data.message) {
                                     $('.wp-github-sync-loading-submessage').text(responseObj.data.message);
                                     console.error("Parsed error:", responseObj.data.message);
+                                    $statusDetail.append('<div><strong>Detailed Error:</strong> ' + responseObj.data.message + '</div>');
+                                    
+                                    // Look for error codes
+                                    if (responseObj.data.code) {
+                                        $statusDetail.append('<div><strong>Error Code:</strong> ' + responseObj.data.code + '</div>');
+                                        console.error("Error Code:", responseObj.data.code);
+                                    }
                                 } else {
                                     // Look for WordPress critical error
                                     if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
+                                        $statusDetail.append('<div><strong>WordPress Critical Error</strong> detected in response.</div>');
                                         $('.wp-github-sync-loading-submessage').text('WordPress encountered a critical error. Check server logs for details.');
                                     }
                                 }
                             } catch (e) {
                                 console.error("Error parsing response:", e);
+                                $statusDetail.append('<div>Could not parse JSON response: ' + e.message + '</div>');
                             }
+                        } else {
+                            $statusDetail.append('<div>No response body received</div>');
                         }
                         
-                        // Hide overlay after 3 seconds
+                        // Check for network-level errors
+                        if (error === 'timeout') {
+                            $statusDetail.append('<div><strong>Connection timeout</strong> - Server took too long to respond</div>');
+                        } else if (xhr.status === 0) {
+                            $statusDetail.append('<div><strong>Network Error</strong> - Could not connect to server. Possible CORS issue or server unreachable.</div>');
+                        }
+                        
+                        // Provide debugging guidance
+                        $statusDetail.append('<div class="wp-github-sync-error-help"><strong>Troubleshooting:</strong></div>');
+                        $statusDetail.append('<div>1. Check PHP error logs for detailed server errors</div>');
+                        $statusDetail.append('<div>2. Check GitHub token permissions (need Content read/write for fine-grained tokens)</div>');
+                        $statusDetail.append('<div>3. Verify GitHub repository settings are correct</div>');
+                        $statusDetail.append('<div>4. Ensure WordPress has proper file system permissions</div>');
+                        
+                        // Scroll to see error details
+                        if ($statusDetail.length && $statusDetail[0]) {
+                            $statusDetail.scrollTop($statusDetail[0].scrollHeight);
+                        }
+                        
+                        // Keep overlay visible longer to allow reading error details
                         setTimeout(function() {
                             hideOverlay();
-                        }, 3000);
+                        }, 10000); // 10 seconds to read error details
                     }
                 });
             });
