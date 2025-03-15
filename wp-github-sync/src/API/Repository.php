@@ -37,6 +37,13 @@ class Repository {
      * @var Repository_Uploader|null
      */
     private $uploader = null;
+    
+    /**
+     * Statistics and reporting data
+     *
+     * @var array
+     */
+    private $stats = [];
 
     /**
      * Initialize the Repository class.
@@ -230,6 +237,68 @@ class Repository {
      * @return bool|\WP_Error True on success or WP_Error on failure.
      */
     public function initial_sync($branch = 'main') {
+        // Enforce timeout limit for this potentially long-running process
+        $current_timeout = ini_get('max_execution_time');
+        if ($current_timeout > 0 && $current_timeout < 300) { // Only increase if it's not already high enough
+            set_time_limit(300); // 5 minutes should be enough for most syncs
+        }
+        
+        // Also increase memory limit if possible
+        $current_memory_limit = ini_get('memory_limit');
+        $current_memory_bytes = wp_convert_hr_to_bytes($current_memory_limit);
+        $desired_memory_bytes = wp_convert_hr_to_bytes('256M');
+        
+        if ($current_memory_bytes < $desired_memory_bytes) {
+            // Try to increase memory limit to handle large repositories
+            wp_github_sync_log("Current memory limit: {$current_memory_limit}, attempting to increase to 256M", 'debug');
+            
+            try {
+                ini_set('memory_limit', '256M');
+                $new_limit = ini_get('memory_limit');
+                wp_github_sync_log("Memory limit now: {$new_limit}", 'debug');
+            } catch (\Exception $e) {
+                wp_github_sync_log("Could not increase memory limit: " . $e->getMessage(), 'warning');
+            }
+        }
+        
+        // Reset statistics
+        $this->stats = [
+            'start_time' => microtime(true),
+            'files_scanned' => 0,
+            'files_skipped' => 0,
+            'files_included' => 0,
+            'total_size' => 0,
+            'large_files_found' => 0,
+            'errors' => [],
+            'warnings' => [],
+            'skipped_files' => []
+        ];
+        
+        // Create a checkpoint system to potentially resume sync if it fails
+        update_option('wp_github_sync_sync_checkpoint', [
+            'timestamp' => time(),
+            'branch' => $branch,
+            'stage' => 'starting'
+        ]);
+        
+        // Register a shutdown function to catch fatal errors
+        register_shutdown_function(function() {
+            $error = error_get_last();
+            if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+                // Log the fatal error
+                wp_github_sync_log("Fatal error during sync: " . $error['message'] . " in " . $error['file'] . " on line " . $error['line'], 'error');
+                
+                // Update checkpoint with error
+                $checkpoint = get_option('wp_github_sync_sync_checkpoint', []);
+                $checkpoint['fatal_error'] = $error;
+                $checkpoint['status'] = 'failed';
+                update_option('wp_github_sync_sync_checkpoint', $checkpoint);
+                
+                // Clear the in-progress flag for future attempts
+                delete_option('wp_github_sync_sync_in_progress');
+                delete_option('wp_github_sync_sync_start_time');
+            }
+        });
         // First verify authentication is working
         $this->update_progress(0, "Verifying authentication");
         $auth_test = $this->api_client->test_authentication();
@@ -380,9 +449,13 @@ class Repository {
                 
                 // Create a README.md file at the root
                 try {
-                    $readme_content = "# {$site_name}\n\nWordPress site synced with GitHub.\n\nSite URL: {$site_url}\n\n";
+                    // Sanitize site name and URL for security
+                    $site_name_safe = wp_strip_all_tags($site_name);
+                    $site_url_safe = esc_url($site_url);
+                    
+                    $readme_content = "# {$site_name_safe}\n\nWordPress site synced with GitHub.\n\nSite URL: {$site_url_safe}\n\n";
                     $readme_content .= "## About\n\nThis repository contains the themes, plugins, and configuration for the WordPress site.\n";
-                    $readme_content .= "It is managed by the [WordPress GitHub Sync](https://github.com/yourusername/wp-github-sync) plugin.\n";
+                    $readme_content .= "It is managed by the WordPress GitHub Sync plugin.\n";
                     
                     wp_github_sync_log("Creating README.md file", 'debug');
                     
@@ -507,8 +580,20 @@ class Repository {
         
         wp_github_sync_log("Preparing to sync files from {$wp_content_dir} to temporary directory", 'debug');
         
+        // Validate temporary directory (security)
+        if (!$this->is_safe_path($temp_dir) || !is_dir($temp_dir) || !is_writable($temp_dir)) {
+            wp_github_sync_log("Temporary directory is invalid or not writable: {$temp_dir}", 'error');
+            return new \WP_Error('invalid_temp_dir', __('Temporary directory is invalid or not writable', 'wp-github-sync'));
+        }
+        
         // Copy each path that's enabled
         foreach ($paths_to_sync as $path => $include) {
+            // Path validation for security
+            if (!$this->is_valid_path_key($path)) {
+                wp_github_sync_log("Invalid path specified in configuration: {$path}", 'error');
+                continue;
+            }
+            
             if (!$include) {
                 wp_github_sync_log("Skipping path {$path} (disabled in config)", 'debug');
                 continue;
@@ -519,18 +604,27 @@ class Repository {
                 $rel_path = substr($path, strlen('wp-content/'));
                 $source_path = rtrim($wp_content_dir, '/') . '/' . $rel_path;
             } else {
-                $source_path = $abspath . '/' . $path;
+                // Don't allow paths outside of WordPress installation
+                wp_github_sync_log("Only paths within wp-content are allowed: {$path}", 'error');
+                continue;
             }
             
-            $dest_path = $temp_dir . '/' . $path;
+            // Security: Prevent path traversal attacks
+            if (!$this->is_safe_path($source_path)) {
+                wp_github_sync_log("Path traversal detected in: {$source_path}", 'error');
+                continue;
+            }
+            
+            // Safely combine paths to prevent directory traversal
+            $dest_path = $temp_dir . '/' . $this->normalize_path($path);
             
             wp_github_sync_log("Processing path {$path}", 'debug');
             wp_github_sync_log("Source: {$source_path}", 'debug');
             wp_github_sync_log("Destination: {$dest_path}", 'debug');
             
-            // Make sure source path exists
-            if (!file_exists($source_path)) {
-                wp_github_sync_log("Source path doesn't exist: {$source_path}, skipping", 'warning');
+            // Make sure source path exists and is within the allowed WP directory
+            if (!file_exists($source_path) || !$this->is_within_wordpress($source_path)) {
+                wp_github_sync_log("Source path doesn't exist or is outside WordPress: {$source_path}, skipping", 'warning');
                 continue;
             }
             
@@ -551,6 +645,78 @@ class Repository {
         $this->list_directory_recursive($temp_dir);
         
         return true;
+    }
+    
+    /**
+     * Check if a path is valid for use as a sync path key
+     *
+     * @param string $path The path to check
+     * @return bool True if the path is valid
+     */
+    private function is_valid_path_key($path) {
+        // Only allow alphanumeric characters, slashes, hyphens, underscores
+        return (bool) preg_match('/^[a-zA-Z0-9\/_\-\.]+$/', $path);
+    }
+    
+    /**
+     * Check if a path is safe (no directory traversal)
+     *
+     * @param string $path The path to check
+     * @return bool True if the path is safe
+     */
+    private function is_safe_path($path) {
+        // Check for directory traversal attempts
+        if (strpos($path, '..') !== false) {
+            return false;
+        }
+        
+        // No null bytes
+        if (strpos($path, "\0") !== false) {
+            return false;
+        }
+        
+        // No potentially dangerous path segments
+        $normalized = $this->normalize_path($path);
+        return (strpos($normalized, '../') === false);
+    }
+    
+    /**
+     * Normalize a path by resolving directory traversal
+     *
+     * @param string $path The path to normalize
+     * @return string The normalized path
+     */
+    private function normalize_path($path) {
+        // Convert backslashes to forward slashes
+        $path = str_replace('\\', '/', $path);
+        
+        // Remove any "." segments
+        $path = str_replace('/./', '/', $path);
+        
+        // Remove duplicate slashes
+        $path = preg_replace('#/{2,}#', '/', $path);
+        
+        // Remove trailing slash
+        $path = rtrim($path, '/');
+        
+        return $path;
+    }
+    
+    /**
+     * Check if a path is within the WordPress installation
+     *
+     * @param string $path The path to check
+     * @return bool True if the path is within WordPress
+     */
+    private function is_within_wordpress($path) {
+        $real_path = realpath($path);
+        $wp_content_real = realpath(WP_CONTENT_DIR);
+        
+        if ($real_path === false || $wp_content_real === false) {
+            return false;
+        }
+        
+        return strpos($real_path, $wp_content_real) === 0;
     }
     
     /**
@@ -588,32 +754,108 @@ class Repository {
      * @return bool True on success or false on failure.
      */
     private function copy_directory($source, $dest) {
+        // Validate source and destination for security
+        if (!$this->is_safe_path($source) || !$this->is_safe_path($dest)) {
+            wp_github_sync_log("Security check failed: Unsafe path detected in copy operation", 'error');
+            return false;
+        }
+        
         // Create destination directory if it doesn't exist
         if (!file_exists($dest)) {
             wp_mkdir_p($dest);
         }
         
-        // Get all files and directories
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($source, \RecursiveDirectoryIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::SELF_FIRST
-        );
-        
-        foreach ($iterator as $item) {
-            $target_path = $dest . '/' . $iterator->getSubPathName();
-            
-            if ($item->isDir()) {
-                // Create directory if it doesn't exist
-                if (!file_exists($target_path)) {
-                    wp_mkdir_p($target_path);
-                }
-            } else {
-                // Copy file
-                copy($item, $target_path);
-            }
+        if (!is_dir($source)) {
+            wp_github_sync_log("Source is not a directory: {$source}", 'error');
+            return false;
         }
         
-        return true;
+        try {
+            // Get all files and directories
+            $flags = \RecursiveDirectoryIterator::SKIP_DOTS;
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($source, $flags),
+                \RecursiveIteratorIterator::SELF_FIRST
+            );
+            
+            // File types to skip for security
+            $skip_extensions = array('php', 'phtml', 'php5', 'php7', 'phar', 'phps', 'pht', 'phtm', 'phhtml');
+            
+            // Track files copied
+            $files_copied = 0;
+            $files_skipped = 0;
+            
+            foreach ($iterator as $item) {
+                $subpath = $iterator->getSubPathName();
+                
+                // Extra path security check
+                if (!$this->is_safe_path($subpath)) {
+                    wp_github_sync_log("Skipping unsafe path: {$subpath}", 'warning');
+                    $files_skipped++;
+                    continue;
+                }
+                
+                $target_path = $dest . '/' . $subpath;
+                
+                if ($item->isDir()) {
+                    // Create directory if it doesn't exist
+                    if (!file_exists($target_path)) {
+                        wp_mkdir_p($target_path);
+                    }
+                } else {
+                    // Check file extension for security
+                    $ext = strtolower(pathinfo($item, PATHINFO_EXTENSION));
+                    
+                    if (in_array($ext, $skip_extensions)) {
+                        wp_github_sync_log("Skipping file with unsafe extension: {$subpath}", 'warning');
+                        $files_skipped++;
+                        continue;
+                    }
+                    
+                    // GitHub file size limits:
+                    // - Hard limit: 100MB (GitHub blocks)
+                    // - Recommended: <50MB
+                    // - Web interface limit: 25MB
+                    // - We'll be conservative and skip files over 25MB
+                    $file_size = $item->getSize();
+                    if ($file_size > 26214400) { // 25MB
+                        wp_github_sync_log("Skipping large file: {$subpath} (" . round($file_size / 1048576, 2) . "MB) - exceeds GitHub 25MB recommended limit", 'warning');
+                        $files_skipped++;
+                        
+                        // Store skipped file data for reporting
+                        if (!isset($this->stats['skipped_files'])) {
+                            $this->stats['skipped_files'] = [];
+                        }
+                        $this->stats['skipped_files'][] = [
+                            'path' => $subpath,
+                            'size' => $file_size,
+                            'reason' => 'size'
+                        ];
+                        
+                        continue;
+                    }
+                    
+                    // For files between 5MB and 25MB, use chunked upload to GitHub to avoid timeouts
+                    $large_file_threshold = 5242880; // 5MB
+                    $this->stats['large_files_found'] = ($this->stats['large_files_found'] ?? 0) + ($file_size > $large_file_threshold ? 1 : 0);
+                    
+                    // Copy file
+                    if (copy($item, $target_path)) {
+                        $files_copied++;
+                    } else {
+                        wp_github_sync_log("Failed to copy file: {$subpath}", 'error');
+                        $files_skipped++;
+                    }
+                }
+            }
+            
+            wp_github_sync_log("Directory copy complete: {$files_copied} files copied, {$files_skipped} files skipped", 'info');
+            return true;
+            
+        } catch (\Exception $e) {
+            wp_github_sync_log("Exception during directory copy: " . $e->getMessage(), 'error');
+            return false;
+        }
     }
     
     /**

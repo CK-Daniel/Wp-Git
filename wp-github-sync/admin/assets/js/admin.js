@@ -193,6 +193,69 @@
             }
         }
         
+        // Check system requirements before starting sync
+        function checkSystemRequirements(callback) {
+            $('.wp-github-sync-loading-message').text('Checking system requirements...');
+            $('.wp-github-sync-loading-submessage').text('Verifying PHP settings and permissions');
+            
+            $.ajax({
+                url: wpGitHubSync.ajaxUrl,
+                type: 'POST',
+                data: {
+                    action: 'wp_github_sync_check_requirements',
+                    nonce: wpGitHubSync.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Requirements check passed
+                        $('.wp-github-sync-loading-submessage').text('System requirements verified');
+                        callback(true);
+                    } else {
+                        // Requirements check failed
+                        $('.wp-github-sync-loading-message').text('System Requirements Error');
+                        $('.wp-github-sync-loading-submessage').text(response.data.message);
+                        updateProgress(0, 'Error: ' + response.data.message);
+                        
+                        // Show detailed errors if available
+                        if (response.data.details) {
+                            var $statusDetail = $('.wp-github-sync-status-detail');
+                            $statusDetail.append('<div class="wp-github-sync-requirements-error"><strong>Requirements not met:</strong></div>');
+                            $.each(response.data.details, function(i, item) {
+                                $statusDetail.append('<div class="wp-github-sync-requirement-item">' + 
+                                    '<span class="wp-github-sync-requirement-name">' + item.name + ':</span> ' +
+                                    '<span class="wp-github-sync-requirement-status">' + item.message + '</span>' +
+                                '</div>');
+                            });
+                            
+                            if ($statusDetail.length && $statusDetail[0]) {
+                                $statusDetail.scrollTop($statusDetail[0].scrollHeight);
+                            }
+                        }
+                        
+                        // Hide overlay after 10 seconds
+                        setTimeout(function() {
+                            hideOverlay();
+                        }, 10000);
+                        
+                        callback(false);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    // AJAX request itself failed
+                    $('.wp-github-sync-loading-message').text('Requirements Check Failed');
+                    $('.wp-github-sync-loading-submessage').text('Error communicating with server: ' + error);
+                    updateProgress(0, 'AJAX Error during requirements check: ' + error);
+                    
+                    // Hide overlay after 5 seconds
+                    setTimeout(function() {
+                        hideOverlay();
+                    }, 5000);
+                    
+                    callback(false);
+                }
+            });
+        }
+        
         // Handle the initial sync process
         $('#initial_sync_button').on('click', function() {
             var createNewRepo = $('#create_new_repo').is(':checked');
@@ -204,148 +267,158 @@
             }
             
             showOverlay();
-            $('.wp-github-sync-loading-message').text('Setting up GitHub Sync...');
+            $('.wp-github-sync-loading-message').text('Preparing for GitHub Sync...');
             
             // Initialize progress display
             initProgress();
-            updateProgress(0, 'Starting synchronization process...');
             
-            if (createNewRepo) {
-                updateProgress(0, 'Creating new repository: ' + repoName);
-            } else {
-                updateProgress(0, 'Connecting to existing repository...');
-            }
-            
-            // Setup polling for progress updates
-            var lastProgressTime = Date.now();
-            var lastProgressStep = -1;
-            var lastProgressDetail = '';
-            var noProgressCount = 0;
-            var maxNoProgressCount = 10; // About 15 seconds without progress
-            
-            var progressCheck = setInterval(function() {
-                // Check if we haven't seen progress for a while
-                var currentTime = Date.now();
-                if (lastProgressStep >= 0 && (currentTime - lastProgressTime) > 30000) {
-                    // It's been more than 30 seconds without progress at the same step
-                    if (noProgressCount >= maxNoProgressCount) {
-                        // Add a warning to the status detail
-                        updateProgress(
-                            lastProgressStep, 
-                            "⚠️ Operation taking longer than expected. This doesn't mean it failed, just that it's working on a larger repository or slower connection.", 
-                            currentSubStep
-                        );
-                        
-                        // Reset counter so we don't spam warnings
-                        noProgressCount = 0;
-                    }
+            // First check system requirements
+            checkSystemRequirements(function(requirementsPassed) {
+                if (!requirementsPassed) {
+                    return; // Stop if requirements check failed
                 }
                 
-                $.ajax({
-                    url: wpGitHubSync.ajaxUrl,
-                    type: 'POST',
-                    data: {
-                        action: 'wp_github_sync_check_progress',
-                        nonce: wpGitHubSync.nonce
-                    },
-                    success: function(progressData) {
-                        if (progressData.success && progressData.data.step !== undefined) {
-                            // Track progress for timeout detection
-                            var newStep = progressData.data.step;
-                            var newDetail = progressData.data.detail || '';
-                            var subStep = progressData.data.subStep;
+                // Continue with initialization
+                updateProgress(0, 'Starting synchronization process...');
+                
+                if (createNewRepo) {
+                    updateProgress(0, 'Creating new repository: ' + repoName);
+                } else {
+                    updateProgress(0, 'Connecting to existing repository...');
+                }
+                
+                // Setup polling for progress updates
+                var lastProgressTime = Date.now();
+                var lastProgressStep = -1;
+                var lastProgressDetail = '';
+                var noProgressCount = 0;
+                var maxNoProgressCount = 10; // About 15 seconds without progress
+            
+                var progressCheck = setInterval(function() {
+                    // Check if we haven't seen progress for a while
+                    var currentTime = Date.now();
+                    if (lastProgressStep >= 0 && (currentTime - lastProgressTime) > 30000) {
+                        // It's been more than 30 seconds without progress at the same step
+                        if (noProgressCount >= maxNoProgressCount) {
+                            // Add a warning to the status detail
+                            updateProgress(
+                                lastProgressStep, 
+                                "⚠️ Operation taking longer than expected. This doesn't mean it failed, just that it's working on a larger repository or slower connection.", 
+                                currentSubStep
+                            );
                             
-                            // Check if we're making progress
-                            if (newStep !== lastProgressStep || newDetail !== lastProgressDetail) {
-                                lastProgressTime = currentTime;
-                                lastProgressStep = newStep;
-                                lastProgressDetail = newDetail;
-                                noProgressCount = 0;
-                            } else {
-                                noProgressCount++;
-                            }
-                            
-                            updateProgress(newStep, newDetail, subStep);
-                            
-                            // Auto advance sub-steps if we're stuck at the "Creating initial commit" stage
-                            if (newStep === 5 && subStep === undefined && noProgressCount > 2) {
-                                // Start cycling through sub-steps to show activity
-                                var fakeSubStep = Math.floor((noProgressCount - 2) / 2) % syncSteps[5].subSteps.length;
-                                updateProgress(5, null, fakeSubStep);
-                            }
+                            // Reset counter so we don't spam warnings
+                            noProgressCount = 0;
                         }
                     }
-                });
-            }, 1500);
-            
-            $.ajax({
-                url: wpGitHubSync.ajaxUrl,
-                type: 'POST',
-                data: {
-                    action: 'wp_github_sync_initial_sync',
-                    create_new_repo: createNewRepo ? 1 : 0,
-                    repo_name: repoName,
-                    nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce for initial sync
-                },
-                success: function(response) {
-                    clearInterval(progressCheck);
                     
-                    if (response.success) {
-                        updateProgress(syncSteps.length - 1, 'Sync completed successfully!');
-                        $('.wp-github-sync-loading-message').text('Success!');
-                        $('.wp-github-sync-loading-submessage').text(response.data.message);
-                        
-                        // Redirect to dashboard after 2 seconds
-                        setTimeout(function() {
-                            window.location.href = wpGitHubSync.adminUrl + '?page=wp-github-sync';
-                        }, 2000);
-                    } else {
-                        // Handle error response
-                        updateProgress(0, 'Error: ' + (response.data && response.data.message ? response.data.message : 'Unknown error'));
-                        $('.wp-github-sync-loading-message').text('Error');
-                        $('.wp-github-sync-loading-submessage').text(response.data && response.data.message ? response.data.message : 'An error occurred');
-                        
-                        // Hide overlay after 3 seconds
-                        setTimeout(function() {
-                            hideOverlay();
-                        }, 3000);
-                    }
-                },
-                error: function(xhr, status, error) {
-                    clearInterval(progressCheck);
-                    updateProgress(0, 'AJAX Error: ' + error);
-                    $('.wp-github-sync-loading-message').text('Error');
-                    $('.wp-github-sync-loading-submessage').text('Communication error with server: ' + error);
-                    
-                    // Log detailed error to console
-                    console.error("AJAX Error:", status, error);
-                    
-                    if (xhr.responseText) {
-                        console.error("Response:", xhr.responseText);
-                        
-                        // Try to parse response for more details
-                        try {
-                            var responseObj = JSON.parse(xhr.responseText);
-                            if (responseObj && responseObj.data && responseObj.data.message) {
-                                $('.wp-github-sync-loading-submessage').text(responseObj.data.message);
-                                console.error("Parsed error:", responseObj.data.message);
-                            } else {
-                                // Look for WordPress critical error
-                                if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
-                                    $('.wp-github-sync-loading-submessage').text('WordPress encountered a critical error. Check server logs for details.');
+                    $.ajax({
+                        url: wpGitHubSync.ajaxUrl,
+                        type: 'POST',
+                        data: {
+                            action: 'wp_github_sync_check_progress',
+                            nonce: wpGitHubSync.nonce
+                        },
+                        success: function(progressData) {
+                            if (progressData.success && progressData.data.step !== undefined) {
+                                // Track progress for timeout detection
+                                var newStep = progressData.data.step;
+                                var newDetail = progressData.data.detail || '';
+                                var subStep = progressData.data.subStep;
+                                
+                                // Check if we're making progress
+                                if (newStep !== lastProgressStep || newDetail !== lastProgressDetail) {
+                                    lastProgressTime = currentTime;
+                                    lastProgressStep = newStep;
+                                    lastProgressDetail = newDetail;
+                                    noProgressCount = 0;
+                                } else {
+                                    noProgressCount++;
+                                }
+                                
+                                updateProgress(newStep, newDetail, subStep);
+                                
+                                // Auto advance sub-steps if we're stuck at the "Creating initial commit" stage
+                                if (newStep === 5 && subStep === undefined && noProgressCount > 2) {
+                                    // Start cycling through sub-steps to show activity
+                                    var fakeSubStep = Math.floor((noProgressCount - 2) / 2) % syncSteps[5].subSteps.length;
+                                    updateProgress(5, null, fakeSubStep);
                                 }
                             }
-                        } catch (e) {
-                            // Not JSON, might be HTML error
-                            console.error("Error parsing response:", e);
                         }
-                    }
-                    
-                    // Hide overlay after 3 seconds
-                    setTimeout(function() {
-                        hideOverlay();
-                    }, 3000);
-                }
+                    });
+                }, 1500);
+                
+                $.ajax({
+                        url: wpGitHubSync.ajaxUrl,
+                        type: 'POST',
+                        data: {
+                            action: 'wp_github_sync_initial_sync',
+                            create_new_repo: createNewRepo ? 1 : 0,
+                            repo_name: repoName,
+                            nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce for initial sync
+                        },
+                        success: function(response) {
+                            clearInterval(progressCheck);
+                            
+                            if (response.success) {
+                                updateProgress(syncSteps.length - 1, 'Sync completed successfully!');
+                                $('.wp-github-sync-loading-message').text('Success!');
+                                $('.wp-github-sync-loading-submessage').text(response.data.message);
+                                
+                                // Redirect to dashboard after 2 seconds
+                                setTimeout(function() {
+                                    window.location.href = wpGitHubSync.adminUrl + '?page=wp-github-sync';
+                                }, 2000);
+                            } else {
+                                // Handle error response
+                                updateProgress(0, 'Error: ' + (response.data && response.data.message ? response.data.message : 'Unknown error'));
+                                $('.wp-github-sync-loading-message').text('Error');
+                                $('.wp-github-sync-loading-submessage').text(response.data && response.data.message ? response.data.message : 'An error occurred');
+                                
+                                // Hide overlay after 3 seconds
+                                setTimeout(function() {
+                                    hideOverlay();
+                                }, 3000);
+                            }
+                        },
+                        error: function(xhr, status, error) {
+                            clearInterval(progressCheck);
+                            updateProgress(0, 'AJAX Error: ' + error);
+                            $('.wp-github-sync-loading-message').text('Error');
+                            $('.wp-github-sync-loading-submessage').text('Communication error with server: ' + error);
+                            
+                            // Log detailed error to console
+                            console.error("AJAX Error:", status, error);
+                            
+                            if (xhr.responseText) {
+                                console.error("Response:", xhr.responseText);
+                                
+                                // Try to parse response for more details
+                                try {
+                                    var responseObj = JSON.parse(xhr.responseText);
+                                    if (responseObj && responseObj.data && responseObj.data.message) {
+                                        $('.wp-github-sync-loading-submessage').text(responseObj.data.message);
+                                        console.error("Parsed error:", responseObj.data.message);
+                                    } else {
+                                        // Look for WordPress critical error
+                                        if (xhr.responseText.indexOf('<p>There has been a critical error') !== -1) {
+                                            $('.wp-github-sync-loading-submessage').text('WordPress encountered a critical error. Check server logs for details.');
+                                        }
+                                    }
+                                } catch (e) {
+                                    // Not JSON, might be HTML error
+                                    console.error("Error parsing response:", e);
+                                }
+                            }
+                            
+                            // Hide overlay after 3 seconds
+                            setTimeout(function() {
+                                hideOverlay();
+                            }, 3000);
+                        }
+                    });
+                });
             });
         });
         

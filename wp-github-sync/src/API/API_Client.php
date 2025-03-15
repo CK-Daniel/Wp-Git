@@ -58,6 +58,13 @@ class API_Client {
      * @var string pat|oauth|github_app
      */
     private $auth_method;
+    
+    /**
+     * The authorization format used for requests (bearer or token)
+     * 
+     * @var string bearer|token
+     */
+    private $auth_format_used;
 
     /**
      * Initialize the GitHub API client.
@@ -84,6 +91,10 @@ class API_Client {
         // Get authentication method
         $this->auth_method = get_option('wp_github_sync_auth_method', 'pat');
         
+        // Get the preferred auth format (bearer or token) from options
+        // Or use the default based on token type
+        $this->auth_format_used = get_option('wp_github_sync_auth_format', '');
+        
         // First check for unencrypted token in environment for development purposes
         $dev_token = defined('WP_GITHUB_SYNC_DEV_TOKEN') ? WP_GITHUB_SYNC_DEV_TOKEN : '';
         if (!empty($dev_token)) {
@@ -98,10 +109,28 @@ class API_Client {
                     if ($decrypted !== false) {
                         $this->token = $decrypted;
                         wp_github_sync_log("Successfully decrypted PAT token", 'debug');
+                        
+                        // Validate token is still valid format (e.g., not expired or tampered)
+                        if ((strpos($decrypted, 'github_pat_') === 0 && strlen($decrypted) > 20) || 
+                            (strpos($decrypted, 'ghp_') === 0 && strlen($decrypted) > 10) ||
+                            (strlen($decrypted) === 40 && ctype_xdigit($decrypted))) {
+                            // Token appears valid in format
+                            wp_github_sync_log("Token has valid format", 'debug');
+                        } else {
+                            wp_github_sync_log("Token has unexpected format, might be invalid", 'warning');
+                            // We'll still try to use it, but log a warning
+                        }
                     } else {
                         wp_github_sync_log("Failed to decrypt PAT token, clearing invalid token", 'error');
                         // Clear the invalid token to force re-authentication
                         update_option('wp_github_sync_access_token', '');
+                        
+                        // Create transient to show admin notice
+                        set_transient('wp_github_sync_token_error', [
+                            'type' => 'error',
+                            'message' => __('GitHub Sync token could not be decrypted. Please re-enter your GitHub token in the settings.', 'wp-github-sync')
+                        ], 86400); // 24 hours
+                        
                         add_action('admin_notices', function() {
                             echo '<div class="notice notice-error is-dismissible">';
                             echo '<p>' . esc_html__('GitHub Sync token could not be decrypted. Please re-enter your GitHub token in the settings.', 'wp-github-sync') . '</p>';
@@ -241,9 +270,12 @@ class API_Client {
      * @param string $method                  The HTTP method (GET, POST, etc.).
      * @param array  $data                    The data to send with the request.
      * @param bool   $handle_empty_repo_error Whether to handle empty repository error specially.
+     * @param int    $timeout                 Optional request timeout in seconds.
+     * @param bool   $auto_retry              Whether to automatically retry on failure.
+     * @param int    $max_retries             Maximum number of retries on failure.
      * @return array|WP_Error The response or WP_Error on failure.
      */
-    public function request($endpoint, $method = 'GET', $data = [], $handle_empty_repo_error = false) {
+    public function request($endpoint, $method = 'GET', $data = [], $handle_empty_repo_error = false, $timeout = 30, $auto_retry = true, $max_retries = 2) {
         try {
             // Generate token for GitHub App if needed
             if ($this->auth_method === 'github_app' && empty($this->token)) {
@@ -325,16 +357,22 @@ class API_Client {
                 $token_type = 'unknown';
             }
             
-            // Always use Bearer format for app tokens and OAuth tokens
-            // Use token format for classic PATs to ensure backward compatibility
+            // GITHUB API RECOMMENDATION: 
+            // As of 2023, GitHub recommends "Bearer" format for all token types
+            // But for backward compatibility with older scripts, "token" format is still accepted for classic PATs
+            
+            // Track the first auth method we try - if request fails, we'll try the alternate format
             if ($token_type === 'app_token' || $token_type === 'oauth' || $token_type === 'fine_grained_pat') {
+                // Modern token types - always use Bearer (as per GitHub documentation)
                 $headers['Authorization'] = 'Bearer ' . $this->token;
-                wp_github_sync_log("Using 'Bearer' authorization header", 'debug');
+                $this->auth_format_used = 'bearer';
+                wp_github_sync_log("Using 'Bearer' authorization header (recommended for {$token_type})", 'debug');
             } else {
-                // For classic PATs, try both formats since GitHub API accepts both
-                // Use 'token' format first which has been more reliable for classic PATs
-                $headers['Authorization'] = 'token ' . $this->token;
-                wp_github_sync_log("Using 'token' authorization header", 'debug');
+                // For classic PATs, GitHub accepts both formats
+                // We'll try "Bearer" first (now recommended), and fall back to "token" if needed
+                $headers['Authorization'] = 'Bearer ' . $this->token;
+                $this->auth_format_used = 'bearer';
+                wp_github_sync_log("Using 'Bearer' authorization header for classic PAT (updated GitHub recommendation)", 'debug');
             }
             
             // Add conditional request header if we have an etag
@@ -347,7 +385,7 @@ class API_Client {
             $args = [
                 'method' => $method,
                 'headers' => $headers,
-                'timeout' => 30,
+                'timeout' => $timeout, // Use provided timeout
                 'sslverify' => true,
             ];
             
@@ -358,21 +396,83 @@ class API_Client {
                 $url = add_query_arg($data, $url);
             }
             
-            // Debug logging for authentication issues
+            // Debug logging for authentication issues (without exposing token info)
             $token_length = strlen($this->token);
-            $token_start = $token_length > 4 ? substr($this->token, 0, 4) : '****';
-            $token_end = $token_length > 4 ? substr($this->token, -4) : '****';
             wp_github_sync_log("Request to: {$url} (Method: {$method})", 'debug');
             wp_github_sync_log("Authorization token length: {$token_length}", 'debug');
-            wp_github_sync_log("Authorization token prefix/suffix: {$token_start}...{$token_end}", 'debug');
+            wp_github_sync_log("Authorization token type: {$token_type}", 'debug');
             
             // Don't log body for security unless it's small and not sensitive
             if (!empty($args['body']) && strlen($args['body']) < 500 && strpos($args['body'], 'password') === false && strpos($args['body'], 'token') === false) {
                 wp_github_sync_log("Request body: " . $args['body'], 'debug');
             }
             
-            // Make the API request with extended error handling
-            $response = wp_remote_request($url, $args);
+            // Make the API request with extended error handling and potential retries
+            $retry_count = 0;
+            $retry_delay = 1; // Initial delay in seconds
+            $response = null;
+            $last_error = null;
+            
+            do {
+                // If this is a retry, delay before attempting again
+                if ($retry_count > 0) {
+                    $delay_seconds = $retry_delay * pow(2, $retry_count - 1); // Exponential backoff
+                    wp_github_sync_log("Retry #{$retry_count} for request to {$url}. Delaying {$delay_seconds} seconds.", 'info');
+                    sleep($delay_seconds);
+                }
+                
+                // Perform the request
+                $response = wp_remote_request($url, $args);
+                
+                // Track error if any
+                if (is_wp_error($response)) {
+                    $last_error = $response;
+                    $error_message = $response->get_error_message();
+                    $error_code = $response->get_error_code();
+                    wp_github_sync_log("Request failed (attempt ".($retry_count+1)."): {$error_code} - {$error_message}", 'error');
+                    
+                    // Only retry on network errors, not on client/permissions errors
+                    $can_retry = $auto_retry && 
+                                 (strpos($error_message, 'cURL error') !== false || 
+                                  strpos($error_message, 'connect() timed out') !== false ||
+                                  strpos($error_message, 'Connection reset') !== false);
+                    
+                    if (!$can_retry) {
+                        wp_github_sync_log("Error not retriable, giving up", 'warning');
+                        break;
+                    }
+                } else {
+                    // No WP_Error, but check response code too for certain errors
+                    $response_code = wp_remote_retrieve_response_code($response);
+                    
+                    // Don't retry client errors (400s) except rate limits and server errors (500s)
+                    if ($response_code >= 400) {
+                        wp_github_sync_log("Request returned HTTP {$response_code} (attempt ".($retry_count+1).")", 'warning');
+                        
+                        // We can retry rate limits (429), server errors (>=500), and secondary rate limits (403)
+                        $body = wp_remote_retrieve_body($response);
+                        $body_data = json_decode($body, true);
+                        $error_message = isset($body_data['message']) ? $body_data['message'] : '';
+                        
+                        $can_retry = $auto_retry && 
+                                    ($response_code == 429 || 
+                                     $response_code >= 500 || 
+                                     ($response_code == 403 && 
+                                      (strpos($error_message, 'rate limit') !== false || 
+                                       strpos($error_message, 'secondary') !== false)));
+                        
+                        if (!$can_retry) {
+                            wp_github_sync_log("Error code {$response_code} not retriable, continuing", 'debug');
+                            break;
+                        }
+                    } else {
+                        // Success - no need to retry
+                        break;
+                    }
+                }
+                
+                $retry_count++;
+            } while ($retry_count <= $max_retries);
             
             if (is_wp_error($response)) {
                 $error_message = $response->get_error_message();
@@ -424,6 +524,9 @@ class API_Client {
                 
                 return new \WP_Error('github_api_json_error', __('Failed to parse GitHub API response as JSON.', 'wp-github-sync'));
             }
+            
+            // Create a label for jump point (used if auth retry succeeds)
+            process_successful_response:
             
             // Handle and log rate limit information
             $rate_limit_remaining = wp_remote_retrieve_header($response, 'x-ratelimit-remaining');
@@ -478,6 +581,41 @@ class API_Client {
             if ($response_code >= 400) {
                 $error_message = isset($response_data['message']) ? $response_data['message'] : "Unknown API error (HTTP {$response_code})";
                 wp_github_sync_log("GitHub API error ({$response_code}): {$error_message}", 'error');
+                
+                // Check for 401 Unauthorized errors with PATs - might need to try alternate auth format
+                if ($response_code === 401 && !empty($this->auth_format_used)) {
+                    // If we used 'bearer' format and it failed with a classic PAT, try 'token' format
+                    if ($this->auth_format_used === 'bearer' && 
+                        ($token_type === 'classic_pat' || $token_type === 'classic_pat_hex' || $token_type === 'unknown')) {
+                        
+                        wp_github_sync_log("Authentication failed with 'Bearer' format, trying with 'token' format", 'warning');
+                        
+                        // Modify the headers to use 'token' format instead
+                        $args['headers']['Authorization'] = 'token ' . $this->token;
+                        
+                        // Make the request again with the new auth format
+                        wp_github_sync_log("Retrying request with 'token' authorization format", 'debug');
+                        $retry_response = wp_remote_request($url, $args);
+                        
+                        // If retry is successful, use that response instead
+                        if (!is_wp_error($retry_response) && wp_remote_retrieve_response_code($retry_response) < 400) {
+                            wp_github_sync_log("Request succeeded with 'token' format - using this format for future requests", 'info');
+                            $this->auth_format_used = 'token'; // Remember for future requests
+                            update_option('wp_github_sync_auth_format', 'token'); // Save preference
+                            
+                            // Use the successful response
+                            $response = $retry_response;
+                            $response_code = wp_remote_retrieve_response_code($response);
+                            $response_body = wp_remote_retrieve_body($response);
+                            $response_data = json_decode($response_body, true);
+                            
+                            // Skip error handling since we have a successful response now
+                            goto process_successful_response;
+                        } else {
+                            wp_github_sync_log("Request also failed with 'token' format - authentication issue not related to format", 'error');
+                        }
+                    }
+                }
                 
                 // Handle rate limiting and abuse prevention according to documentation
                 if ($response_code === 403) {
@@ -766,6 +904,7 @@ class API_Client {
 
     /**
      * Test if authentication is working correctly.
+     * Tests both authorization header formats if needed.
      *
      * @return bool|string True if authentication is working, error message otherwise.
      */
@@ -775,14 +914,17 @@ class API_Client {
             return 'No authentication token found';
         }
         
-        // Log token details for debugging
+        // Log token details for debugging (without revealing token parts)
         $token_length = strlen($this->token);
-        $token_masked = substr($this->token, 0, 4) . '...' . substr($this->token, -4);
-        wp_github_sync_log("Testing authentication with token length: {$token_length}, token: {$token_masked}", 'debug');
+        wp_github_sync_log("Testing authentication with token length: {$token_length}", 'debug');
         
         // Validate token format before attempting to use it
         $valid_token_format = false;
         $token_type = 'unknown';
+        
+        // Keep track of which auth format works and permissions verified
+        $working_auth_format = null;
+        $permissions_verified = false;
         
         if (strpos($this->token, 'github_pat_') === 0) {
             wp_github_sync_log("Token appears to be a fine-grained PAT", 'debug');
@@ -913,6 +1055,11 @@ class API_Client {
                         
                         if ($alternative_response_code === 200) {
                             wp_github_sync_log("Alternative auth format succeeded! Using {$alternative_format} for future requests", 'info');
+                            
+                            // Save this format preference for future requests
+                            $this->auth_format_used = strtolower($alternative_format);
+                            update_option('wp_github_sync_auth_format', strtolower($alternative_format));
+                            
                             // Return success with the alternative response
                             return json_decode($alternative_body, true);
                         } else {
@@ -992,6 +1139,38 @@ class API_Client {
             // If we got a valid response with a login, authentication is working
             if (isset($data['login'])) {
                 wp_github_sync_log("Authentication successful as user: {$data['login']}", 'debug');
+                
+                // For fine-grained PATs, verify repository permissions
+                if (strpos($this->token, 'github_pat_') === 0 && !empty($this->owner) && !empty($this->repo)) {
+                    wp_github_sync_log("Fine-grained PAT detected - verifying repository access permissions", 'info');
+                    
+                    // First verify repository exists
+                    $repo_check = $this->repository_exists();
+                    if (!$repo_check) {
+                        return 'Repository not found or not accessible. Check repository URL and token permissions.';
+                    }
+                    
+                    // Then check permission level
+                    $repo_permissions_url = "repos/{$this->owner}/{$this->repo}/collaborators/{$data['login']}/permission";
+                    $permission_response = $this->request($repo_permissions_url);
+                    
+                    if (!is_wp_error($permission_response) && isset($permission_response['permission'])) {
+                        $perm_level = $permission_response['permission'];
+                        wp_github_sync_log("Token has '{$perm_level}' permission for repository", 'info');
+                        
+                        // Need at least 'push' or 'write' permission
+                        if (in_array($perm_level, ['admin', 'write', 'push', 'maintain'])) {
+                            wp_github_sync_log("Token has sufficient permissions for repository operations", 'info');
+                            // Verified permissions are good - continue
+                        } else {
+                            return "Token has insufficient permissions ({$perm_level}). Need write/push access to repository.";
+                        }
+                    } else {
+                        wp_github_sync_log("Could not verify permission level - continuing anyway", 'warning');
+                        // Continue but with warning logged
+                    }
+                }
+                
                 return true;
             }
             

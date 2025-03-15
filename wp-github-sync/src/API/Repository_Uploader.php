@@ -103,9 +103,20 @@ class Repository_Uploader {
             return new \WP_Error('invalid_directory', __('Directory does not exist or is not readable', 'wp-github-sync'));
         }
         
-        // Validate branch name (basic validation)
+        // Validate branch name (strict validation)
         if (!preg_match('/^[a-zA-Z0-9_\-\.\/]+$/', $branch)) {
-            return new \WP_Error('invalid_branch', __('Invalid branch name', 'wp-github-sync'));
+            return new \WP_Error('invalid_branch', __('Invalid branch name. Only alphanumeric characters, underscores, hyphens, dots, and forward slashes are allowed.', 'wp-github-sync'));
+        }
+        
+        // Check for problematic git branch patterns
+        if (preg_match('/^\./', $branch) || preg_match('/\/$/', $branch) || strpos($branch, '..') !== false) {
+            return new \WP_Error('invalid_branch', __('Invalid branch name. Cannot start with dot, end with slash, or contain double dots.', 'wp-github-sync'));
+        }
+        
+        // Check for other unsafe branch names
+        $unsafe_branches = array('HEAD', 'master.lock');
+        if (in_array($branch, $unsafe_branches, true) || preg_match('/\.lock$/', $branch)) {
+            return new \WP_Error('invalid_branch', __('This branch name is reserved or invalid.', 'wp-github-sync'));
         }
         
         // Check directory is not empty
@@ -194,15 +205,44 @@ class Repository_Uploader {
         
         // Step 5: Create a new commit
         try {
-            $new_commit = $this->api_client->request(
-                "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/commits",
-                'POST',
-                [
-                    'message' => $commit_message,
-                    'tree' => $new_tree_sha,
-                    'parents' => [$ref_sha]
-                ]
-            );
+            // Add retry mechanism for commit creation (can sometimes fail due to network issues)
+            $max_retries = 3;
+            $retry_delay = 2; // seconds
+            $attempt = 0;
+            $success = false;
+            $new_commit = null;
+                
+            while ($attempt < $max_retries && !$success) {
+                $attempt++;
+                    
+                if ($attempt > 1) {
+                    wp_github_sync_log("Retry attempt {$attempt} for commit creation", 'info');
+                    sleep($retry_delay);
+                    $retry_delay *= 2; // Exponential backoff
+                }
+                    
+                $new_commit = $this->api_client->request(
+                    "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/commits",
+                    'POST',
+                    [
+                        'message' => $commit_message,
+                        'tree' => $new_tree_sha,
+                        'parents' => [$ref_sha]
+                    ]
+                );
+                
+                if (!is_wp_error($new_commit)) {
+                    $success = true;
+                } else {
+                    wp_github_sync_log("Commit creation failed, error: " . $new_commit->get_error_message(), 'error');
+                    
+                    // Only retry certain errors that might be transient
+                    $error_code = $new_commit->get_error_code();
+                    if (!in_array($error_code, ['github_api_rate_limit', 'github_secondary_limit'])) {
+                        break; // Don't retry if it's not a rate limit issue
+                    }
+                }
+            }
             
             if (is_wp_error($new_commit)) {
                 wp_github_sync_log("Failed to create commit: " . $new_commit->get_error_message(), 'error');
@@ -213,8 +253,14 @@ class Repository_Uploader {
             wp_github_sync_log("Created new commit with SHA: {$new_commit_sha}", 'info');
             
             // Step 6: Update the reference
+            // Sanitize branch name again for safety
+            $sanitized_branch = preg_replace('/[^a-zA-Z0-9_\-\.\/]/', '', $branch);
+            if ($sanitized_branch !== $branch) {
+                wp_github_sync_log("Branch name was sanitized from '{$branch}' to '{$sanitized_branch}'", 'warning');
+            }
+            
             $update_ref = $this->api_client->request(
-                "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/refs/heads/{$branch}",
+                "repos/{$this->api_client->get_owner()}/{$this->api_client->get_repo()}/git/refs/heads/{$sanitized_branch}",
                 'PATCH',
                 [
                     'sha' => $new_commit_sha,
@@ -241,6 +287,8 @@ class Repository_Uploader {
 
     /**
      * Get or create a branch reference.
+     * Handles various edge cases like empty repositories, non-existent branches,
+     * and prevents issues with unsafe branch names.
      *
      * @param string $branch        The branch name.
      * @param bool   $branch_exists Whether the branch already exists.
@@ -840,11 +888,51 @@ class Repository_Uploader {
                         }
                         
                         wp_github_sync_log("Creating blob for file: {$relative_path}", 'debug');
-                        $blob = $self->api_client->request(
-                            "repos/{$self->api_client->get_owner()}/{$self->api_client->get_repo()}/git/blobs",
-                            'POST',
-                            $blob_data
-                        );
+                        
+                        // Handle large files (>3MB) differently - they may need special handling
+                        $large_file_threshold = 3 * 1024 * 1024; // 3MB
+                        $file_size = filesize($file_path);
+                        
+                        if ($file_size > $large_file_threshold) {
+                            wp_github_sync_log("Large file detected ({$file_size} bytes). Using special upload handling.", 'info');
+                            
+                            // For large files, use retries and connection timeout adjustments
+                            $max_blob_retries = 3;
+                            $blob_retry_count = 0;
+                            $blob_success = false;
+                            $blob = null;
+                            
+                            while ($blob_retry_count < $max_blob_retries && !$blob_success) {
+                                $blob_retry_count++;
+                                
+                                if ($blob_retry_count > 1) {
+                                    wp_github_sync_log("Retry #{$blob_retry_count} for large file blob creation", 'debug');
+                                    sleep(2 * $blob_retry_count); // Increasing delay for each retry
+                                }
+                                
+                                // Use extended timeout for large file uploads
+                                $blob = $self->api_client->request(
+                                    "repos/{$self->api_client->get_owner()}/{$self->api_client->get_repo()}/git/blobs",
+                                    'POST',
+                                    $blob_data,
+                                    false, // empty repo handling
+                                    60 // Extended timeout in seconds for large files
+                                );
+                                
+                                if (!is_wp_error($blob)) {
+                                    $blob_success = true;
+                                } else {
+                                    wp_github_sync_log("Large file upload failed attempt #{$blob_retry_count}: " . $blob->get_error_message(), 'warning');
+                                }
+                            }
+                        } else {
+                            // Standard file upload
+                            $blob = $self->api_client->request(
+                                "repos/{$self->api_client->get_owner()}/{$self->api_client->get_repo()}/git/blobs",
+                                'POST',
+                                $blob_data
+                            );
+                        }
                         
                         if (is_wp_error($blob)) {
                             $error_message = $blob->get_error_message();
