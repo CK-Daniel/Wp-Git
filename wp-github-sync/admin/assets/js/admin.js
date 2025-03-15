@@ -389,7 +389,7 @@
                         create_new_repo: createNewRepo ? 1 : 0,
                         repo_name: repoName,
                         run_in_background: runInBackground ? 1 : 0,
-                        nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce for initial sync
+                        nonce: wpGitHubSync.nonce // Using the standard nonce
                     },
                     success: function(response) {
                         if (!runInBackground) {

@@ -601,7 +601,6 @@ $repo_display = $parsed_url ? $parsed_url['owner'] . '/' . $parsed_url['repo'] :
             <div class="wp-github-sync-status-detail"></div>
         </div>
 
-        <!-- AJAX nonce for security -->
-        <input type="hidden" id="wp-github-sync-nonce" value="<?php echo wp_create_nonce('wp-github-sync-nonce'); ?>">
+        <!-- AJAX nonce is now provided via wp_localize_script -->
     <?php endif; ?>
 </div>

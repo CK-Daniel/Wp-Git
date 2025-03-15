@@ -52,7 +52,7 @@
     
     // Main action buttons functionality
     function bindActionButtons() {
-        const nonce = $('#wp-github-sync-nonce').val();
+        const nonce = wpGitHubSync.nonce;
         
         // Deploy latest changes button
         $('.wp-github-sync-deploy').on('click', function() {
@@ -277,7 +277,7 @@
     
     // Branch management functionality
     function handleBranchManagement() {
-        const nonce = $('#wp-github-sync-nonce').val();
+        const nonce = wpGitHubSync.nonce;
         
         // Switch branch button
         $('.wp-github-sync-switch-branch').on('click', function() {
@@ -386,7 +386,7 @@
     
     // Developer tools functionality
     function setupDeveloperTools() {
-        const nonce = $('#wp-github-sync-nonce').val();
+        const nonce = wpGitHubSync.nonce;
         
         // Component selection
         $('#wp-github-sync-component-select').on('change', function() {
