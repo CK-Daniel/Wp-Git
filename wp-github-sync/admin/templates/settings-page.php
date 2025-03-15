@@ -373,7 +373,33 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
             
             // Show the content for the active tab
             $('#' + tabId + '-tab-content').addClass('active');
+
+            // Store active tab in localStorage for persistence
+            localStorage.setItem('wpGitHubSyncActiveTab', tabId);
         });
+        
+        // Set the initial active tab
+        function setInitialActiveTab() {
+            // First check URL hash
+            const hash = window.location.hash.substr(1);
+            if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
+                $('.wp-github-sync-tab[data-tab="' + hash + '"]').click();
+                return;
+            }
+            
+            // Then check localStorage
+            const savedTab = localStorage.getItem('wpGitHubSyncActiveTab');
+            if (savedTab && $('.wp-github-sync-tab[data-tab="' + savedTab + '"]').length) {
+                $('.wp-github-sync-tab[data-tab="' + savedTab + '"]').click();
+                return;
+            }
+            
+            // Default to first tab if nothing else
+            $('.wp-github-sync-tab').first().click();
+        }
+        
+        // Initialize tabs on page load
+        setInitialActiveTab();
         
         // Initial sync button click handler
         $('#initial_sync_button').on('click', function() {
@@ -679,19 +705,13 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
             checkbox.prop('checked', !checkbox.prop('checked')).trigger('change');
         });
         
-        // Handle tab state from URL hash
-        function handleTabFromHash() {
+        // Handle hash changes
+        $(window).on('hashchange', function() {
             const hash = window.location.hash.substr(1);
             if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
                 $('.wp-github-sync-tab[data-tab="' + hash + '"]').click();
             }
-        }
-        
-        // Handle hash changes
-        $(window).on('hashchange', handleTabFromHash);
-        
-        // Initial hash check
-        handleTabFromHash();
+        });
     });
     </script>
 </div>

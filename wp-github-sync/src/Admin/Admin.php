@@ -134,6 +134,7 @@ class Admin {
                 'adminUrl' => admin_url(),
                 'nonce' => wp_create_nonce('wp_github_sync_nonce'),
                 'initialSyncNonce' => wp_create_nonce('wp_github_sync_initial_sync'),
+                'currentPage' => $screen->id,
                 'strings' => array(
                     'confirmDeploy' => __('Are you sure you want to deploy the latest changes from GitHub? This will update your site files.', 'wp-github-sync'),
                     'confirmSwitchBranch' => __('Are you sure you want to switch branches? This will update your site files to match the selected branch.', 'wp-github-sync'),
@@ -166,6 +167,44 @@ class Admin {
                 $this->version,
                 false
             );
+        }
+        
+        // Load settings page specific scripts
+        if (strpos($screen->id, 'wp-github-sync-settings') !== false) {
+            // We're on the settings page - ensure CSS is properly loaded
+            wp_add_inline_script('wp-github-sync-admin', '
+                // Ensure settings tabs work properly when loaded
+                jQuery(document).ready(function($) {
+                    // Helper to forcibly display all tab content for debugging
+                    function forceShowAllTabContent() {
+                        $(".wp-github-sync-tab-content").css("display", "block");
+                    }
+                    
+                    // Helper to forcibly show a specific tab
+                    function forceShowTab(tabId) {
+                        $(".wp-github-sync-tab").removeClass("active");
+                        $(".wp-github-sync-tab-content").removeClass("active").hide();
+                        $(".wp-github-sync-tab[data-tab=" + tabId + "]").addClass("active");
+                        $("#" + tabId + "-tab-content").addClass("active").show();
+                    }
+                    
+                    // Uncomment for debugging tab issues
+                    // forceShowAllTabContent();
+                    
+                    // Initialize tabs if not already done
+                    if ($(".wp-github-sync-tab-content.active").length === 0) {
+                        // Default to first tab
+                        forceShowTab("general");
+                    }
+                    
+                    // Manually trigger authentication tab if hash is present
+                    if (window.location.hash === "#authentication") {
+                        forceShowTab("authentication");
+                    }
+                    
+                    console.log("Settings tabs initialized");
+                });
+            ');
         }
     }
 

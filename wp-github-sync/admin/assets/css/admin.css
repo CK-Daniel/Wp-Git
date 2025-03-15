@@ -87,7 +87,7 @@
 }
 
 .wp-github-sync-tab-content.active {
-    display: block;
+    display: block !important; /* Force display for all active tabs */
     animation: fadeIn 0.3s ease;
 }
 
