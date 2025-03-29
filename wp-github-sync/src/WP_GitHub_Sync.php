@@ -62,6 +62,8 @@ class WP_GitHub_Sync {
     protected $file_sync;
     protected $backup_manager;
     protected $sync_manager;
+    protected $cron_manager; // Add CronManager property
+    protected $webhook_handler; // Add WebhookHandler property
 
     // --- Admin Instance ---
     protected $admin;
@@ -108,6 +110,10 @@ class WP_GitHub_Sync {
             $this->file_sync
         ); // Inject all dependencies
 
+        // Instantiate handlers used in define_sync_hooks
+        $this->cron_manager = new Sync\CronManager($this->api_client, $this->sync_manager); // Pass dependencies
+        $this->webhook_handler = new Sync\WebhookHandler($this->sync_manager, $this->repository); // Pass dependencies
+
         // Instantiate the Admin bootstrap class, injecting dependencies
         $this->admin = new Admin(
             $this->version,
@@ -152,20 +158,20 @@ class WP_GitHub_Sync {
      * Register all of the hooks related to the sync functionality.
      */
     private function define_sync_hooks() {
-        // Use the instantiated $this->sync_manager
+        // Use the instantiated handlers
 
-        // REST API endpoints for webhooks
-        $this->loader->add_action('rest_api_init', $this->sync_manager, 'register_webhook_endpoint');
+        // REST API endpoints for webhooks (handled by WebhookHandler)
+        $this->loader->add_action('rest_api_init', $this->webhook_handler, 'register_webhook_endpoint');
 
-        // Cron schedules
-        $this->loader->add_action('init', $this->sync_manager, 'setup_cron_schedules');
-        $this->loader->add_action('wp_github_sync_cron_hook', $this->sync_manager, 'check_for_updates');
+        // Cron schedules (handled by CronManager)
+        $this->loader->add_action('init', $this->cron_manager, 'setup_cron_schedules');
+        $this->loader->add_action('wp_github_sync_cron_hook', $this->cron_manager, 'check_for_updates');
 
-        // Background deployment hook (will be replaced by Action Scheduler later)
-        $this->loader->add_action('wp_github_sync_background_deploy', $this->sync_manager, 'background_deploy');
+        // Background deployment hook is obsolete - handled by Job_Manager via Action Scheduler hooks
+        // $this->loader->add_action('wp_github_sync_background_deploy', $this->sync_manager, 'background_deploy');
 
         // Activation/Deactivation hooks are handled globally but might call methods here if needed
-        // We store the instance in $this->sync_manager, accessible via a getter if needed by global functions.
+        // The Sync_Manager instance is still available via get_sync_manager() if needed.
     }
 
     /**

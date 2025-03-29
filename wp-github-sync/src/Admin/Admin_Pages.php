@@ -10,6 +10,7 @@ namespace WPGitHubSync\Admin;
 // Use the new Log_Manager and Job_Manager classes
 use WPGitHubSync\Admin\Log_Manager;
 use WPGitHubSync\Admin\Job_Manager; // Needed for job page data
+use WPGitHubSync\API\API_Client; // Need API Client for parsing URL
 
 // If this file is called directly, abort.
 if (!defined('WPINC')) {
@@ -33,17 +34,26 @@ class Admin_Pages {
      *
      * @var Job_Manager
      */
-    private $job_manager; // Add Job_Manager dependency
+    private $job_manager;
+
+    /**
+     * API Client instance.
+     *
+     * @var API_Client
+     */
+    private $github_api;
 
     /**
      * Constructor.
      *
      * @param Log_Manager $log_manager The Log Manager instance.
      * @param Job_Manager $job_manager The Job Manager instance.
+     * @param API_Client  $github_api  The API Client instance.
      */
-    public function __construct(Log_Manager $log_manager, Job_Manager $job_manager) { // Inject Job_Manager
+    public function __construct(Log_Manager $log_manager, Job_Manager $job_manager, API_Client $github_api) {
         $this->log_manager = $log_manager;
-        $this->job_manager = $job_manager; // Store Job_Manager instance
+        $this->job_manager = $job_manager;
+        $this->github_api = $github_api; // Store API_Client instance
     }
 
     /**
@@ -60,11 +70,15 @@ class Admin_Pages {
         $last_deployed_commit = get_option('wp_github_sync_last_deployed_commit', '');
         $latest_commit_info = get_option('wp_github_sync_latest_commit', array());
         $update_available = get_option('wp_github_sync_update_available', false);
-        $deployment_in_progress = get_option('wp_github_sync_deployment_in_progress', false); // This option will be replaced by transient lock
+        // Use transient for lock status
+        $is_deployment_locked = (bool) get_transient('wp_github_sync_deployment_lock');
         $last_deployment_time = !empty(get_option('wp_github_sync_deployment_history', array())) ?
             max(array_column(get_option('wp_github_sync_deployment_history', array()), 'timestamp')) : 0;
         $branches = get_option('wp_github_sync_branches', array());
         $recent_commits = get_option('wp_github_sync_recent_commits', array());
+
+        // Parse URL using API Client method
+        $parsed_url = $this->github_api->parse_github_url($repository_url);
 
         include WP_GITHUB_SYNC_DIR . 'admin/templates/dashboard-page.php';
     }
@@ -127,15 +141,21 @@ class Admin_Pages {
         // Handle log actions using Log_Manager
         $this->log_manager->handle_log_actions();
 
-        // Get log data using Log_Manager
+        // Get log data using Log_Manager with pagination
         $log_level_filter = isset($_GET['level']) ? sanitize_text_field($_GET['level']) : '';
         $search_query = isset($_GET['search']) ? sanitize_text_field($_GET['search']) : '';
-        $log_data = $this->log_manager->get_logs($log_level_filter, $search_query);
+        $current_page = isset($_GET['paged']) ? absint($_GET['paged']) : 1;
+        $logs_per_page = 100; // Or make this configurable?
+
+        $log_data = $this->log_manager->get_logs($log_level_filter, $search_query, $current_page, $logs_per_page);
 
         // Extract variables for the template
         $logs = $log_data['logs'];
-        $log_file_size = $log_data['log_file_size']; // This is now formatted size string
-        $is_truncated = $log_data['is_truncated']; // This indicates if logs were truncated
+        $log_file_size = $log_data['log_file_size'];
+        $is_truncated = $log_data['is_truncated'];
+        $total_entries = $log_data['total_entries'];
+        $total_pages = $log_data['total_pages'];
+        // $current_page is already defined above
 
         // Include the template, passing the variables
         include WP_GITHUB_SYNC_DIR . 'admin/templates/logs-page.php';

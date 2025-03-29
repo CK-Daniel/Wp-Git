@@ -117,6 +117,28 @@ if (!wp_github_sync_current_user_can()) {
                         </tbody>
                     </table>
                 </div>
+
+                <!-- Pagination -->
+                <?php if ($total_pages > 1): ?>
+                    <div class="tablenav">
+                        <div class="tablenav-pages">
+                            <span class="displaying-num"><?php printf(_n('%s item', '%s items', $total_entries, 'wp-github-sync'), number_format_i18n($total_entries)); ?></span>
+                            <span class="pagination-links">
+                                <?php
+                                echo paginate_links(array(
+                                    'base' => add_query_arg('paged', '%#%'),
+                                    'format' => '',
+                                    'prev_text' => __('&laquo;'),
+                                    'next_text' => __('&raquo;'),
+                                    'total' => $total_pages,
+                                    'current' => $current_page,
+                                ));
+                                ?>
+                            </span>
+                        </div>
+                    </div>
+                <?php endif; ?>
+
             <?php endif; ?>
         </div>
         

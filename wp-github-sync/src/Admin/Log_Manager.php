@@ -71,12 +71,17 @@ class Log_Manager {
      *
      * @param string $log_level_filter Optional log level filter.
      * @param string $search_query     Optional search query.
-     * @return array An array containing 'logs', 'log_file_size', 'is_truncated'.
+     * @param int    $page             Current page number for pagination.
+     * @param int    $per_page         Number of logs per page.
+     * @return array An array containing 'logs', 'log_file_size', 'is_truncated', 'total_entries', 'total_pages'.
      */
-    public function get_logs($log_level_filter = '', $search_query = '') {
-        $logs = array();
+    public function get_logs($log_level_filter = '', $search_query = '', $page = 1, $per_page = 100) {
+        $all_logs = array(); // Store all parsed logs before filtering/pagination
+        $paginated_logs = array();
         $log_file_size_formatted = '0 B';
         $is_truncated = false;
+        $total_entries = 0;
+        $total_pages = 1;
         $valid_levels = array('debug', 'info', 'warning', 'error');
 
         // Validate log level filter
@@ -124,18 +129,29 @@ class Log_Manager {
 
                             if (!in_array($level, $valid_levels)) $level = 'unknown';
 
+                            // Apply filters *before* adding to the main list
                             if (!empty($log_level_filter) && $level !== $log_level_filter && $level !== 'unknown') continue;
                             if (!empty($search_query) && stripos($line, $search_query) === false) continue;
 
-                            $logs[] = ['timestamp' => $timestamp, 'level' => $level, 'message' => $message, 'raw' => null];
+                            $all_logs[] = ['timestamp' => $timestamp, 'level' => $level, 'message' => $message, 'raw' => null];
                         } else {
+                            // Apply search filter to raw lines too
                             if (!empty($search_query) && stripos($line, $search_query) === false) continue;
+                            // Only add raw lines if no level filter is active or if filtering for 'unknown'
                             if (empty($log_level_filter) || $log_level_filter === 'unknown') {
-                                $logs[] = ['timestamp' => '', 'level' => 'raw', 'message' => $line, 'raw' => $line];
+                                $all_logs[] = ['timestamp' => '', 'level' => 'raw', 'message' => $line, 'raw' => $line];
                             }
                         }
                     }
-                    $logs = array_reverse($logs);
+                    // Reverse logs so newest are first *before* pagination
+                    $all_logs = array_reverse($all_logs);
+                    $total_entries = count($all_logs);
+                    $total_pages = ceil($total_entries / $per_page);
+                    $page = max(1, min($page, $total_pages)); // Ensure page is within bounds
+                    $offset = ($page - 1) * $per_page;
+
+                    // Get the slice for the current page
+                    $paginated_logs = array_slice($all_logs, $offset, $per_page);
                 }
             } catch (\Exception $e) {
                 error_log('WP GitHub Sync: Error reading log file - ' . $e->getMessage());
@@ -144,9 +160,12 @@ class Log_Manager {
         }
 
         return [
-            'logs' => $logs,
+            'logs' => $paginated_logs, // Return only the logs for the current page
             'log_file_size' => $log_file_size_formatted,
             'is_truncated' => $is_truncated,
+            'total_entries' => $total_entries,
+            'total_pages' => $total_pages,
+            'current_page' => $page,
         ];
     }
 

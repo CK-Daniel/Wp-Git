@@ -178,7 +178,8 @@ class Admin {
             $this->progress_tracker,
             $this->background_task_runner
         );
-        $this->admin_pages = new Admin_Pages($this->log_manager, $this->job_manager); // Inject dependencies
+        // Inject API_Client into Admin_Pages
+        $this->admin_pages = new Admin_Pages($this->log_manager, $this->job_manager, $this->github_api);
         $this->menu_manager = new Menu_Manager($this->admin_pages, $this->plugin_file);
 
         // Instantiate new AJAX Handlers
