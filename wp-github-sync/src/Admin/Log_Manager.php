@@ -178,24 +178,34 @@ class Log_Manager {
             wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
         }
 
+        // Ensure filesystem is initialized
+        if (!$this->wp_filesystem) {
+             add_settings_error('wp_github_sync', 'logs_clear_error', __('Filesystem not initialized.', 'wp-github-sync'), 'error');
+             return;
+        }
+        // Ensure global is set for functions like WP_Filesystem::put_contents if they rely on it
+        global $wp_filesystem;
+        $wp_filesystem = $this->wp_filesystem;
+
+
         try {
-            if (file_exists($this->log_file)) {
-                if (!is_writable($this->log_file)) {
-                    if (!@chmod($this->log_file, 0644)) {
-                        throw new \Exception(__('Log file is not writable.', 'wp-github-sync'));
-                    }
-                }
-                if (file_put_contents($this->log_file, '') === false) {
-                    throw new \Exception(__('Failed to clear log file.', 'wp-github-sync'));
-                }
-            } else {
-                if (file_put_contents($this->log_file, '') === false) {
-                    throw new \Exception(__('Failed to create log file.', 'wp-github-sync'));
-                }
+            // Use WP_Filesystem to clear the file (put empty content)
+            if (!$this->wp_filesystem->put_contents($this->log_file, '', FS_CHMOD_FILE)) {
+                 // Check if the directory is writable if putting contents failed
+                 $log_dir = dirname($this->log_file);
+                 if (!$this->wp_filesystem->is_writable($log_dir)) {
+                     throw new \Exception(sprintf(__('Log directory %s is not writable.', 'wp-github-sync'), $log_dir));
+                 } elseif ($this->wp_filesystem->exists($this->log_file) && !$this->wp_filesystem->is_writable($this->log_file)) {
+                     throw new \Exception(__('Log file exists but is not writable.', 'wp-github-sync'));
+                 } else {
+                    throw new \Exception(__('Failed to clear or create log file using WP_Filesystem.', 'wp-github-sync'));
+                 }
             }
+
             add_settings_error('wp_github_sync', 'logs_cleared', __('Logs cleared successfully.', 'wp-github-sync'), 'success');
         } catch (\Exception $e) {
             add_settings_error('wp_github_sync', 'logs_clear_error', sprintf(__('Error clearing logs: %s', 'wp-github-sync'), $e->getMessage()), 'error');
+            wp_github_sync_log("Error clearing logs: " . $e->getMessage(), 'error'); // Also log the error
         }
     }
 
