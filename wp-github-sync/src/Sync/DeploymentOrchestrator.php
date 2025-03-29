@@ -69,11 +69,17 @@ class DeploymentOrchestrator {
             wp_github_sync_log("Deploy Orchestrator: {$error_message}", 'warning');
             return new \WP_Error('deployment_in_progress', $error_message);
         }
-        // Set lock with a 15-minute expiry
-        set_transient('wp_github_sync_deployment_lock', true, 15 * MINUTE_IN_SECONDS);
 
         $ref_display = (strlen($ref) === 40) ? substr($ref, 0, 8) : $ref;
-        wp_github_sync_log("Deploy Orchestrator: Starting deployment of {$ref_display}", 'info');
+        wp_github_sync_log("Deploy Orchestrator: Attempting to start deployment of {$ref_display}", 'info');
+
+        // Set lock with a 15-minute expiry
+        if (!set_transient('wp_github_sync_deployment_lock', true, 15 * MINUTE_IN_SECONDS)) {
+             wp_github_sync_log("Deploy Orchestrator: FAILED - Could not set deployment lock transient.", 'error');
+             // Even if lock fails, proceed but log heavily? Or return error? Let's return error.
+             return new \WP_Error('lock_failed', __('Could not set deployment lock. Please try again.', 'wp-github-sync'));
+        }
+        wp_github_sync_log("Deploy Orchestrator: Deployment lock set for {$ref_display}", 'debug');
 
         $backup_path = '';
         $maintenance_enabled = false;
@@ -84,11 +90,12 @@ class DeploymentOrchestrator {
             if (!$this->wp_filesystem) {
                 throw new \Exception(__('Could not initialize WordPress filesystem.', 'wp-github-sync'));
             }
+            wp_github_sync_log("Deploy Orchestrator: Filesystem initialized for {$ref_display}", 'debug');
 
             // 1. Create Backup
             $create_backup = get_option('wp_github_sync_create_backup', true);
             if ($create_backup) {
-                wp_github_sync_log("Deploy Orchestrator: Creating backup...", 'info');
+                wp_github_sync_log("Deploy Orchestrator: Creating backup for {$ref_display}...", 'info');
                 $backup_path = $this->backup_manager->create_backup();
                 if (is_wp_error($backup_path)) throw new \Exception($backup_path->get_error_message());
                 wp_github_sync_log("Deploy Orchestrator: Backup created at {$backup_path}", 'info');
@@ -97,12 +104,13 @@ class DeploymentOrchestrator {
             // 2. Enable Maintenance Mode
             $maintenance_mode_option = get_option('wp_github_sync_maintenance_mode', true);
             if ($maintenance_mode_option) {
-                wp_github_sync_log("Deploy Orchestrator: Enabling maintenance mode...", 'info');
+                wp_github_sync_log("Deploy Orchestrator: Enabling maintenance mode for {$ref_display}...", 'info');
                 wp_github_sync_maintenance_mode(true);
                 $maintenance_enabled = true;
             }
 
             // 3. Prepare Temporary Directory
+            wp_github_sync_log("Deploy Orchestrator: Preparing temporary directory for {$ref_display}...", 'debug');
             $temp_dir_base = trailingslashit($this->wp_filesystem->wp_content_dir()) . 'upgrade/';
             $temp_dir = $temp_dir_base . 'wp-github-sync-temp-' . wp_generate_password(8, false);
             if ($this->wp_filesystem->exists($temp_dir)) {
@@ -117,16 +125,23 @@ class DeploymentOrchestrator {
             // 4. Download Repository Archive
             wp_github_sync_log("Deploy Orchestrator: Downloading repository content for {$ref_display}...", 'info');
             $download_result = $this->repository->download_repository($ref, $temp_dir);
-            if (is_wp_error($download_result)) throw new \Exception($download_result->get_error_message());
-            wp_github_sync_log("Deploy Orchestrator: Repository downloaded and extracted.", 'info');
+            if (is_wp_error($download_result)) {
+                 wp_github_sync_log("Deploy Orchestrator: FAILED during download/extract for {$ref_display} - " . $download_result->get_error_message(), 'error');
+                 throw new \Exception($download_result->get_error_message());
+            }
+            wp_github_sync_log("Deploy Orchestrator: Repository downloaded and extracted for {$ref_display}.", 'info');
 
             // 5. Sync Files
-            wp_github_sync_log("Deploy Orchestrator: Syncing files to wp-content...", 'info');
+            wp_github_sync_log("Deploy Orchestrator: Syncing files to wp-content for {$ref_display}...", 'info');
             $sync_result = $this->file_sync->sync_files($temp_dir, WP_CONTENT_DIR);
-            if (is_wp_error($sync_result)) throw new \Exception($sync_result->get_error_message());
-            wp_github_sync_log("Deploy Orchestrator: File synchronization complete.", 'info');
+            if (is_wp_error($sync_result)) {
+                 wp_github_sync_log("Deploy Orchestrator: FAILED during file sync for {$ref_display} - " . $sync_result->get_error_message(), 'error');
+                 throw new \Exception($sync_result->get_error_message());
+            }
+            wp_github_sync_log("Deploy Orchestrator: File synchronization complete for {$ref_display}.", 'info');
 
             // 6. Update Deployment Status
+            wp_github_sync_log("Deploy Orchestrator: Updating deployment status for {$ref_display}...", 'debug');
             $this->update_deployment_status($ref);
             $result = true; // Mark success
 

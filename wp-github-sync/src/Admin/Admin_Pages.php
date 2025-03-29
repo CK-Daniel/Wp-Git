@@ -138,8 +138,7 @@ class Admin_Pages {
             wp_die(__('You do not have sufficient permissions to access this page.', 'wp-github-sync'));
         }
 
-        // Handle log actions using Log_Manager
-        $this->log_manager->handle_log_actions();
+        // Log actions are now handled via the load hook in Log_Manager::register_hooks()
 
         // Get log data using Log_Manager with pagination
         $log_level_filter = isset($_GET['level']) ? sanitize_text_field($_GET['level']) : '';

@@ -32,7 +32,19 @@ class Log_Manager {
     }
 
     /**
+     * Register hooks for the Log Manager.
+     */
+    public function register_hooks() {
+        // Hook action handling to the specific admin page load
+        // Assumes the page hook is 'admin_page_wp-github-sync-logs' based on common patterns
+        // If Menu_Manager uses a different hook, this needs adjustment.
+        add_action('load-admin_page_wp-github-sync-logs', array($this, 'handle_log_actions'));
+    }
+
+
+    /**
      * Handle log-related actions (clear, download, test).
+     * This is now called via the load hook.
      */
     public function handle_log_actions() {
         if (!isset($_GET['action'])) {
@@ -203,9 +215,14 @@ class Log_Manager {
             }
 
             add_settings_error('wp_github_sync', 'logs_cleared', __('Logs cleared successfully.', 'wp-github-sync'), 'success');
+            // Redirect after successful clear to remove action parameters from URL
+            wp_safe_redirect(remove_query_arg(['action', '_wpnonce']));
+            exit;
         } catch (\Exception $e) {
             add_settings_error('wp_github_sync', 'logs_clear_error', sprintf(__('Error clearing logs: %s', 'wp-github-sync'), $e->getMessage()), 'error');
             wp_github_sync_log("Error clearing logs: " . $e->getMessage(), 'error'); // Also log the error
+            // Optional: Redirect even on error? Or let the page reload with the error message?
+            // For now, only redirect on success.
         }
     }
 

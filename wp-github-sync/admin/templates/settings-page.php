@@ -88,12 +88,13 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                     <?php _e('Advanced', 'wp-github-sync'); ?>
                 </div>
             </div>
-            
             <div class="wp-github-sync-card">
-                <!-- Tab content container -->
-                <div id="wp-github-sync-tab-content-container">
+                <!-- Tab content container - REMOVED -->
+                <!-- <div id="wp-github-sync-tab-content-container"> -->
+
                     <!-- General tab content -->
-                    <div id="general-tab-content" class="wp-github-sync-tab-content active" data-tab="general">
+                    <!-- Changed ID from general-tab-content to tab-general -->
+                    <div id="tab-general" class="wp-github-sync-tab-content active" data-tab="general">
                         <h3><?php _e('Repository Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure your GitHub repository connection settings.', 'wp-github-sync'); ?></p>
                         
@@ -120,9 +121,9 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                             </tbody>
                         </table>
                     </div>
-                    
                     <!-- Authentication tab content -->
-                    <div id="authentication-tab-content" class="wp-github-sync-tab-content" data-tab="authentication">
+                    <!-- Changed ID from authentication-tab-content to tab-authentication -->
+                    <div id="tab-authentication" class="wp-github-sync-tab-content" data-tab="authentication">
                         <h3><?php _e('Authentication Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure your GitHub authentication credentials.', 'wp-github-sync'); ?></p>
                         
@@ -224,9 +225,9 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                             </tbody>
                         </table>
                     </div>
-                    
                     <!-- Sync tab content -->
-                    <div id="sync-tab-content" class="wp-github-sync-tab-content" data-tab="sync">
+                    <!-- Changed ID from sync-tab-content to tab-sync -->
+                    <div id="tab-sync" class="wp-github-sync-tab-content" data-tab="sync">
                         <h3><?php _e('Synchronization Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure how and when your WordPress site checks for updates from GitHub.', 'wp-github-sync'); ?></p>
                         
@@ -306,9 +307,9 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                             </tbody>
                         </table>
                     </div>
-                    
                     <!-- Advanced tab content -->
-                    <div id="advanced-tab-content" class="wp-github-sync-tab-content" data-tab="advanced">
+                    <!-- Changed ID from advanced-tab-content to tab-advanced -->
+                    <div id="tab-advanced" class="wp-github-sync-tab-content" data-tab="advanced">
                         <h3><?php _e('Advanced Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure advanced deployment options.', 'wp-github-sync'); ?></p>
                         
@@ -370,8 +371,8 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                             </tbody>
                         </table>
                     </div>
-                </div>
-                
+                <!-- </div> --> <!-- End removed container -->
+
                 <div class="wp-github-sync-card-actions">
                     <?php submit_button(__('Save Settings', 'wp-github-sync'), 'primary wp-github-sync-button', 'submit', false); ?>
                 </div>

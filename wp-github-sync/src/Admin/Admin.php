@@ -200,6 +200,7 @@ class Admin {
         $this->notice_manager->register_hooks();
         $this->oauth_handler->register_hooks();
         $this->job_manager->register_hooks();
+        $this->log_manager->register_hooks(); // Register Log Manager hooks
 
         // Register hooks for new AJAX Handlers
         $this->sync_actions_handler->register_hooks();
