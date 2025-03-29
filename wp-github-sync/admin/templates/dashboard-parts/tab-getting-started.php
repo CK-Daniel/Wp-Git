@@ -10,7 +10,8 @@ if (!defined('WPINC')) {
     die;
 }
 ?>
-<div class="wp-github-sync-tab-content active" id="guide-tab-content" data-tab="guide">
+<!-- Changed id from guide-tab-content to tab-guide -->
+<div class="wp-github-sync-tab-content active" id="tab-guide" data-tab="guide">
     <div class="wp-github-sync-card">
         <h2>
             <span class="dashicons dashicons-book"></span>

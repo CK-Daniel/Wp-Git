@@ -13,7 +13,8 @@ if (!defined('WPINC')) {
     die;
 }
 ?>
-<div class="wp-github-sync-tab-content" id="branches-tab-content" data-tab="branches">
+<!-- Changed id from branches-tab-content to tab-branches -->
+<div class="wp-github-sync-tab-content" id="tab-branches" data-tab="branches">
     <div class="wp-github-sync-card">
         <h2>
             <span class="dashicons dashicons-randomize"></span>

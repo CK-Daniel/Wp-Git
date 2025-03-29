@@ -195,12 +195,25 @@ class File_Sync {
                             $needs_copy = true;
                         }
                     } else {
-                        // Default to MD5 hash comparison using WP_Filesystem content reading
-                        $source_content = $this->wp_filesystem->get_contents($source_path);
-                        $target_content = $this->wp_filesystem->get_contents($target_path);
-                        // Check if content retrieval failed before hashing
-                        if ($source_content === false || $target_content === false || md5($source_content) !== md5($target_content)) {
-                            $needs_copy = true;
+                        // Default to MD5 hash comparison, but check metadata first for optimization
+                        $source_mtime = $this->wp_filesystem->mtime($source_path);
+                        $target_mtime = $this->wp_filesystem->mtime($target_path);
+                        $source_size = $this->wp_filesystem->size($source_path);
+                        $target_size = $this->wp_filesystem->size($target_path);
+
+                        // If metadata matches (and target exists), assume file is the same and skip hash check
+                        // The outer check already confirmed $this->wp_filesystem->exists($target_path)
+                        if ($source_size === $target_size && $source_mtime && $target_mtime && $source_mtime <= $target_mtime) {
+                            // $needs_copy remains false from the initial check when target exists
+                        } else {
+                            // Metadata differs or couldn't be read reliably, proceed with hash comparison
+                            $source_content = $this->wp_filesystem->get_contents($source_path);
+                            $target_content = $this->wp_filesystem->get_contents($target_path);
+                            // Check if content retrieval failed before hashing
+                            if ($source_content === false || $target_content === false || md5($source_content) !== md5($target_content)) {
+                                $needs_copy = true;
+                            }
+                            // Note: If metadata matched, $needs_copy remains false from the outer check
                         }
                     }
                 }

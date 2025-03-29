@@ -193,7 +193,7 @@ class Settings {
             'wp_github_sync_compare_method',
             array(
                 'sanitize_callback' => array($this, 'sanitize_compare_method'), // Keep sanitize callback here
-                'default' => 'hash', // Default to the most accurate method
+                'default' => 'metadata', // Default to faster metadata comparison
             )
         );
 

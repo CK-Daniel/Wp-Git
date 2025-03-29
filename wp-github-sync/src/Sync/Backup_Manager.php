@@ -63,12 +63,13 @@ class Backup_Manager {
         $backup_dir = WP_CONTENT_DIR . '/wp-github-sync-backups';
         if (!$this->wp_filesystem->is_dir($backup_dir)) {
             if (!$this->wp_filesystem->mkdir($backup_dir, FS_CHMOD_DIR)) {
-                 // Log error, but maybe continue? Or return error?
-                 wp_github_sync_log("Failed to create main backup directory: {$backup_dir}", 'error');
-                 // For now, let's try to continue, the specific backup dir creation will fail later if this failed.
+                 // Log error and return failure
+                 $error_msg = sprintf(__('Failed to create main backup directory: %s. Check permissions.', 'wp-github-sync'), $backup_dir);
+                 wp_github_sync_log($error_msg, 'error');
+                 return new \WP_Error('backup_dir_creation_failed', $error_msg);
             }
         }
-        
+
         // Create a unique backup name
         $backup_name = date('Y-m-d-H-i-s') . '-' . substr(md5(mt_rand()), 0, 10);
         $backup_path = $backup_dir . '/' . $backup_name;
@@ -93,10 +94,11 @@ class Backup_Manager {
         }
 
         // Copy files to backup using WP_Filesystem methods
+        $backup_successful = true; // Flag to track overall success
         foreach ($paths_to_backup as $source_path) {
             if (!$this->wp_filesystem->exists($source_path)) {
-                wp_github_sync_log("Backup source path not found: {$source_path}", 'warning');
-                continue;
+                wp_github_sync_log("Backup source path not found, skipping: {$source_path}", 'warning');
+                continue; // Skip missing source, but don't fail the whole backup yet
             }
 
             // Determine target path within the backup directory
@@ -115,7 +117,8 @@ class Backup_Manager {
             if (!$this->wp_filesystem->is_dir($target_parent_dir)) {
                 if (!$this->wp_filesystem->mkdir($target_parent_dir, FS_CHMOD_DIR)) {
                     wp_github_sync_log("Failed to create target parent directory for backup: {$target_parent_dir}", 'error');
-                    continue; // Skip this item if parent dir creation fails
+                    $backup_successful = false; // Mark backup as failed
+                    continue; // Skip this item
                 }
             }
 
@@ -125,19 +128,29 @@ class Backup_Manager {
                 // If ignores are critical, a custom recursive copy using $wp_filesystem->copy() is needed.
                 // For now, we omit the ignore patterns for simplicity when using copy_dir.
                 wp_github_sync_log("Backing up directory: {$source_path} to {$target_path}", 'debug');
-                $copy_result = copy_dir($source_path, $target_path);
+                $copy_result = copy_dir($source_path, $target_path); // Uses WP_Filesystem internally
                 if (is_wp_error($copy_result)) {
                      wp_github_sync_log("Failed to backup directory {$source_path}: " . $copy_result->get_error_message(), 'error');
+                     $backup_successful = false; // Mark backup as failed
                 }
             } else {
                 // Copy individual file using WP_Filesystem
                 wp_github_sync_log("Backing up file: {$source_path} to {$target_path}", 'debug');
                 if (!$this->wp_filesystem->copy($source_path, $target_path, true, FS_CHMOD_FILE)) {
                      wp_github_sync_log("Failed to backup file: {$source_path}", 'error');
+                     $backup_successful = false; // Mark backup as failed
                 }
             }
         }
-        
+
+        // Check if any critical step failed
+        if (!$backup_successful) {
+             // Attempt cleanup of potentially incomplete backup dir
+             FilesystemHelper::recursive_rmdir($backup_path);
+             $error_msg = __('Backup process failed due to file copy errors. Check logs.', 'wp-github-sync');
+             return new \WP_Error('backup_copy_failed', $error_msg);
+        }
+
         // Store backup info
         $backup_info = array(
             'path' => $backup_path,
@@ -169,30 +182,44 @@ class Backup_Manager {
         wp_github_sync_log("Restoring from backup: {$backup_path}", 'info');
 
         // Use the injected file_sync instance
-        // NOTE: We will address the potential issue of deleting files during restore in Phase 2
+        $restore_successful = true; // Flag
 
         // Determine what to restore based on what exists in the backup
         if ($this->wp_filesystem->exists($backup_path . '/themes')) {
-            // Pass true for the $is_restore parameter
-            $this->file_sync->sync_directory($backup_path . '/themes', WP_CONTENT_DIR . '/themes', array(), true);
+            wp_github_sync_log("Restoring themes from backup...", 'info');
+            $result = $this->file_sync->sync_directory($backup_path . '/themes', WP_CONTENT_DIR . '/themes', array(), true);
+            if (is_wp_error($result)) {
+                 wp_github_sync_log("Error restoring themes: " . $result->get_error_message(), 'error');
+                 $restore_successful = false;
+            }
         }
 
         if ($this->wp_filesystem->exists($backup_path . '/plugins')) {
-            // Pass true for the $is_restore parameter
-            $this->file_sync->sync_directory($backup_path . '/plugins', WP_CONTENT_DIR . '/plugins', array(), true);
+             wp_github_sync_log("Restoring plugins from backup...", 'info');
+            $result = $this->file_sync->sync_directory($backup_path . '/plugins', WP_CONTENT_DIR . '/plugins', array(), true);
+             if (is_wp_error($result)) {
+                 wp_github_sync_log("Error restoring plugins: " . $result->get_error_message(), 'error');
+                 $restore_successful = false;
+            }
         }
 
         // Restore wp-config.php if it exists in the backup using WP_Filesystem
         $wp_config_backup = trailingslashit($backup_path) . 'wp-config.php';
         if ($this->wp_filesystem->exists($wp_config_backup)) {
+             wp_github_sync_log("Restoring wp-config.php from backup...", 'info');
             if (!$this->wp_filesystem->copy($wp_config_backup, ABSPATH . 'wp-config.php', true, FS_CHMOD_FILE)) {
                  wp_github_sync_log("Failed to restore wp-config.php from backup", 'error');
-                 // Decide if this is a fatal error for the restore process
+                 $restore_successful = false; // Mark restore as failed
             } else {
                  wp_github_sync_log("Restored wp-config.php from backup", 'info');
             }
         }
-        
+
+        if (!$restore_successful) {
+             $error_msg = __('Restore process failed due to file sync/copy errors. Site may be in an inconsistent state. Check logs.', 'wp-github-sync');
+             return new \WP_Error('restore_failed', $error_msg);
+        }
+
         return true;
     }
 

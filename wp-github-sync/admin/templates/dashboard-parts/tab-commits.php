@@ -13,7 +13,8 @@ if (!defined('WPINC')) {
     die;
 }
 ?>
-<div class="wp-github-sync-tab-content" id="commits-tab-content" data-tab="commits">
+<!-- Changed id from commits-tab-content to tab-commits -->
+<div class="wp-github-sync-tab-content" id="tab-commits" data-tab="commits">
     <div class="wp-github-sync-card">
         <h2>
             <span class="dashicons dashicons-backup"></span>

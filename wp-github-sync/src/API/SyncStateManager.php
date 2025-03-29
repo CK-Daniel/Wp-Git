@@ -53,6 +53,12 @@ class SyncStateManager {
             'stage' => 'authentication', // Initial stage
             'progress_step' => 0,
             'status' => 'initializing', // Add initial status
+            'files_to_process' => [], // List of files found in temp dir
+            'processed_file_index' => 0, // Index for blob creation stage
+            'created_blobs' => [], // Map [github_relative_path => blob_sha]
+            'tree_items_batch' => [], // Temp storage for tree items batch
+            'last_tree_sha' => '', // SHA of tree from previous chunk
+            'total_files_to_process' => 0, // Total count for progress
         ];
         update_option(self::OPTION_NAME, $initial_state);
         wp_github_sync_log("Sync State Manager: Initialized state for branch '{$branch}'.", 'info');

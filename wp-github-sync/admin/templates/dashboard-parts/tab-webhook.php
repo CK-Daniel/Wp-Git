@@ -13,7 +13,8 @@ if (!defined('WPINC')) {
     die;
 }
 ?>
-<div class="wp-github-sync-tab-content" id="webhook-tab-content" data-tab="webhook">
+<!-- Changed id from webhook-tab-content to tab-webhook -->
+<div class="wp-github-sync-tab-content" id="tab-webhook" data-tab="webhook">
     <div class="wp-github-sync-card">
         <h2>
             <span class="dashicons dashicons-admin-links"></span>

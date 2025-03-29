@@ -99,7 +99,15 @@ class WP_GitHub_Sync {
         $this->repository_uploader = new Repository_Uploader($this->api_client);
         $this->file_sync = new File_Sync();
         $this->backup_manager = new Backup_Manager($this->file_sync); // Inject File_Sync
-        $initial_sync_manager = new API\InitialSyncManager($this->api_client, $this->repository_uploader); // Instantiate InitialSyncManager
+
+        // Instantiate InitialSyncManager with all dependencies
+        $initial_sync_manager = new API\InitialSyncManager(
+            $this->api_client,
+            $this->repository_uploader,
+            $this->repository_uploader->get_blob_creator(),   // Pass BlobCreator
+            $this->repository_uploader->get_tree_builder(),   // Pass TreeBuilder
+            $this->repository_uploader->get_branch_manager()  // Pass BranchManager
+        );
 
         // Instantiate services that depend on others
         $this->repository = new Repository($this->api_client, $initial_sync_manager); // Inject API_Client, InitialSyncManager
