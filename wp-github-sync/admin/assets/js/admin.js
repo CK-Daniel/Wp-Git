@@ -1,29 +1,101 @@
 (function($) {
     'use strict';
 
-    $(document).ready(function() {
+    // Make overlay functions globally accessible within wpGitHubSync scope
+    window.wpGitHubSyncAdmin = window.wpGitHubSyncAdmin || {};
 
-        /**
-         * Show the loading overlay
-         */
-        function showOverlay(message, submessage) {
-            var $overlay = $('.wp-github-sync-overlay');
-            if (message) {
-                $('.wp-github-sync-loading-message').text(message);
-            }
-            if (submessage) {
-                $('.wp-github-sync-loading-submessage').text(submessage);
-            }
-            $overlay.fadeIn(200);
+    /**
+     * Show the loading overlay
+     */
+    window.wpGitHubSyncAdmin.showOverlay = function(message, submessage) {
+        var $overlay = $('.wp-github-sync-overlay');
+        // Clear previous errors/details when showing overlay
+        $('#wp-github-sync-ajax-error-notice').empty().hide();
+        $('.wp-github-sync-status-detail').empty(); // Clear status detail too
+
+        if (message) {
+            $('.wp-github-sync-loading-message').text(message);
+        } else {
+             $('.wp-github-sync-loading-message').text('Processing...'); // Default message
         }
-        
-        /**
-         * Hide the loading overlay
-         */
-        function hideOverlay() {
-            $('.wp-github-sync-overlay').fadeOut(200);
+        if (submessage) {
+            $('.wp-github-sync-loading-submessage').text(submessage);
+        } else {
+             $('.wp-github-sync-loading-submessage').text(''); // Clear submessage
         }
-        
+        $overlay.fadeIn(200);
+    }
+
+    /**
+     * Hide the loading overlay
+     */
+    window.wpGitHubSyncAdmin.hideOverlay = function() {
+        $('.wp-github-sync-overlay').fadeOut(200);
+    }
+
+    /**
+     * Global AJAX Error Handler
+     * Displays errors prominently on the page instead of just the overlay.
+     */
+    window.wpGitHubSyncAdmin.handleGlobalAjaxError = function(xhr, status, error, context) {
+        console.error(`AJAX Error${context ? ' (' + context + ')' : ''}:`, status, error);
+        console.error('XHR:', xhr);
+
+        let errorMsg = wpGitHubSync.strings.error || 'An unexpected error occurred. Please try again.'; // Default error
+        let detailedMsg = '';
+
+        if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+            errorMsg = xhr.responseJSON.data.message;
+        } else if (xhr.responseText) {
+            // Try to extract WP error message if possible
+            const wpErrorMatch = xhr.responseText.match(/<p>(There has been a critical error.*?)<\/p>/i);
+            const generalErrorMatch = xhr.responseText.match(/<p>(.*?)<\/p>/i); // More generic paragraph match
+            if (wpErrorMatch && wpErrorMatch[1]) {
+                errorMsg = 'WordPress Critical Error. Check server logs.';
+                detailedMsg = wpErrorMatch[1]; // Show the critical error paragraph
+            } else if (generalErrorMatch && generalErrorMatch[1]) {
+                 // Avoid showing generic HTML page content as error
+                 if (xhr.responseText.length < 500 && xhr.responseText.indexOf('<html') === -1) {
+                     errorMsg = generalErrorMatch[1];
+                 } else {
+                     errorMsg = `Server returned status ${xhr.status}. Check console/logs.`;
+                 }
+            } else if (xhr.responseText.length < 500) { // Show short raw response if no paragraph found
+                 errorMsg = xhr.responseText;
+            } else {
+                 errorMsg = `Server returned status ${xhr.status}. Check console/logs.`;
+            }
+        } else if (error) {
+             errorMsg = error; // Use the status text like 'timeout', 'error', 'abort', 'parsererror'
+        } else if (status) {
+             errorMsg = status;
+        }
+
+        // Always hide the overlay on error
+        window.wpGitHubSyncAdmin.hideOverlay();
+
+        // Display the error using WordPress notices area
+        const errorContainer = $('#wp-github-sync-ajax-error-notice');
+        if (errorContainer.length === 0) {
+             // If container doesn't exist, prepend it after h1
+             $('h1.wp-heading-inline').first().after('<div id="wp-github-sync-ajax-error-notice"></div>');
+        }
+         $('#wp-github-sync-ajax-error-notice').html(
+            '<div class="notice notice-error is-dismissible"><p><strong>GitHub Sync Error:</strong> ' +
+            $('<div>').text(errorMsg).html() + // Sanitize basic message
+            (detailedMsg ? '<br><small>' + detailedMsg + '</small>' : '') + // Show detailed message if available
+            '</p></div>'
+        ).show();
+
+         // Make the notice dismissible
+         $('#wp-github-sync-ajax-error-notice .notice').append('<button type="button" class="notice-dismiss"><span class="screen-reader-text">Dismiss this notice.</span></button>');
+         $('#wp-github-sync-ajax-error-notice').on('click', '.notice-dismiss', function() {
+             $(this).closest('.notice').fadeOut(300, function() { $(this).remove(); });
+         });
+    }
+
+
+    $(document).ready(function() {
         /**
          * Initialize tabs
          */
@@ -609,6 +681,7 @@
                     action: 'wp_github_sync_test_connection',
                     token: token,
                     auth_method: authMethod,
+                    repo_url: $('input[name="wp_github_sync_repository"]').val(), // Add repo URL
                     nonce: wpGitHubSync.nonce
                 },
                 success: function(response) {

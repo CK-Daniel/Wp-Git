@@ -133,46 +133,10 @@ if (!wp_github_sync_current_user_can()) {
                 <?php endif; ?>
             </div>
             
-            <!-- Deployment In Progress Status -->
-            <?php if ($deployment_in_progress): ?>
-            <div class="wp-github-sync-active-job-card">
-                <h3 class="job-title"><span class="dashicons dashicons-update wp-github-spin"></span> <?php _e('Deployment In Progress', 'wp-github-sync'); ?></h3>
-                
-                <div class="job-details">
-                    <p>
-                        <strong><?php _e('Started', 'wp-github-sync'); ?>:</strong> 
-                        <?php 
-                        echo esc_html(human_time_diff($deployment_start_time, time()) . ' ' . __('ago', 'wp-github-sync')); 
-                        echo ' (' . esc_html(date_i18n('Y-m-d H:i:s', $deployment_start_time)) . ')';
-                        ?>
-                    </p>
-                    
-                    <p><?php _e('Deployment operations can take several minutes to complete.', 'wp-github-sync'); ?></p>
-                </div>
-            </div>
-            <?php endif; ?>
-            
-            <!-- Sync In Progress Status (Legacy) -->
-            <?php if ($sync_in_progress): ?>
-            <div class="wp-github-sync-active-job-card">
-                <h3 class="job-title"><span class="dashicons dashicons-update wp-github-spin"></span> <?php _e('Sync In Progress', 'wp-github-sync'); ?></h3>
-                
-                <div class="job-details">
-                    <p>
-                        <strong><?php _e('Started', 'wp-github-sync'); ?>:</strong> 
-                        <?php 
-                        echo esc_html(human_time_diff($sync_start_time, time()) . ' ' . __('ago', 'wp-github-sync')); 
-                        echo ' (' . esc_html(date_i18n('Y-m-d H:i:s', $sync_start_time)) . ')';
-                        ?>
-                    </p>
-                    
-                    <p><?php _e('Sync operations can take several minutes to complete.', 'wp-github-sync'); ?></p>
-                </div>
-            </div>
-            <?php endif; ?>
+            <!-- TODO: Add display logic here for other active jobs (e.g., non-chunked deploy) based on Progress_Tracker status or Action Scheduler running status -->
             
             <!-- No Active Jobs Message -->
-            <?php if (empty($chunked_sync_state) && !$deployment_in_progress && !$sync_in_progress): ?>
+            <?php if (empty($chunked_sync_state)): // Simplified check - assumes chunked state is the main indicator for now ?>
             <div class="wp-github-sync-info-box info">
                 <div class="wp-github-sync-info-box-icon">
                     <span class="dashicons dashicons-info"></span>
@@ -192,9 +156,11 @@ if (!wp_github_sync_current_user_can()) {
     <div class="wp-github-sync-card">
         <div class="wp-github-sync-card-header">
             <h2><span class="dashicons dashicons-calendar-alt"></span> <?php _e('Scheduled Jobs', 'wp-github-sync'); ?></h2>
+            <?php // TODO: Add button/logic to view Action Scheduler queue if AS is active ?>
         </div>
         
         <div class="wp-github-sync-card-content">
+            <?php // TODO: Update this section to fetch scheduled jobs from Action Scheduler (if active) via Job_Manager/AJAX, instead of just WP Cron. ?>
             <?php if (!empty($cron_events)): ?>
                 <div class="wp-github-sync-scheduled-jobs">
                     <table>

@@ -970,12 +970,6 @@ mark {
     border-bottom: none;
 }
 
-/* Highlight warnings */
-.wp-github-sync-status-detail div:contains("⚠️") {
-    color: #f0c674;
-    font-weight: bold;
-}
-
 /* Button groups and dropdowns */
 .wp-github-sync-button-group {
     display: inline-flex;
@@ -1030,4 +1024,25 @@ mark {
 .wp-github-sync-dropdown-menu a .dashicons {
     margin-right: 8px;
     color: var(--wp-github-sync-primary);
+}
+
+/* Progress Bar Styles (Moved from settings-page.php) */
+.package-progress-bar {
+    width: 100%;
+    height: 20px;
+    background-color: #f1f1f1;
+    border-radius: 4px;
+    margin: 10px 0;
+    overflow: hidden;
+}
+.progress-inner {
+    height: 100%;
+    background-color: #0073aa;
+    transition: width 0.3s ease;
+}
+.chunked-sync-progress-detail {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #f9f9f9;
+    border-radius: 4px;
 }

@@ -6,49 +6,13 @@
 
     // Initialize Dashboard functionality
     function initDashboard() {
-        bindTabSwitching();
+        // bindTabSwitching(); // Removed - Handled in admin.js
         bindActionButtons();
         handleBranchManagement();
         setupDeveloperTools();
     }
 
-    // Tab switching functionality
-    function bindTabSwitching() {
-        $('.wp-github-sync-tab').on('click', function() {
-            // Remove active class from all tabs and contents
-            $('.wp-github-sync-tab').removeClass('active');
-            $('.wp-github-sync-tab-content').removeClass('active');
-            
-            // Add active class to clicked tab
-            $(this).addClass('active');
-            
-            // Show corresponding tab content
-            const tabId = $(this).data('tab');
-            $(`#${tabId}-tab-content`).addClass('active');
-            
-            // Update URL hash for direct linking
-            window.location.hash = tabId;
-        });
-        
-        // Tab links inside tab content
-        $('.wp-github-sync-tab-link').on('click', function(e) {
-            e.preventDefault();
-            const targetTab = $(this).data('tab-target');
-            $(`.wp-github-sync-tab[data-tab="${targetTab}"]`).click();
-        });
-        
-        // Handle direct linking via URL hash
-        function handleUrlHash() {
-            const hash = window.location.hash.substring(1);
-            if (hash && $(`.wp-github-sync-tab[data-tab="${hash}"]`).length) {
-                $(`.wp-github-sync-tab[data-tab="${hash}"]`).click();
-            }
-        }
-        
-        // Handle hash on page load and when hash changes
-        handleUrlHash();
-        $(window).on('hashchange', handleUrlHash);
-    }
+    // Removed bindTabSwitching() function - Handled in admin.js
     
     // Main action buttons functionality
     function bindActionButtons() {
@@ -79,7 +43,7 @@
                         setTimeout(hideOverlay, 3000);
                     }
                 },
-                error: handleAjaxError
+                error: function(xhr, status, error) { window.wpGitHubSyncAdmin.handleGlobalAjaxError(xhr, status, error, 'Deploy'); }
             });
         });
         
@@ -111,7 +75,7 @@
                         setTimeout(hideOverlay, 3000);
                     }
                 },
-                error: handleAjaxError
+                error: function(xhr, status, error) { window.wpGitHubSyncAdmin.handleGlobalAjaxError(xhr, status, error, 'Background Deploy'); }
             });
         });
         
@@ -137,11 +101,12 @@
                         setTimeout(hideOverlay, 3000);
                     }
                 },
-                error: handleAjaxError
+                error: function(xhr, status, error) { window.wpGitHubSyncAdmin.handleGlobalAjaxError(xhr, status, error, 'Check Updates'); }
             });
         });
         
-        // Full sync to GitHub button
+        // Full sync to GitHub button (Foreground - likely deprecated, prefer background)
+        /*
         $('.wp-github-sync-full-sync').on('click', function() {
             if (!confirm(wpGitHubSync.strings.confirmFullSync)) {
                 return;
@@ -167,9 +132,10 @@
                         setTimeout(hideOverlay, 3000);
                     }
                 },
-                error: handleAjaxError
+                error: function(xhr, status, error) { window.wpGitHubSyncAdmin.handleGlobalAjaxError(xhr, status, error, 'Full Sync'); }
             });
         });
+        */
         
         // Background full sync option
         $('.wp-github-sync-background-full-sync').on('click', function(e) {
@@ -199,7 +165,7 @@
                         setTimeout(hideOverlay, 3000);
                     }
                 },
-                error: handleAjaxError
+                error: function(xhr, status, error) { window.wpGitHubSyncAdmin.handleGlobalAjaxError(xhr, status, error, 'Background Full Sync'); }
             });
         });
         
@@ -306,7 +272,7 @@
                         setTimeout(hideOverlay, 3000);
                     }
                 },
-                error: handleAjaxError
+                error: function(xhr, status, error) { window.wpGitHubSyncAdmin.handleGlobalAjaxError(xhr, status, error, 'Switch Branch'); }
             });
         });
         
@@ -343,7 +309,7 @@
                         setTimeout(hideOverlay, 3000);
                     }
                 },
-                error: handleAjaxError
+                error: function(xhr, status, error) { window.wpGitHubSyncAdmin.handleGlobalAjaxError(xhr, status, error, 'Refresh Branches'); }
             });
         });
         
@@ -377,7 +343,7 @@
                         setTimeout(hideOverlay, 3000);
                     }
                 },
-                error: handleAjaxError
+                error: function(xhr, status, error) { window.wpGitHubSyncAdmin.handleGlobalAjaxError(xhr, status, error, 'Rollback'); }
             });
         });
     }
@@ -385,7 +351,8 @@
     // Developer tools functionality
     function setupDeveloperTools() {
         
-        // Component selection
+        // Component selection (Commented out - functionality seems incomplete/removed)
+        /*
         $('#wp-github-sync-component-select').on('change', function() {
             const componentValue = $(this).val();
             const $buttons = $('.wp-github-sync-sync-component, .wp-github-sync-diff-component');
@@ -396,6 +363,7 @@
                 $buttons.prop('disabled', true);
             }
         });
+        */
         
         // Regenerate webhook secret
         $('.wp-github-sync-regenerate-webhook').on('click', function() {
@@ -425,34 +393,17 @@
                         setTimeout(hideOverlay, 3000);
                     }
                 },
-                error: handleAjaxError
+                error: function(xhr, status, error) { window.wpGitHubSyncAdmin.handleGlobalAjaxError(xhr, status, error, 'Regenerate Webhook'); }
             });
         });
     }
-    
-    // Helper functions
-    function showOverlay(message, submessage = '') {
-        $('.wp-github-sync-loading-message').text(message);
-        $('.wp-github-sync-loading-submessage').text(submessage);
-        $('.wp-github-sync-overlay').fadeIn(200);
-    }
-    
-    function hideOverlay() {
-        $('.wp-github-sync-overlay').fadeOut(200);
-    }
-    
-    function handleAjaxError(xhr, status, error) {
-        console.error('AJAX Error:', status, error);
-        
-        let errorMessage = wpGitHubSync.strings.error;
-        if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
-            errorMessage = xhr.responseJSON.data.message;
-        }
-        
-        showOverlay(wpGitHubSync.strings.error, errorMessage);
-        setTimeout(hideOverlay, 3000);
-    }
-    
+
+    // Use global overlay and error functions defined in admin.js
+    const showOverlay = window.wpGitHubSyncAdmin.showOverlay;
+    const hideOverlay = window.wpGitHubSyncAdmin.hideOverlay;
+    const handleAjaxError = window.wpGitHubSyncAdmin.handleGlobalAjaxError;
+
+
     // Initialize on document ready
     $(document).ready(initDashboard);
     

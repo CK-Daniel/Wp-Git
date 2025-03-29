@@ -154,47 +154,7 @@
     gap: 12px;
 }
 
-/* Auto-refresh Toggle */
-.wp-github-sync-auto-refresh-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    padding: 8px 14px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.2s ease;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-}
-
-.wp-github-sync-auto-refresh-toggle:hover {
-    background: #f3f4f6;
-}
-
-.wp-github-sync-auto-refresh-toggle.active {
-    background-color: #ecfdf5;
-    border-color: #10b981;
-}
-
-.wp-github-sync-auto-refresh-toggle .dashicons {
-    color: #10b981;
-    transition: transform 0.3s ease;
-}
-
-.wp-github-sync-auto-refresh-toggle.active .dashicons {
-    animation: spin 1.5s linear infinite;
-}
-
-@keyframes spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
-}
+/* Auto-refresh Toggle styles inherited from admin.css */
 
 /* Spinning animation */
 .wp-github-spin {
@@ -274,77 +234,7 @@
     border-radius: 0 0 8px 8px;
 }
 
-/* Information Box */
-.wp-github-sync-info-box {
-    display: flex;
-    gap: 16px;
-    padding: 16px;
-    border-radius: 8px;
-    margin: 20px 0;
-}
-
-.wp-github-sync-info-box-icon {
-    display: flex;
-    align-items: flex-start;
-}
-
-.wp-github-sync-info-box-icon .dashicons {
-    font-size: 24px;
-    width: 24px;
-    height: 24px;
-}
-
-.wp-github-sync-info-box-content {
-    flex: 1;
-}
-
-.wp-github-sync-info-box-title {
-    margin: 0 0 8px 0;
-    font-size: 15px;
-    font-weight: 600;
-}
-
-.wp-github-sync-info-box-message {
-    margin: 0;
-    font-size: 14px;
-    line-height: 1.6;
-}
-
-.wp-github-sync-info-box.info {
-    background-color: #eff6ff;
-    border-left: 4px solid var(--wp-github-sync-info);
-}
-
-.wp-github-sync-info-box.info .wp-github-sync-info-box-icon .dashicons {
-    color: var(--wp-github-sync-info);
-}
-
-.wp-github-sync-info-box.success {
-    background-color: #ecfdf5;
-    border-left: 4px solid var(--wp-github-sync-success);
-}
-
-.wp-github-sync-info-box.success .wp-github-sync-info-box-icon .dashicons {
-    color: var(--wp-github-sync-success);
-}
-
-.wp-github-sync-info-box.warning {
-    background-color: #fffbeb;
-    border-left: 4px solid var(--wp-github-sync-warning);
-}
-
-.wp-github-sync-info-box.warning .wp-github-sync-info-box-icon .dashicons {
-    color: var(--wp-github-sync-warning);
-}
-
-.wp-github-sync-info-box.error {
-    background-color: #fef2f2;
-    border-left: 4px solid var(--wp-github-sync-error);
-}
-
-.wp-github-sync-info-box.error .wp-github-sync-info-box-icon .dashicons {
-    color: var(--wp-github-sync-error);
-}
+/* Information Box styles inherited from admin.css */
 
 /* Job Type List */
 .wp-github-sync-info-list {
@@ -392,49 +282,8 @@
     color: var(--wp-github-sync-primary);
 }
 
-/* Buttons */
-.wp-github-sync-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    font-size: 14px;
-    padding: 10px 18px;
-    border-radius: 6px;
-    font-weight: 500;
-    transition: var(--wp-github-sync-transition);
-    cursor: pointer;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    border: 1px solid transparent;
-    text-decoration: none;
-}
-
-.wp-github-sync-button.primary {
-    background: var(--wp-github-sync-primary);
-    color: white;
-    border-color: var(--wp-github-sync-primary);
-}
-
-.wp-github-sync-button.primary:hover {
-    background: var(--wp-github-sync-primary-dark);
-    border-color: var(--wp-github-sync-primary-dark);
-    transform: translateY(-1px);
-    box-shadow: 0 3px 6px rgba(0, 115, 170, 0.2);
-}
-
-.wp-github-sync-button.secondary {
-    background: white;
-    color: #4b5563;
-    border-color: #e5e7eb;
-}
-
-.wp-github-sync-button.secondary:hover {
-    background: var(--wp-github-sync-light);
-    color: #1f2937;
-    transform: translateY(-1px);
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
-}
-
+/* Button styles inherited from admin.css */
+/* Add specific overrides or extensions for job page buttons if needed */
 .wp-github-sync-button.danger {
     background: #fee2e2;
     color: #b91c1c;
@@ -445,18 +294,6 @@
     background: #fecaca;
     border-color: #ef4444;
     color: #991b1b;
-}
-
-.wp-github-sync-button.warning {
-    background: #fffbeb;
-    color: #d97706;
-    border-color: #fef3c7;
-}
-
-.wp-github-sync-button.warning:hover {
-    background: #fef3c7;
-    border-color: #f59e0b;
-    color: #b45309;
 }
 
 /* Responsive Adjustments */

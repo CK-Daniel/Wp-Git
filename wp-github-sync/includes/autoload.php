@@ -41,6 +41,3 @@ spl_autoload_register(function ($class) {
         require $file;
     }
 });
-
-// Load helper functions
-require_once WP_GITHUB_SYNC_DIR . 'includes/utils/helper-functions.php';

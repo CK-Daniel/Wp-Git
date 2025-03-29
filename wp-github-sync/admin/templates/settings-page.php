@@ -25,27 +25,6 @@ $has_synced = !empty(get_option('wp_github_sync_last_deployed_commit', ''));
 $site_url = parse_url(get_site_url(), PHP_URL_HOST);
 $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
 ?>
-<style>
-    .package-progress-bar {
-        width: 100%;
-        height: 20px;
-        background-color: #f1f1f1;
-        border-radius: 4px;
-        margin: 10px 0;
-        overflow: hidden;
-    }
-    .progress-inner {
-        height: 100%;
-        background-color: #0073aa;
-        transition: width 0.3s ease;
-    }
-    .chunked-sync-progress-detail {
-        margin-top: 15px;
-        padding: 10px;
-        background-color: #f9f9f9;
-        border-radius: 4px;
-    }
-</style>
 
 <div class="wrap wp-github-sync-wrap">
     <h1><?php _e('GitHub Sync Settings', 'wp-github-sync'); ?></h1>
@@ -88,7 +67,7 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
     <?php endif; ?>
     
     <form method="post" action="options.php" class="wp-github-sync-settings-form">
-        <?php settings_fields('wp_github_sync_settings'); ?>
+        <?php settings_fields('wp_github_sync_settings'); // Call ONCE here for the form ?>
         
         <div class="wp-github-sync-settings-content">
             <div class="wp-github-sync-tabs">
@@ -111,14 +90,14 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
             </div>
             
             <div class="wp-github-sync-card">
-                <!-- Tab content will be dynamically loaded here -->
+                <!-- Tab content container -->
                 <div id="wp-github-sync-tab-content-container">
                     <!-- General tab content -->
                     <div id="general-tab-content" class="wp-github-sync-tab-content active" data-tab="general">
                         <h3><?php _e('Repository Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure your GitHub repository connection settings.', 'wp-github-sync'); ?></p>
                         
-                        <?php settings_fields('wp_github_sync_settings'); ?>
+                        <?php // settings_fields() called once at the top of the form ?>
                         
                         <table class="form-table" role="presentation">
                             <tbody>
@@ -147,7 +126,23 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                         <h3><?php _e('Authentication Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure your GitHub authentication credentials.', 'wp-github-sync'); ?></p>
                         
-                        <?php settings_fields('wp_github_sync_settings'); ?>
+                        <?php
+                        // Add a security warning if the encryption key constant is not defined but the option is being used
+                        if (!defined('WP_GITHUB_SYNC_ENCRYPTION_KEY') && get_option('wp_github_sync_encryption_key')) {
+                            echo '<div class="notice notice-warning inline" style="margin-bottom: 15px;"><p>';
+                            echo '<strong>' . __('Security Recommendation:', 'wp-github-sync') . '</strong> ';
+                            echo sprintf(
+                                __('For enhanced security, define the %s constant in your %s file instead of relying on the database key. %sLearn more%s', 'wp-github-sync'),
+                                '<code>WP_GITHUB_SYNC_ENCRYPTION_KEY</code>',
+                                '<code>wp-config.php</code>',
+                                '<a href="https://docs.example.com/security#encryption-key" target="_blank">', // Replace with actual docs link later
+                                '</a>'
+                            );
+                            echo '</p></div>';
+                        }
+                        ?>
+                        
+                        <?php // settings_fields() called once at the top of the form ?>
                         
                         <table class="form-table" role="presentation">
                             <tbody>
@@ -157,24 +152,73 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                                         <?php 
                                         $auth_method = get_option('wp_github_sync_auth_method', 'pat');
                                         ?>
-                                        <select name="wp_github_sync_auth_method">
-                                            <option value="pat" <?php selected($auth_method, 'pat'); ?>><?php _e('Personal Access Token', 'wp-github-sync'); ?></option>
+                                        <select name="wp_github_sync_auth_method" id="wp_github_sync_auth_method">
+                                            <option value="pat" <?php selected($auth_method, 'pat'); ?>><?php _e('Personal Access Token (PAT)', 'wp-github-sync'); ?></option>
                                             <option value="oauth" <?php selected($auth_method, 'oauth'); ?>><?php _e('OAuth Token', 'wp-github-sync'); ?></option>
+                                            <option value="github_app" <?php selected($auth_method, 'github_app'); ?>><?php _e('GitHub App (Recommended)', 'wp-github-sync'); ?></option>
                                         </select>
                                         <p class="description"><?php _e('Select the authentication method to use with GitHub.', 'wp-github-sync'); ?></p>
+                                        <?php // Descriptions moved to Settings.php render callback ?>
                                     </td>
                                 </tr>
-                                <tr>
-                                    <th scope="row"><?php _e('GitHub Access Token', 'wp-github-sync'); ?></th>
+                                <tr class="auth-field auth-field-pat" <?php echo $auth_method !== 'pat' ? 'style="display:none;"' : ''; ?>>
+                                    <th scope="row"><?php _e('Personal Access Token', 'wp-github-sync'); ?></th>
                                     <td>
                                         <?php
                                         $token = get_option('wp_github_sync_access_token', '');
-                                        $display_value = !empty($token) ? '********' : '';
+                                        $display_value = !empty($token) ? '********' : ''; // Mask if set
                                         ?>
-                                        <input type="password" name="wp_github_sync_access_token" id="wp_github_sync_access_token" value="<?php echo esc_attr($display_value); ?>" class="regular-text">
-                                        <button type="button" class="button wp-github-sync-test-connection"><?php _e('Test Connection', 'wp-github-sync'); ?></button>
-                                        <div id="github-connection-status"></div>
-                                        <p class="description"><?php _e('Enter your GitHub access token with repo scope permissions.', 'wp-github-sync'); ?></p>
+                                        <input type="password" name="wp_github_sync_access_token" id="wp_github_sync_access_token" value="<?php echo esc_attr($display_value); ?>" class="regular-text" placeholder="<?php esc_attr_e('Enter PAT (e.g., ghp_... or github_pat_...)', 'wp-github-sync'); ?>">
+                                        <button type="button" class="button wp-github-sync-test-connection"><?php _e('Test PAT Connection', 'wp-github-sync'); ?></button>
+                                        <div id="github-pat-connection-status"></div>
+                                        <p class="description"><?php _e('Enter your GitHub Personal Access Token. Use a fine-grained token with Contents read/write access if possible.', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                                <tr class="auth-field auth-field-oauth" <?php echo $auth_method !== 'oauth' ? 'style="display:none;"' : ''; ?>>
+                                     <th scope="row"><?php _e('OAuth Connection', 'wp-github-sync'); ?></th>
+                                     <td>
+                                         <?php
+                                         $oauth_token = get_option('wp_github_sync_oauth_token', '');
+                                         if (!empty($oauth_token)) :
+                                             // Ideally, fetch and display the connected user here via an API call if needed
+                                             ?>
+                                             <p style="color: green; font-weight: bold;"><?php _e('Connected to GitHub via OAuth.', 'wp-github-sync'); ?></p>
+                                             <button type="button" class="button wp-github-sync-oauth-disconnect"><?php _e('Disconnect', 'wp-github-sync'); ?></button>
+                                         <?php else : ?>
+                                             <p><?php _e('Not connected. Connect your GitHub account to authenticate using OAuth.', 'wp-github-sync'); ?></p>
+                                             <button type="button" class="button primary wp-github-sync-oauth-connect"><?php _e('Connect to GitHub', 'wp-github-sync'); ?></button>
+                                             <p class="description"><?php _e('Requires WP_GITHUB_SYNC_OAUTH_CLIENT_ID and WP_GITHUB_SYNC_OAUTH_CLIENT_SECRET constants defined in wp-config.php.', 'wp-github-sync'); ?></p>
+                                         <?php endif; ?>
+                                         <div id="github-oauth-connection-status"></div>
+                                     </td>
+                                </tr>
+                                <tr class="auth-field auth-field-github_app" <?php echo $auth_method !== 'github_app' ? 'style="display:none;"' : ''; ?>>
+                                    <th scope="row"><?php _e('GitHub App ID', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $app_id = get_option('wp_github_sync_github_app_id', ''); ?>
+                                        <input type="text" name="wp_github_sync_github_app_id" id="wp_github_sync_github_app_id" value="<?php echo esc_attr($app_id); ?>" class="regular-text">
+                                        <p class="description"><?php _e('The GitHub App ID from your GitHub App settings.', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                                 <tr class="auth-field auth-field-github_app" <?php echo $auth_method !== 'github_app' ? 'style="display:none;"' : ''; ?>>
+                                    <th scope="row"><?php _e('Installation ID', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php $installation_id = get_option('wp_github_sync_github_app_installation_id', ''); ?>
+                                        <input type="text" name="wp_github_sync_github_app_installation_id" id="wp_github_sync_github_app_installation_id" value="<?php echo esc_attr($installation_id); ?>" class="regular-text">
+                                        <p class="description"><?php _e('The Installation ID for this repository. Found in the URL when viewing the installation.', 'wp-github-sync'); ?></p>
+                                    </td>
+                                </tr>
+                                 <tr class="auth-field auth-field-github_app" <?php echo $auth_method !== 'github_app' ? 'style="display:none;"' : ''; ?>>
+                                    <th scope="row"><?php _e('Private Key', 'wp-github-sync'); ?></th>
+                                    <td>
+                                        <?php
+                                        $key = get_option('wp_github_sync_github_app_key', '');
+                                        $display_value = !empty($key) ? '********' : ''; // Mask if set
+                                        ?>
+                                        <textarea name="wp_github_sync_github_app_key" id="wp_github_sync_github_app_key" rows="6" cols="50" class="code" placeholder="<?php esc_attr_e('Paste your private key here (including -----BEGIN... and -----END...)', 'wp-github-sync'); ?>"><?php echo esc_textarea($display_value === '********' ? '' : $key); // Show empty if masked, otherwise show raw key for editing? Or always mask? Let's show empty if masked. ?></textarea>
+                                        <p class="description"><?php _e('The private key file content (.pem) from your GitHub App. Include the BEGIN and END lines.', 'wp-github-sync'); ?></p>
+                                        <button type="button" class="button wp-github-sync-test-github-app"><?php _e('Test GitHub App Connection', 'wp-github-sync'); ?></button>
+                                        <div id="github-app-connection-status"></div>
                                     </td>
                                 </tr>
                             </tbody>
@@ -186,7 +230,7 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                         <h3><?php _e('Synchronization Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure how and when your WordPress site checks for updates from GitHub.', 'wp-github-sync'); ?></p>
                         
-                        <?php settings_fields('wp_github_sync_settings'); ?>
+                        <?php // settings_fields() called once at the top of the form ?>
                         
                         <table class="form-table" role="presentation">
                             <tbody>
@@ -268,7 +312,7 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
                         <h3><?php _e('Advanced Settings', 'wp-github-sync'); ?></h3>
                         <p><?php _e('Configure advanced deployment options.', 'wp-github-sync'); ?></p>
                         
-                        <?php settings_fields('wp_github_sync_settings'); ?>
+                        <?php // settings_fields() called once at the top of the form ?>
                         
                         <table class="form-table" role="presentation">
                             <tbody>
@@ -363,409 +407,6 @@ $default_repo_name = sanitize_title(str_replace('.', '-', $site_url));
         <div class="wp-github-sync-loading-message"><?php _e('Processing...', 'wp-github-sync'); ?></div>
         <div class="wp-github-sync-loading-submessage"></div>
     </div>
-    
-    <script>
-    jQuery(document).ready(function($) {
-        // Toggle authentication fields based on auth method
-        function toggleAuthFields() {
-            var authMethod = $('#wp_github_sync_auth_method').val();
-            $('.auth-field').hide();
-            $('.auth-field-' + authMethod).show();
-        }
-        
-        // Initialize auth fields
-        toggleAuthFields();
-        
-        // Listen for auth method changes
-        $('#wp_github_sync_auth_method').on('change', toggleAuthFields);
-        
-        // Tab switching functionality
-        $('.wp-github-sync-tab').on('click', function() {
-            // Remove active class from all tabs
-            $('.wp-github-sync-tab').removeClass('active');
-            
-            // Add active class to clicked tab
-            $(this).addClass('active');
-            
-            // Get the tab ID
-            const tabId = $(this).data('tab');
-            
-            // Hide all tab content
-            $('.wp-github-sync-tab-content').removeClass('active');
-            
-            // Show the content for the active tab
-            $('#' + tabId + '-tab-content').addClass('active');
 
-            // Store active tab in localStorage for persistence
-            localStorage.setItem('wpGitHubSyncActiveTab', tabId);
-        });
-        
-        // Set the initial active tab
-        function setInitialActiveTab() {
-            // First check URL hash
-            const hash = window.location.hash.substr(1);
-            if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
-                $('.wp-github-sync-tab[data-tab="' + hash + '"]').click();
-                return;
-            }
-            
-            // Then check localStorage
-            const savedTab = localStorage.getItem('wpGitHubSyncActiveTab');
-            if (savedTab && $('.wp-github-sync-tab[data-tab="' + savedTab + '"]').length) {
-                $('.wp-github-sync-tab[data-tab="' + savedTab + '"]').click();
-                return;
-            }
-            
-            // Default to first tab if nothing else
-            $('.wp-github-sync-tab').first().click();
-        }
-        
-        // Initialize tabs on page load
-        setInitialActiveTab();
-        
-        // Initial sync button click handler
-        $('#initial_sync_button').on('click', function() {
-            const createNewRepo = $('#create_new_repo').is(':checked');
-            let repoName = '';
-            
-            if (createNewRepo) {
-                // Use the entered value or the placeholder as fallback
-                const inputField = $('#new_repo_name');
-                repoName = inputField.val();
-                
-                // If empty, use the placeholder value
-                if (!repoName || repoName.trim() === '') {
-                    repoName = inputField.attr('placeholder') || '<?php echo esc_js($default_repo_name); ?>';
-                    console.log("Using placeholder as repo name:", repoName);
-                }
-            }
-            
-            // Show loading overlay
-            $('.wp-github-sync-overlay').show();
-            $('.wp-github-sync-loading-message').text('<?php _e('Setting up GitHub Sync...', 'wp-github-sync'); ?>');
-            
-            if (createNewRepo) {
-                $('.wp-github-sync-loading-submessage').text('<?php _e('Creating new repository...', 'wp-github-sync'); ?>');
-            } else {
-                $('.wp-github-sync-loading-submessage').text('<?php _e('Connecting to existing repository...', 'wp-github-sync'); ?>');
-            }
-            
-            // AJAX call to handle initial sync
-            $.ajax({
-                url: ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'wp_github_sync_initial_sync',
-                    create_new_repo: createNewRepo ? 1 : 0,
-                    repo_name: repoName,
-                    background: $('#run_in_background').is(':checked') ? 1 : 0,
-                    nonce: wpGitHubSync.initialSyncNonce // Using the specific nonce provided by the Admin class
-                },
-                success: function(response) {
-                    if (response.success) {
-                        $('.wp-github-sync-loading-message').text('<?php _e('Success!', 'wp-github-sync'); ?>');
-                        $('.wp-github-sync-loading-submessage').text(response.data.message);
-                        
-                        // Redirect to dashboard after 2 seconds
-                        setTimeout(function() {
-                            window.location.href = '<?php echo admin_url('admin.php?page=wp-github-sync'); ?>';
-                        }, 2000);
-                    } else {
-                        // Check if this is a "sync in progress" message (special case for chunked sync)
-                        if (response.data && response.data.code === 'sync_in_progress') {
-                            $('.wp-github-sync-loading-message').text('<?php _e('Sync in Progress', 'wp-github-sync'); ?>');
-                            $('.wp-github-sync-loading-submessage').html(response.data.message + '<br><br><?php _e('This will take a few minutes. The page will refresh automatically when complete.', 'wp-github-sync'); ?>');
-                            
-                            // Start polling for completion
-                            setTimeout(checkSyncStatus, 5000);
-                        } else {
-                            $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                            $('.wp-github-sync-loading-submessage').text(response.data.message);
-                            
-                            // Hide overlay after 3 seconds
-                            setTimeout(function() {
-                                $('.wp-github-sync-overlay').hide();
-                            }, 3000);
-                        }
-                    }
-                },
-                error: function(xhr, status, error) {
-                    console.error("AJAX Error:", status, error);
-                    $('.wp-github-sync-loading-message').text('<?php _e('Error', 'wp-github-sync'); ?>');
-                    
-                    if (xhr.responseText) {
-                        try {
-                            var respData = JSON.parse(xhr.responseText);
-                            if (respData && respData.data && respData.data.code === 'sync_in_progress') {
-                                // This is a chunked sync in progress - handle it specially
-                                $('.wp-github-sync-loading-message').text('<?php _e('Sync in Progress', 'wp-github-sync'); ?>');
-                                $('.wp-github-sync-loading-submessage').html(respData.data.message + '<br><br><?php _e('This will take a few minutes. The page will refresh automatically when complete.', 'wp-github-sync'); ?>');
-                                
-                                // Start polling for completion
-                                setTimeout(checkSyncStatus, 5000);
-                                return;
-                            }
-                        } catch (e) {
-                            console.error("Failed to parse response JSON", e);
-                        }
-                    }
-                    
-                    $('.wp-github-sync-loading-submessage').text('<?php _e('An unexpected error occurred. Please try again.', 'wp-github-sync'); ?>');
-                    setTimeout(function() {
-                        $('.wp-github-sync-overlay').hide();
-                    }, 5000);
-                }
-            });
-            
-            // Function to check sync status
-            function checkSyncStatus() {
-                $.ajax({
-                    url: ajaxurl,
-                    type: 'POST',
-                    data: {
-                        action: 'wp_github_sync_check_status',
-                        nonce: wpGitHubSync.nonce
-                    },
-                    success: function(statusResponse) {
-                        if (statusResponse.success) {
-                            if (statusResponse.data.in_progress) {
-                                // Still in progress, update status message
-                                if (statusResponse.data.stage && statusResponse.data.progress) {
-                                    $('.wp-github-sync-loading-submessage').html(
-                                        '<?php _e('Stage', 'wp-github-sync'); ?>: ' + statusResponse.data.stage + 
-                                        '<br><?php _e('Progress', 'wp-github-sync'); ?>: ' + statusResponse.data.progress + 
-                                        '<br><br><?php _e('This will take a few minutes. The page will refresh automatically when complete.', 'wp-github-sync'); ?>'
-                                    );
-                                }
-                                // Check again in 5 seconds
-                                setTimeout(checkSyncStatus, 5000);
-                            } else {
-                                // Sync is complete
-                                $('.wp-github-sync-loading-message').text('<?php _e('Sync Completed!', 'wp-github-sync'); ?>');
-                                $('.wp-github-sync-loading-submessage').text('<?php _e('Redirecting to dashboard...', 'wp-github-sync'); ?>');
-                                
-                                // Redirect to dashboard
-                                setTimeout(function() {
-                                    window.location.href = '<?php echo admin_url('admin.php?page=wp-github-sync'); ?>';
-                                }, 2000);
-                            }
-                        } else {
-                            // Error checking status, still retry
-                            console.error("Error checking sync status:", statusResponse);
-                            setTimeout(checkSyncStatus, 8000); // Longer delay on error
-                        }
-                    },
-                    error: function() {
-                        // Network error, still retry
-                        console.error("Network error checking sync status");
-                        setTimeout(checkSyncStatus, 8000); // Longer delay on network error
-                    }
-                });
-            }
-        });
-        
-        // End of initial sync AJAX call
-        
-        // GitHub App Connection testing
-        $('.wp-github-sync-test-github-app').on('click', function() {
-            const $statusArea = $('#github-app-connection-status');
-            const appId = $('#wp_github_sync_github_app_id').val();
-            const installationId = $('#wp_github_sync_github_app_installation_id').val();
-            const privateKey = $('#wp_github_sync_github_app_key').val();
-            const repoUrl = $('#wp_github_sync_repository').val();
-            
-            // Don't test with masked key
-            if (privateKey === '********') {
-                $statusArea.html(
-                    '<div class="wp-github-sync-info-box warning" style="margin-top: 10px;">' +
-                    '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-warning"></span></div>' +
-                    '<div class="wp-github-sync-info-box-content">' +
-                    '<p>Please enter your private key. The masked key cannot be used for testing.</p>' +
-                    '</div></div>'
-                );
-                return;
-            }
-            
-            // Check required fields
-            if (!appId || !installationId || !privateKey) {
-                $statusArea.html(
-                    '<div class="wp-github-sync-info-box error" style="margin-top: 10px;">' +
-                    '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-no"></span></div>' +
-                    '<div class="wp-github-sync-info-box-content">' +
-                    '<p>Please fill in all GitHub App fields (App ID, Installation ID, and Private Key).</p>' +
-                    '</div></div>'
-                );
-                return;
-            }
-            
-            // Show testing indicator
-            $statusArea.html(
-                '<div class="wp-github-sync-info-box info" style="margin-top: 10px;">' +
-                '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-update wp-github-sync-spin"></span></div>' +
-                '<div class="wp-github-sync-info-box-content">' +
-                '<p>Testing GitHub App connection...</p>' +
-                '</div></div>'
-            );
-            
-            // Send the AJAX request to test connection
-            $.ajax({
-                url: ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'wp_github_sync_test_github_app',
-                    app_id: appId,
-                    installation_id: installationId,
-                    private_key: privateKey,
-                    repo_url: repoUrl,
-                    nonce: '<?php echo wp_create_nonce('wp_github_sync_nonce'); ?>'
-                },
-                success: function(response) {
-                    if (response.success) {
-                        // Success - GitHub App is valid
-                        let message = response.data.message;
-                        
-                        if (response.data.app_name) {
-                            message += ' App name: <strong>' + response.data.app_name + '</strong>.';
-                        }
-                        
-                        if (response.data.repo_info) {
-                            message += ' Repository: <strong>' + response.data.repo_info.owner + '/' + response.data.repo_info.repo + '</strong>';
-                        }
-                        
-                        $statusArea.html(
-                            '<div class="wp-github-sync-info-box success" style="margin-top: 10px;">' +
-                            '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-yes-alt"></span></div>' +
-                            '<div class="wp-github-sync-info-box-content">' +
-                            '<p>' + message + '</p>' +
-                            '</div></div>'
-                        );
-                    } else {
-                        // Error - display the error message
-                        $statusArea.html(
-                            '<div class="wp-github-sync-info-box error" style="margin-top: 10px;">' +
-                            '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-no"></span></div>' +
-                            '<div class="wp-github-sync-info-box-content">' +
-                            '<p>' + response.data.message + '</p>' +
-                            '</div></div>'
-                        );
-                    }
-                },
-                error: function() {
-                    // AJAX request failed
-                    $statusArea.html(
-                        '<div class="wp-github-sync-info-box error" style="margin-top: 10px;">' +
-                        '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-no"></span></div>' +
-                        '<div class="wp-github-sync-info-box-content">' +
-                        '<p>Connection test failed. Please try again.</p>' +
-                        '</div></div>'
-                    );
-                }
-            });
-        });
-
-        // PAT/OAuth Connection testing
-        $('.wp-github-sync-test-connection').on('click', function() {
-            const $statusArea = $('#github-connection-status');
-            const token = $('#wp_github_sync_access_token').val();
-            const repoUrl = $('#wp_github_sync_repository').val();
-            
-            // Don't test with masked token
-            if (token === '********') {
-                $statusArea.html(
-                    '<div class="wp-github-sync-info-box warning" style="margin-top: 10px;">' +
-                    '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-warning"></span></div>' +
-                    '<div class="wp-github-sync-info-box-content">' +
-                    '<p>Please enter your token first. The masked token cannot be used for testing.</p>' +
-                    '</div></div>'
-                );
-                return;
-            }
-            
-            // Show testing indicator
-            $statusArea.html(
-                '<div class="wp-github-sync-info-box info" style="margin-top: 10px;">' +
-                '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-update wp-github-sync-spin"></span></div>' +
-                '<div class="wp-github-sync-info-box-content">' +
-                '<p>Testing connection to GitHub...</p>' +
-                '</div></div>'
-            );
-            
-            // Send the AJAX request to test connection
-            $.ajax({
-                url: ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'wp_github_sync_test_connection',
-                    token: token,
-                    repo_url: repoUrl,
-                    nonce: '<?php echo wp_create_nonce('wp_github_sync_nonce'); ?>'
-                },
-                success: function(response) {
-                    if (response.success) {
-                        // Success - credentials and possibly repo are valid
-                        let message = response.data.message;
-                        
-                        if (response.data.username) {
-                            message += ' Authenticated as <strong>' + response.data.username + '</strong>.';
-                        }
-                        
-                        if (response.data.repo_info) {
-                            message += ' Repository: <strong>' + response.data.repo_info.owner + '/' + response.data.repo_info.repo + '</strong>';
-                        }
-                        
-                        $statusArea.html(
-                            '<div class="wp-github-sync-info-box success" style="margin-top: 10px;">' +
-                            '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-yes-alt"></span></div>' +
-                            '<div class="wp-github-sync-info-box-content">' +
-                            '<p>' + message + '</p>' +
-                            '</div></div>'
-                        );
-                    } else {
-                        // Error - display the error message
-                        $statusArea.html(
-                            '<div class="wp-github-sync-info-box error" style="margin-top: 10px;">' +
-                            '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-no"></span></div>' +
-                            '<div class="wp-github-sync-info-box-content">' +
-                            '<p>' + response.data.message + '</p>' +
-                            '</div></div>'
-                        );
-                    }
-                },
-                error: function() {
-                    // AJAX request failed
-                    $statusArea.html(
-                        '<div class="wp-github-sync-info-box error" style="margin-top: 10px;">' +
-                        '<div class="wp-github-sync-info-box-icon"><span class="dashicons dashicons-no"></span></div>' +
-                        '<div class="wp-github-sync-info-box-content">' +
-                        '<p>Connection test failed. Please try again.</p>' +
-                        '</div></div>'
-                    );
-                }
-            });
-        });
-        
-        // Repository creation toggle
-        $('#create_new_repo').on('change', function() {
-            if ($(this).is(':checked')) {
-                $('#new_repo_options').slideDown();
-            } else {
-                $('#new_repo_options').slideUp();
-            }
-        });
-        
-        // Toggle slider click handler
-        $('.wp-github-sync-toggle-slider').on('click', function() {
-            const checkbox = $(this).siblings('input[type="checkbox"]');
-            checkbox.prop('checked', !checkbox.prop('checked')).trigger('change');
-        });
-        
-        // Handle hash changes
-        $(window).on('hashchange', function() {
-            const hash = window.location.hash.substr(1);
-            if (hash && $('.wp-github-sync-tab[data-tab="' + hash + '"]').length) {
-                $('.wp-github-sync-tab[data-tab="' + hash + '"]').click();
-            }
-        });
-    });
-    </script>
+    <?php // Inline script removed, will be enqueued separately ?>
 </div>

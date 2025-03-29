@@ -1,6 +1,7 @@
 <?php
 /**
  * Git Sync Manager for the WordPress GitHub Sync plugin.
+ * Acts as a coordinator, delegating tasks to specialized handlers.
  *
  * @package WPGitHubSync
  */
@@ -9,6 +10,14 @@ namespace WPGitHubSync\Sync;
 
 use WPGitHubSync\API\API_Client;
 use WPGitHubSync\API\Repository;
+// Use the new helper/orchestrator classes
+use WPGitHubSync\Sync\Backup_Manager;
+use WPGitHubSync\Sync\File_Sync;
+use WPGitHubSync\Sync\DeploymentOrchestrator;
+use WPGitHubSync\Sync\WebhookHandler;
+use WPGitHubSync\Sync\CronManager;
+use WPGitHubSync\Utils\FilesystemHelper; // For filesystem access if needed
+
 
 // If this file is called directly, abort.
 if (!defined('WPINC')) {
@@ -22,86 +31,106 @@ class Sync_Manager {
 
     /**
      * GitHub API Client instance.
-     *
      * @var API_Client
      */
     private $github_api;
 
     /**
      * Repository instance.
-     *
      * @var Repository
      */
     private $repository;
 
     /**
-     * The time a deployment was last initiated.
-     *
-     * @var int
+     * Backup Manager instance.
+     * @var Backup_Manager
      */
-    private $last_deployment_time;
+    private $backup_manager;
+
+    /**
+     * File Sync instance.
+     * @var File_Sync
+     */
+    private $file_sync;
+
+    /**
+     * Deployment Orchestrator instance.
+     * @var DeploymentOrchestrator
+     */
+    private $deployment_orchestrator;
+
+    /**
+     * Webhook Handler instance.
+     * @var WebhookHandler
+     */
+    private $webhook_handler;
+
+    /**
+     * Cron Manager instance.
+     * @var CronManager
+     */
+    private $cron_manager;
+
+    /**
+     * WordPress Filesystem instance.
+     * @var \WP_Filesystem_Base|null
+     */
+    private $wp_filesystem;
+
 
     /**
      * Constructor.
      *
-     * @param API_Client $github_api The GitHub API client.
+     * @param API_Client     $github_api     The GitHub API client.
+     * @param Repository     $repository     The Repository instance.
+     * @param Backup_Manager $backup_manager The Backup Manager instance.
+     * @param File_Sync      $file_sync      The File Sync instance.
      */
-    public function __construct($github_api) {
+    public function __construct(
+        API_Client $github_api,
+        Repository $repository,
+        Backup_Manager $backup_manager,
+        File_Sync $file_sync
+    ) {
         $this->github_api = $github_api;
-        $this->repository = new Repository($github_api);
-        $this->last_deployment_time = get_option('wp_github_sync_last_deployment_time', 0);
-    }
+        $this->repository = $repository;
+        $this->backup_manager = $backup_manager;
+        $this->file_sync = $file_sync;
 
-    /**
-     * Register the webhook endpoint for GitHub.
-     */
-    public function register_webhook_endpoint() {
-        register_rest_route('wp-github-sync/v1', '/webhook', array(
-            'methods' => 'POST',
-            'callback' => array($this, 'handle_webhook'),
-            'permission_callback' => '__return_true', // Public endpoint, we'll verify signature internally
-        ));
-    }
-
-    /**
-     * Setup cron schedules for automatic checking.
-     */
-    public function setup_cron_schedules() {
-        $auto_sync_enabled = get_option('wp_github_sync_auto_sync', false);
-        $auto_sync_interval = get_option('wp_github_sync_auto_sync_interval', 5);
-        
-        // Only setup if auto-sync is enabled
-        if ($auto_sync_enabled) {
-            if (!wp_next_scheduled('wp_github_sync_cron_hook')) {
-                wp_schedule_event(time(), 'wp_github_sync_interval', 'wp_github_sync_cron_hook');
-            }
-            
-            // Register custom interval
-            add_filter('cron_schedules', array($this, 'add_cron_interval'));
-        } else {
-            // Clear the schedule if it exists but auto-sync is now disabled
-            if (wp_next_scheduled('wp_github_sync_cron_hook')) {
-                wp_clear_scheduled_hook('wp_github_sync_cron_hook');
-            }
-        }
-    }
-
-    /**
-     * Add custom cron interval.
-     *
-     * @param array $schedules Existing cron schedules.
-     * @return array Modified cron schedules.
-     */
-    public function add_cron_interval($schedules) {
-        $interval = get_option('wp_github_sync_auto_sync_interval', 5);
-        
-        $schedules['wp_github_sync_interval'] = array(
-            'interval' => $interval * MINUTE_IN_SECONDS,
-            'display' => sprintf(__('Every %d minutes', 'wp-github-sync'), $interval),
+        // Instantiate orchestrator and handlers
+        $this->deployment_orchestrator = new DeploymentOrchestrator(
+            $github_api, $repository, $backup_manager, $file_sync
         );
-        
-        return $schedules;
+        $this->webhook_handler = new WebhookHandler(); // Pass dependencies if needed
+        $this->cron_manager = new CronManager($github_api, $this); // Pass self or orchestrator if needed
+
+        // Initialize WP Filesystem (can be moved to FilesystemHelper if preferred)
+        $this->initialize_filesystem();
     }
+
+    /**
+     * Initialize the WP_Filesystem API.
+     */
+    private function initialize_filesystem() {
+        global $wp_filesystem;
+        if (empty($wp_filesystem)) {
+            require_once ABSPATH . '/wp-admin/includes/file.php';
+            WP_Filesystem();
+        }
+        $this->wp_filesystem = $wp_filesystem;
+    }
+
+    /**
+     * Register hooks for webhook and cron.
+     */
+    public function register_hooks() {
+        $this->webhook_handler->register_webhook_endpoint();
+        $this->cron_manager->register_hooks();
+    }
+
+    // Removed register_webhook_endpoint() - Moved to WebhookHandler
+    // Removed setup_cron_schedules() - Moved to CronManager
+    // Removed add_cron_interval() - Moved to CronManager
 
     /**
      * Handle activation tasks.
@@ -111,285 +140,59 @@ class Sync_Manager {
         if (!get_option('wp_github_sync_webhook_secret')) {
             update_option('wp_github_sync_webhook_secret', wp_github_sync_generate_webhook_secret());
         }
-        
-        // Setup cron schedules
-        $this->setup_cron_schedules();
+
+        // Setup cron schedules via CronManager
+        $this->cron_manager->setup_cron_schedules();
     }
 
     /**
      * Handle deactivation tasks.
      */
     public function deactivate() {
-        // Clear scheduled cron job
-        wp_clear_scheduled_hook('wp_github_sync_cron_hook');
+        // Clear scheduled cron job via CronManager
+        $this->cron_manager->setup_cron_schedules(); // Calling setup checks if enabled and clears if not
     }
 
-    /**
-     * Check for updates from GitHub.
-     */
-    public function check_for_updates() {
-        // Don't check if we're in the middle of a deployment
-        if ($this->is_deployment_in_progress()) {
-            wp_github_sync_log('Auto update check: Skipping because a deployment is in progress', 'info');
-            return;
-        }
-        
-        wp_github_sync_log('Auto update check: Checking for updates from GitHub', 'info');
-        
-        // Get the current branch
-        $branch = wp_github_sync_get_current_branch();
-        wp_github_sync_log("Auto update check: Current branch is '{$branch}'", 'debug');
-        
-        // Get the latest commit on this branch
-        $latest_commit = $this->github_api->get_latest_commit($branch);
-        
-        if (is_wp_error($latest_commit)) {
-            $error_message = $latest_commit->get_error_message();
-            wp_github_sync_log("Auto update check: Error checking for updates - {$error_message}", 'error');
-            return;
-        }
-        
-        // Get the last deployed commit hash
-        $last_deployed_commit = get_option('wp_github_sync_last_deployed_commit', '');
-        
-        // If the latest commit hash is different from the last deployed commit
-        if (isset($latest_commit['sha']) && $latest_commit['sha'] !== $last_deployed_commit) {
-            $latest_sha = $latest_commit['sha'];
-            $latest_short_sha = substr($latest_sha, 0, 8);
-            $commit_message = isset($latest_commit['commit']['message']) ? $latest_commit['commit']['message'] : 'No commit message';
-            $commit_author = isset($latest_commit['commit']['author']['name']) ? $latest_commit['commit']['author']['name'] : 'Unknown';
-            
-            wp_github_sync_log(
-                sprintf(
-                    'Auto update check: New commit found: %s by %s (Last deployed: %s)',
-                    $latest_short_sha,
-                    $commit_author,
-                    $last_deployed_commit ? substr($last_deployed_commit, 0, 8) : 'none'
-                ),
-                'info'
-            );
-            
-            wp_github_sync_log("Auto update check: Commit message: {$commit_message}", 'debug');
-            
-            // Update the latest commit in options for UI display
-            update_option('wp_github_sync_latest_commit', array(
-                'sha' => $latest_sha,
-                'message' => $commit_message,
-                'author' => $commit_author,
-                'date' => isset($latest_commit['commit']['author']['date']) ? $latest_commit['commit']['author']['date'] : '',
-                'timestamp' => time(),
-            ));
-            
-            // Check if auto-deploy is enabled
-            $auto_deploy = get_option('wp_github_sync_auto_deploy', false);
-            
-            if ($auto_deploy) {
-                wp_github_sync_log("Auto update check: Auto-deploy is enabled, initiating deployment of {$latest_short_sha}", 'info');
-                // If so, deploy the new commit
-                $this->deploy($latest_sha);
-            } else {
-                wp_github_sync_log("Auto update check: Auto-deploy is disabled, marking update as available", 'info');
-                // Otherwise, set a flag to show there's an update pending
-                update_option('wp_github_sync_update_available', true);
-                
-                // Send notification if enabled
-                $notify_updates = get_option('wp_github_sync_notify_updates', false);
-                if ($notify_updates) {
-                    wp_github_sync_log("Auto update check: Sending email notification about available update", 'info');
-                    $this->send_update_notification($latest_commit);
-                }
-            }
-        } else {
-            wp_github_sync_log('Auto update check: No new commits found', 'info');
-        }
-    }
+    // Removed check_for_updates() - Logic moved to CronManager::check_for_updates
 
     /**
-     * Deploy a specific commit or branch.
+     * Deploy a specific commit or branch. Delegates to DeploymentOrchestrator.
      *
      * @param string $ref The commit SHA or branch name to deploy.
      * @return bool|\WP_Error True on success or WP_Error on failure.
      */
     public function deploy($ref) {
-        // Check if we're in the middle of a deployment
-        if ($this->is_deployment_in_progress()) {
-            $error_message = __('A deployment is already in progress. Please wait until it completes.', 'wp-github-sync');
-            wp_github_sync_log("Deploy: {$error_message}", 'error');
-            return new \WP_Error('deployment_in_progress', $error_message);
-        }
-        
-        $ref_display = (strlen($ref) > 8) ? substr($ref, 0, 8) : $ref;
-        wp_github_sync_log("Deploy: Starting deployment of {$ref_display}", 'info');
-        
-        // Set deployment in progress flag
-        $this->set_deployment_in_progress(true);
-        $this->last_deployment_time = time();
-        update_option('wp_github_sync_last_deployment_time', $this->last_deployment_time);
-        
-        // Create backup if configured
-        $create_backup = get_option('wp_github_sync_create_backup', true);
-        $backup_path = '';
-        
-        if ($create_backup) {
-            wp_github_sync_log("Deploy: Creating backup before deployment", 'info');
-            $backup_path = $this->create_backup();
-            if (is_wp_error($backup_path)) {
-                $error_message = $backup_path->get_error_message();
-                wp_github_sync_log("Deploy: Backup creation failed - {$error_message}", 'error');
-                $this->set_deployment_in_progress(false);
-                return $backup_path;
-            }
-            wp_github_sync_log("Deploy: Backup created successfully at {$backup_path}", 'info');
-        } else {
-            wp_github_sync_log("Deploy: Backup creation is disabled", 'debug');
-        }
-        
-        // Enable maintenance mode if configured
-        $maintenance_mode = get_option('wp_github_sync_maintenance_mode', true);
-        if ($maintenance_mode) {
-            wp_github_sync_log("Deploy: Enabling maintenance mode", 'info');
-            wp_github_sync_maintenance_mode(true);
-        }
-        
-        // Download and extract repository
-        $temp_dir = WP_CONTENT_DIR . '/upgrade/wp-github-sync-temp';
-        
-        // Clean up temp directory if it exists
-        if (file_exists($temp_dir)) {
-            wp_github_sync_log("Deploy: Cleaning up temporary directory: {$temp_dir}", 'debug');
-            $this->recursive_rmdir($temp_dir);
-        }
-        
-        // Create temp directory
-        wp_github_sync_log("Deploy: Creating temporary download directory", 'debug');
-        wp_mkdir_p($temp_dir);
-        
-        // Download repository to temp directory
-        wp_github_sync_log("Deploy: Downloading repository content for {$ref_display}", 'info');
-        $download_result = $this->repository->download_repository($ref, $temp_dir);
-        
-        if (is_wp_error($download_result)) {
-            $error_message = $download_result->get_error_message();
-            wp_github_sync_log("Deploy: Download failed - {$error_message}", 'error');
-            
-            // Restore from backup if we created one
-            if ($create_backup && $backup_path && file_exists($backup_path)) {
-                wp_github_sync_log("Deploy: Restoring from backup after download failure", 'info');
-                $this->restore_from_backup($backup_path);
-            }
-            
-            // Disable maintenance mode
-            if ($maintenance_mode) {
-                wp_github_sync_log("Deploy: Disabling maintenance mode after download failure", 'info');
-                wp_github_sync_maintenance_mode(false);
-            }
-            
-            $this->set_deployment_in_progress(false);
-            return $download_result;
-        }
-        
-        wp_github_sync_log("Deploy: Repository successfully downloaded, syncing files to wp-content", 'info');
-        
-        // Sync files from temp directory to wp-content
-        $sync_result = $this->sync_files($temp_dir, WP_CONTENT_DIR);
-        
-        // Clean up temp directory
-        wp_github_sync_log("Deploy: Cleaning up temporary directory", 'debug');
-        $this->recursive_rmdir($temp_dir);
-        
-        // Disable maintenance mode
-        if ($maintenance_mode) {
-            wp_github_sync_log("Deploy: Disabling maintenance mode", 'info');
-            wp_github_sync_maintenance_mode(false);
-        }
-        
-        if (is_wp_error($sync_result)) {
-            $error_message = $sync_result->get_error_message();
-            wp_github_sync_log("Deploy: File sync failed - {$error_message}", 'error');
-            
-            // Restore from backup if we created one
-            if ($create_backup && $backup_path && file_exists($backup_path)) {
-                wp_github_sync_log("Deploy: Restoring from backup after sync failure", 'info');
-                $this->restore_from_backup($backup_path);
-            }
-            
-            $this->set_deployment_in_progress(false);
-            return $sync_result;
-        }
-        
-        wp_github_sync_log("Deploy: File synchronization completed successfully", 'info');
-        
-        // Update last deployed commit
-        if (strlen($ref) === 40) {
-            // If $ref is a commit SHA (40 chars), store it directly
-            update_option('wp_github_sync_last_deployed_commit', $ref);
-            wp_github_sync_log("Deploy: Updated last deployed commit to {$ref_display}", 'info');
-        } else {
-            // If $ref is a branch, store the latest commit SHA for that branch
-            wp_github_sync_log("Deploy: Fetching latest commit SHA for branch '{$ref}'", 'debug');
-            $latest_commit = $this->github_api->get_latest_commit($ref);
-            if (!is_wp_error($latest_commit) && isset($latest_commit['sha'])) {
-                $commit_sha = $latest_commit['sha'];
-                $commit_short_sha = substr($commit_sha, 0, 8);
-                update_option('wp_github_sync_last_deployed_commit', $commit_sha);
-                wp_github_sync_log("Deploy: Updated last deployed commit to {$commit_short_sha} from branch '{$ref}'", 'info');
-            } else {
-                wp_github_sync_log("Deploy: Could not fetch latest commit SHA for branch '{$ref}'", 'warning');
-            }
-        }
-        
-        // Clear update available flag
-        delete_option('wp_github_sync_update_available');
-        
-        // Add to deployment history
-        $this->add_to_deployment_history($ref);
-        
-        // Set deployment completed
-        $this->set_deployment_in_progress(false);
-        
-        wp_github_sync_log("Deploy: Deployment of {$ref_display} completed successfully", 'info');
-        
-        // Action hook for after successful deployment
-        do_action('wp_github_sync_after_deploy', $ref, true);
-        
-        return true;
+        return $this->deployment_orchestrator->execute_deployment($ref);
     }
 
     /**
-     * Switch to a different branch.
+     * Switch to a different branch. Delegates deployment to DeploymentOrchestrator.
      *
      * @param string $branch The branch name to switch to.
      * @return bool|\WP_Error True on success or WP_Error on failure.
      */
     public function switch_branch($branch) {
-        // Save current branch for rollback if needed
         $current_branch = wp_github_sync_get_current_branch();
-        
         wp_github_sync_log("Switch Branch: Attempting to switch from '{$current_branch}' to '{$branch}'", 'info');
-        
-        // Update the branch setting
+
+        // Update setting first
         update_option('wp_github_sync_branch', $branch);
-        
-        // Deploy the branch
-        wp_github_sync_log("Switch Branch: Deploying content from branch '{$branch}'", 'info');
-        $result = $this->deploy($branch);
-        
+
+        // Trigger deployment via orchestrator
+        $result = $this->deployment_orchestrator->execute_deployment($branch);
+
         if (is_wp_error($result)) {
-            $error_message = $result->get_error_message();
-            wp_github_sync_log("Switch Branch: Failed to switch to branch '{$branch}' - {$error_message}", 'error');
-            
-            // Switch back to the previous branch in settings
-            wp_github_sync_log("Switch Branch: Reverting branch setting back to '{$current_branch}'", 'info');
-            update_option('wp_github_sync_branch', $current_branch);
+            wp_github_sync_log("Switch Branch: Failed to deploy branch '{$branch}'. Reverting setting to '{$current_branch}'. Error: " . $result->get_error_message(), 'error');
+            update_option('wp_github_sync_branch', $current_branch); // Revert setting on failure
             return $result;
         }
-        
-        wp_github_sync_log("Switch Branch: Successfully switched to branch '{$branch}'", 'info');
+
+        wp_github_sync_log("Switch Branch: Successfully switched to and deployed branch '{$branch}'", 'info');
         return true;
     }
 
     /**
-     * Roll back to a previous commit.
+     * Roll back to a previous commit. Delegates deployment to DeploymentOrchestrator.
      *
      * @param string $commit_sha The commit SHA to roll back to.
      * @return bool|\WP_Error True on success or WP_Error on failure.
@@ -397,357 +200,34 @@ class Sync_Manager {
     public function rollback($commit_sha) {
         $commit_short = substr($commit_sha, 0, 8);
         wp_github_sync_log("Rollback: Initiating rollback to commit '{$commit_short}'", 'info');
-        
-        // Get the current deployed commit for logging
+
         $current_commit = get_option('wp_github_sync_last_deployed_commit', '');
-        $current_short = $current_commit ? substr($current_commit, 0, 8) : 'unknown';
-        
         if ($current_commit == $commit_sha) {
-            wp_github_sync_log("Rollback: Already at commit '{$commit_short}', no rollback needed", 'warning');
+            wp_github_sync_log("Rollback: Already at commit '{$commit_short}'.", 'info');
             return true;
         }
-        
-        wp_github_sync_log("Rollback: Rolling back from '{$current_short}' to '{$commit_short}'", 'info');
-        
-        // Deploy the specific commit
-        $result = $this->deploy($commit_sha);
-        
+
+        // Trigger deployment via orchestrator
+        $result = $this->deployment_orchestrator->execute_deployment($commit_sha);
+
         if (is_wp_error($result)) {
-            $error_message = $result->get_error_message();
-            wp_github_sync_log("Rollback: Failed to rollback to commit '{$commit_short}' - {$error_message}", 'error');
+            wp_github_sync_log("Rollback: Failed to rollback to commit '{$commit_short}'. Error: " . $result->get_error_message(), 'error');
             return $result;
         }
-        
+
         wp_github_sync_log("Rollback: Successfully rolled back to commit '{$commit_short}'", 'info');
         return true;
     }
 
-    /**
-     * Handle GitHub webhook.
-     *
-     * @param \WP_REST_Request $request The request object.
-     * @return \WP_REST_Response The response object.
-     */
-    public function handle_webhook($request) {
-        // Check request method
-        if ($request->get_method() !== 'POST') {
-            wp_github_sync_log('Webhook received non-POST request', 'error');
-            return new \WP_REST_Response(
-                array('message' => 'Method not allowed'),
-                405
-            );
-        }
-        
-        // Verify User-Agent
-        $user_agent = $request->get_header('user-agent');
-        if (empty($user_agent) || strpos($user_agent, 'GitHub-Hookshot/') !== 0) {
-            wp_github_sync_log('Webhook received invalid User-Agent: ' . $user_agent, 'error');
-            return new \WP_REST_Response(
-                array('message' => 'Invalid User-Agent'),
-                403
-            );
-        }
-        
-        // Get the event type
-        $event_type = $request->get_header('x-github-event');
-        if (empty($event_type)) {
-            wp_github_sync_log('Webhook missing X-GitHub-Event header', 'error');
-            return new \WP_REST_Response(
-                array('message' => 'Missing event type'),
-                400
-            );
-        }
-        
-        // Get the raw payload
-        $payload = $request->get_body();
-        if (empty($payload)) {
-            wp_github_sync_log('Webhook received empty payload', 'error');
-            return new \WP_REST_Response(
-                array('message' => 'Empty payload'),
-                400
-            );
-        }
-        
-        // Get the signature header
-        $signature = $request->get_header('x-hub-signature-256');
-        if (empty($signature)) {
-            $signature = $request->get_header('x-hub-signature');
-            if (empty($signature)) {
-                wp_github_sync_log('Webhook missing signature header', 'error');
-                return new \WP_REST_Response(
-                    array('message' => 'Missing signature'),
-                    401
-                );
-            }
-        }
-        
-        // Get the webhook secret from options
-        $secret = get_option('wp_github_sync_webhook_secret', '');
-        if (empty($secret)) {
-            wp_github_sync_log('Webhook secret not configured', 'error');
-            return new \WP_REST_Response(
-                array('message' => 'Webhook not configured'),
-                500
-            );
-        }
-        
-        // Verify the signature
-        if (!wp_github_sync_verify_webhook_signature($payload, $signature, $secret)) {
-            wp_github_sync_log('Webhook signature verification failed', 'error');
-            return new \WP_REST_Response(
-                array('message' => 'Signature verification failed'),
-                401
-            );
-        }
-        
-        // Log successful webhook verification
-        wp_github_sync_log('Webhook signature verified successfully', 'info');
-        
-        // Decode the payload
-        $data = json_decode($payload, true);
-        
-        // Check if this is a push event
-        if (!isset($data['ref'])) {
-            return new \WP_REST_Response(
-                array('message' => 'Not a push event'),
-                200
-            );
-        }
-        
-        // Extract branch name from ref (refs/heads/main -> main)
-        $branch = preg_replace('#^refs/heads/#', '', $data['ref']);
-        
-        // Check if this is the branch we're tracking
-        $tracked_branch = wp_github_sync_get_current_branch();
-        
-        if ($branch !== $tracked_branch) {
-            wp_github_sync_log("Webhook received for branch {$branch}, but we're tracking {$tracked_branch}", 'info');
-            return new \WP_REST_Response(
-                array('message' => "Branch {$branch} does not match tracked branch {$tracked_branch}"),
-                200
-            );
-        }
-        
-        // Check if webhook deployments are enabled
-        $webhook_deploy = get_option('wp_github_sync_webhook_deploy', true);
-        
-        if (!$webhook_deploy) {
-            wp_github_sync_log('Webhook deployment is disabled. Updating available update status only.', 'info');
-            
-            // Just mark that an update is available
-            if (isset($data['after'])) {
-                update_option('wp_github_sync_latest_commit', array(
-                    'sha' => $data['after'],
-                    'message' => isset($data['head_commit']['message']) ? $data['head_commit']['message'] : '',
-                    'author' => isset($data['head_commit']['author']['name']) ? $data['head_commit']['author']['name'] : '',
-                    'date' => isset($data['head_commit']['timestamp']) ? $data['head_commit']['timestamp'] : '',
-                    'timestamp' => time(),
-                ));
-                update_option('wp_github_sync_update_available', true);
-            }
-            
-            return new \WP_REST_Response(
-                array('message' => 'Update marked as available'),
-                200
-            );
-        }
-        
-        // Queue deployment in the background
-        $this->schedule_background_deployment($branch);
-        
-        return new \WP_REST_Response(
-            array('message' => 'Deployment queued'),
-            200
-        );
-    }
+    // Removed handle_webhook() - Moved to WebhookHandler
+    // Removed background_deploy() - Handled by Job_Manager calling DeploymentOrchestrator
+    // Removed add_to_deployment_history() - Moved to DeploymentOrchestrator
+    // Removed create_backup() - Moved to Backup_Manager
+    // Removed restore_from_backup() - Moved to Backup_Manager
+    // Removed sync_files() - Moved to File_Sync
+    // Removed send_update_notification() - Moved to CronManager (or a dedicated Notifier class)
+    // Removed is_deployment_in_progress() - Handled by transient lock check in DeploymentOrchestrator
+    // Removed set_deployment_in_progress() - Handled by transient lock in DeploymentOrchestrator
+    // Removed schedule_background_deployment() - Moved to WebhookHandler/CronManager/Job_Manager
 
-    /**
-     * Background deployment handler.
-     *
-     * @param string $ref The reference (branch or commit) to deploy.
-     */
-    public function background_deploy($ref) {
-        wp_github_sync_log("Starting background deployment of {$ref}", 'info');
-        $this->deploy($ref);
-    }
-
-    /**
-     * Add a deployment to history.
-     *
-     * @param string $ref The reference (commit or branch) that was deployed.
-     */
-    private function add_to_deployment_history($ref) {
-        $history = get_option('wp_github_sync_deployment_history', array());
-        
-        // Get commit details
-        $commit_data = array();
-        
-        if (strlen($ref) === 40) {
-            // If $ref is a commit SHA, get details for that commit
-            $commit_details = $this->github_api->request(
-                "repos/{$this->github_api->get_owner()}/{$this->github_api->get_repo()}/commits/{$ref}"
-            );
-            if (!is_wp_error($commit_details)) {
-                $commit_data = array(
-                    'sha' => $ref,
-                    'message' => isset($commit_details['commit']['message']) ? $commit_details['commit']['message'] : '',
-                    'author' => isset($commit_details['commit']['author']['name']) ? $commit_details['commit']['author']['name'] : '',
-                    'date' => isset($commit_details['commit']['author']['date']) ? $commit_details['commit']['author']['date'] : '',
-                );
-            }
-        } else {
-            // If $ref is a branch, get the latest commit for that branch
-            $latest_commit = $this->github_api->get_latest_commit($ref);
-            if (!is_wp_error($latest_commit)) {
-                $commit_data = array(
-                    'sha' => $latest_commit['sha'],
-                    'message' => isset($latest_commit['commit']['message']) ? $latest_commit['commit']['message'] : '',
-                    'author' => isset($latest_commit['commit']['author']['name']) ? $latest_commit['commit']['author']['name'] : '',
-                    'date' => isset($latest_commit['commit']['author']['date']) ? $latest_commit['commit']['author']['date'] : '',
-                );
-            }
-        }
-        
-        // Add deployment to history
-        $history[] = array(
-            'ref' => $ref,
-            'commit' => $commit_data,
-            'timestamp' => time(),
-            'user' => wp_get_current_user()->user_login,
-        );
-        
-        // Limit history to 20 items
-        if (count($history) > 20) {
-            $history = array_slice($history, -20);
-        }
-        
-        update_option('wp_github_sync_deployment_history', $history);
-    }
-
-    /**
-     * Create a backup of the current state.
-     *
-     * @return string|\WP_Error The backup path or WP_Error on failure.
-     */
-    private function create_backup() {
-        $backup_manager = new Backup_Manager();
-        return $backup_manager->create_backup();
-    }
-
-    /**
-     * Restore from a backup.
-     *
-     * @param string $backup_path The path to the backup directory.
-     * @return bool|\WP_Error True on success or WP_Error on failure.
-     */
-    private function restore_from_backup($backup_path) {
-        $backup_manager = new Backup_Manager();
-        return $backup_manager->restore_from_backup($backup_path);
-    }
-
-    /**
-     * Sync files from source to target directory.
-     *
-     * @param string $source_dir The source directory.
-     * @param string $target_dir The target directory.
-     * @return bool|\WP_Error True on success or WP_Error on failure.
-     */
-    private function sync_files($source_dir, $target_dir) {
-        $file_sync = new File_Sync();
-        return $file_sync->sync_files($source_dir, $target_dir);
-    }
-
-    /**
-     * Remove a directory recursively.
-     *
-     * @param string $dir The directory to remove.
-     * @return bool True on success, false on failure.
-     */
-    private function recursive_rmdir($dir) {
-        if (!is_dir($dir)) {
-            return false;
-        }
-        
-        $objects = scandir($dir);
-        
-        foreach ($objects as $object) {
-            if ($object === '.' || $object === '..') {
-                continue;
-            }
-            
-            $path = $dir . '/' . $object;
-            
-            if (is_dir($path)) {
-                $this->recursive_rmdir($path);
-            } else {
-                unlink($path);
-            }
-        }
-        
-        return rmdir($dir);
-    }
-
-    /**
-     * Send an email notification about available updates.
-     *
-     * @param array $commit The commit data.
-     */
-    private function send_update_notification($commit) {
-        $admin_email = get_option('admin_email');
-        $site_name = get_bloginfo('name');
-        $commit_message = isset($commit['commit']['message']) ? $commit['commit']['message'] : '';
-        $commit_author = isset($commit['commit']['author']['name']) ? $commit['commit']['author']['name'] : '';
-        $commit_date = isset($commit['commit']['author']['date']) ? $commit['commit']['author']['date'] : '';
-        
-        $subject = sprintf(__('[%s] New GitHub update available', 'wp-github-sync'), $site_name);
-        
-        $message = sprintf(
-            __("Hello,\n\nA new update is available for your WordPress site from GitHub.\n\nCommit: %s\nAuthor: %s\nDate: %s\nMessage: %s\n\nYou can deploy this update from the WordPress admin area under 'GitHub Sync'.\n\nRegards,\nWordPress GitHub Sync", 'wp-github-sync'),
-            substr($commit['sha'], 0, 8),
-            $commit_author,
-            $commit_date,
-            $commit_message
-        );
-        
-        wp_mail($admin_email, $subject, $message);
-    }
-
-    /**
-     * Check if a deployment is currently in progress.
-     *
-     * @return bool True if a deployment is in progress, false otherwise.
-     */
-    private function is_deployment_in_progress() {
-        $in_progress = get_option('wp_github_sync_deployment_in_progress', false);
-        
-        // If it's been more than 10 minutes since the last deployment started,
-        // assume it failed and allow a new one
-        if ($in_progress && (time() - $this->last_deployment_time) > 600) {
-            $this->set_deployment_in_progress(false);
-            return false;
-        }
-        
-        return $in_progress;
-    }
-
-    /**
-     * Set the deployment in progress flag.
-     *
-     * @param bool $in_progress Whether a deployment is in progress.
-     */
-    private function set_deployment_in_progress($in_progress) {
-        update_option('wp_github_sync_deployment_in_progress', $in_progress);
-    }
-
-    /**
-     * Schedule a background deployment using WordPress cron.
-     *
-     * @param string $ref The reference (branch or commit) to deploy.
-     */
-    private function schedule_background_deployment($ref) {
-        if (!wp_next_scheduled('wp_github_sync_background_deploy', array($ref))) {
-            wp_schedule_single_event(time(), 'wp_github_sync_background_deploy', array($ref));
-            wp_github_sync_log("Background deployment scheduled for {$ref}", 'info');
-        }
-    }
-}
+} // End class Sync_Manager

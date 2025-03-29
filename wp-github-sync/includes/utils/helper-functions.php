@@ -45,17 +45,23 @@ function wp_github_sync_encrypt($data) {
         wp_github_sync_log("Invalid token format detected", 'warning');
     }
 
-    // Check if we have a predefined encryption key
+    // Check if we have a predefined encryption key (recommended)
     $encryption_key = defined('WP_GITHUB_SYNC_ENCRYPTION_KEY') ? WP_GITHUB_SYNC_ENCRYPTION_KEY : false;
     
-    // If no predefined key, generate and store one
+    // If no predefined key, use the database option (less secure)
     if (!$encryption_key) {
+        wp_github_sync_log("SECURITY WARNING: WP_GITHUB_SYNC_ENCRYPTION_KEY constant not defined. Using less secure database option for encryption key. Define the constant in wp-config.php for better security.", 'warning');
         $encryption_key = get_option('wp_github_sync_encryption_key');
         if (!$encryption_key) {
+            // Generate and store one if it doesn't exist at all
             $encryption_key = wp_generate_password(64, true, true);
             update_option('wp_github_sync_encryption_key', $encryption_key);
-            wp_github_sync_log("Generated new encryption key", 'debug');
+            wp_github_sync_log("Generated new encryption key and stored in database (less secure).", 'warning');
+        } else {
+             wp_github_sync_log("Using existing encryption key from database (less secure).", 'warning');
         }
+    } else {
+         wp_github_sync_log("Using secure encryption key from WP_GITHUB_SYNC_ENCRYPTION_KEY constant.", 'debug');
     }
 
     // Check if OpenSSL is available
@@ -75,24 +81,10 @@ function wp_github_sync_encrypt($data) {
         wp_github_sync_log("Successfully encrypted data using OpenSSL", 'debug');
         return $result;
     }
-    
-    // If OpenSSL is not available, use a more secure fallback with password_hash
-    wp_github_sync_log("OpenSSL not available, using password-based encryption fallback", 'warning');
-    
-    // Generate a secure salt
-    $salt = wp_generate_password(32, true, true);
-    
-    // Combine with encryption key
-    $encryption_key_hashed = hash('sha256', $encryption_key . $salt);
-    
-    // XOR the data with the hashed key for simple encryption
-    $encrypted = '';
-    for ($i = 0; $i < strlen($data); $i++) {
-        $encrypted .= chr(ord($data[$i]) ^ ord($encryption_key_hashed[$i % strlen($encryption_key_hashed)]));
-    }
-    
-    // Return salt + encrypted data in base64
-    return 'pbkdf:' . base64_encode($salt . $encrypted);
+
+    // If OpenSSL is not available, fail encryption
+    wp_github_sync_log("OpenSSL extension is not available. Cannot encrypt token securely.", 'error');
+    return false;
 }
 
 /**
@@ -107,63 +99,19 @@ function wp_github_sync_decrypt($encrypted_data) {
         return false;
     }
 
-    // Check for base64 fallback format (legacy support)
-    if (strpos($encrypted_data, 'base64:') === 0) {
-        wp_github_sync_log("Decrypting using legacy base64 fallback method", 'debug');
-        $base64_data = substr($encrypted_data, 7); // Remove 'base64:' prefix
-        $result = base64_decode($base64_data);
-        if ($result === false) {
-            wp_github_sync_log("Base64 decoding failed", 'error');
-            return false;
-        }
-        return $result;
-    }
-    
-    // Check for password-based encryption format
-    if (strpos($encrypted_data, 'pbkdf:') === 0) {
-        wp_github_sync_log("Decrypting using password-based encryption method", 'debug');
-        
-        // Get encryption key
-        $encryption_key = defined('WP_GITHUB_SYNC_ENCRYPTION_KEY') ? WP_GITHUB_SYNC_ENCRYPTION_KEY : get_option('wp_github_sync_encryption_key');
-        if (!$encryption_key) {
-            wp_github_sync_log("No encryption key found, cannot decrypt", 'error');
-            return false;
-        }
-        
-        // Decode the data
-        $encoded_data = substr($encrypted_data, 6); // Remove 'pbkdf:' prefix
-        $decoded = base64_decode($encoded_data);
-        if ($decoded === false) {
-            wp_github_sync_log("Base64 decoding of encrypted data failed", 'error');
-            return false;
-        }
-        
-        // Extract salt (first 32 bytes) and encrypted data
-        $salt = substr($decoded, 0, 32);
-        $encrypted = substr($decoded, 32);
-        
-        // Recreate the key hash
-        $encryption_key_hashed = hash('sha256', $encryption_key . $salt);
-        
-        // XOR decrypt
-        $decrypted = '';
-        for ($i = 0; $i < strlen($encrypted); $i++) {
-            $decrypted .= chr(ord($encrypted[$i]) ^ ord($encryption_key_hashed[$i % strlen($encryption_key_hashed)]));
-        }
-        
-        return $decrypted;
-    }
-
-    // Check if we have a predefined encryption key
+    // Check if we have a predefined encryption key (recommended)
     $encryption_key = defined('WP_GITHUB_SYNC_ENCRYPTION_KEY') ? WP_GITHUB_SYNC_ENCRYPTION_KEY : false;
     
-    // If no predefined key, get from options
+    // If no predefined key, get from options (less secure)
     if (!$encryption_key) {
+         wp_github_sync_log("SECURITY WARNING: WP_GITHUB_SYNC_ENCRYPTION_KEY constant not defined. Using less secure database option for encryption key.", 'warning');
         $encryption_key = get_option('wp_github_sync_encryption_key');
         if (!$encryption_key) {
-            wp_github_sync_log("No encryption key found, cannot decrypt", 'error');
+            wp_github_sync_log("No encryption key found (constant or option), cannot decrypt", 'error');
             return false; // Can't decrypt without the key
         }
+    } else {
+         wp_github_sync_log("Using secure encryption key from WP_GITHUB_SYNC_ENCRYPTION_KEY constant.", 'debug');
     }
 
     // Check if OpenSSL is available
@@ -192,19 +140,14 @@ function wp_github_sync_decrypt($encrypted_data) {
             wp_github_sync_log("OpenSSL decryption failed", 'error');
             return false;
         }
-        
+
         wp_github_sync_log("Successfully decrypted using OpenSSL", 'debug');
         return $result;
     }
-    
-    // Fallback if OpenSSL is not available
-    wp_github_sync_log("OpenSSL not available, trying base64 fallback", 'warning');
-    $result = base64_decode($encrypted_data);
-    if ($result === false) {
-        wp_github_sync_log("Fallback base64 decoding failed", 'error');
-        return false;
-    }
-    return $result;
+
+    // If OpenSSL is not available, fail decryption
+    wp_github_sync_log("OpenSSL extension is not available. Cannot decrypt token securely.", 'error');
+    return false;
 }
 
 /**
@@ -215,9 +158,6 @@ function wp_github_sync_decrypt($encrypted_data) {
  * @param bool   $force   Whether to log even if WP_DEBUG is not enabled.
  */
 function wp_github_sync_log($message, $level = 'info', $force = false) {
-    // For this debugging session, force logging regardless of WP_DEBUG
-    $force = true;
-    
     // Check if we should log - either debug is enabled or force is true 
     // or a specific filter for GitHub Sync logging is enabled
     $should_log = (defined('WP_DEBUG') && WP_DEBUG) || 
@@ -505,4 +445,3 @@ function wp_github_sync_get_current_branch() {
 function wp_github_sync_get_repository_url() {
     return get_option('wp_github_sync_repository', '');
 }
-

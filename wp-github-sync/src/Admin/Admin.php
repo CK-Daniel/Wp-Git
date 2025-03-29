@@ -1,11 +1,21 @@
 <?php
 /**
  * The admin-specific functionality of the plugin.
+ * Initializes admin-related managers and handles non-AJAX admin actions.
  *
- * @package WPGitHubSync
+ * @package WPGitHubSync\Admin
  */
 
 namespace WPGitHubSync\Admin;
+
+// Use statements for dependencies and managers
+use WPGitHubSync\API\API_Client;
+use WPGitHubSync\API\Repository;
+use WPGitHubSync\Sync\Sync_Manager;
+use WPGitHubSync\Admin\Progress_Tracker; // Add Progress_Tracker
+use WPGitHubSync\Admin\BackgroundTaskRunner; // Add BackgroundTaskRunner
+use WPGitHubSync\Admin\Log_Manager; // Add Log_Manager
+use WPGitHubSync\Admin\AJAX; // Namespace for new AJAX handlers
 
 // If this file is called directly, abort.
 if (!defined('WPINC')) {
@@ -13,7 +23,7 @@ if (!defined('WPINC')) {
 }
 
 /**
- * Admin class.
+ * Admin bootstrap class.
  */
 class Admin {
 
@@ -25,2573 +35,319 @@ class Admin {
     private $version;
 
     /**
+     * The main plugin file path relative to plugins dir.
+     *
+     * @var string
+     */
+    private $plugin_file;
+
+    /**
      * GitHub API client instance.
      *
-     * @var \WPGitHubSync\API\API_Client
+     * @var API_Client
      */
     private $github_api;
 
     /**
      * Git Sync Manager instance.
      *
-     * @var \WPGitHubSync\Sync\Sync_Manager
+     * @var Sync_Manager
      */
     private $sync_manager;
 
     /**
+     * Repository instance.
+     *
+     * @var Repository
+     */
+    private $repository;
+
+    /**
+     * Asset Manager instance.
+     *
+     * @var Asset_Manager
+     */
+    private $asset_manager;
+
+    /**
+     * Admin Pages instance.
+     *
+     * @var Admin_Pages
+     */
+    private $admin_pages;
+
+    /**
+     * Menu Manager instance.
+     *
+     * @var Menu_Manager
+     */
+    private $menu_manager;
+
+    /**
+     * AJAX Handler instance.
+     *
+     * @var AJAX_Handler
+     * @deprecated Use specific handlers instead.
+     */
+    private $ajax_handler;
+
+    /**
+     * Specific AJAX Handlers
+     */
+    private $sync_actions_handler;
+    private $status_check_handler;
+    private $settings_actions_handler;
+    private $oauth_actions_handler;
+    private $utility_actions_handler;
+
+    /**
+     * Notice Manager instance.
+     *
+     * @var Notice_Manager
+     */
+    private $notice_manager;
+
+    /**
+     * OAuth Handler instance.
+     *
+     * @var OAuth_Handler
+     */
+    private $oauth_handler;
+
+    /**
+     * Job Manager instance.
+     *
+     * @var Job_Manager
+     */
+    private $job_manager;
+
+    /**
+     * Progress Tracker instance.
+     * @var Progress_Tracker
+     */
+    private $progress_tracker;
+
+    /**
+     * Background Task Runner instance.
+     * @var BackgroundTaskRunner
+     */
+    private $background_task_runner;
+
+    /**
+     * Log Manager instance.
+     * @var Log_Manager
+     */
+    private $log_manager;
+
+
+    /**
      * Initialize the class and set its properties.
      *
-     * @param string $version The version of this plugin.
+     * @param string       $version      The version of this plugin.
+     * @param string       $plugin_file  The main plugin file path.
+     * @param API_Client   $github_api   The GitHub API client instance.
+     * @param Sync_Manager $sync_manager The Sync Manager instance.
+     * @param Repository   $repository   The Repository instance.
      */
-    public function __construct($version) {
+    public function __construct(
+        $version,
+        $plugin_file,
+        API_Client $github_api,
+        Sync_Manager $sync_manager,
+        Repository $repository
+    ) {
         $this->version = $version;
-        $this->github_api = new \WPGitHubSync\API\API_Client();
-        $this->sync_manager = new \WPGitHubSync\Sync\Sync_Manager($this->github_api);
-        
-        // Register AJAX handlers
-        add_action('wp_ajax_wp_github_sync_deploy', array($this, 'handle_ajax_deploy'));
-        add_action('wp_ajax_wp_github_sync_background_deploy', array($this, 'handle_ajax_background_deploy'));
-        add_action('wp_ajax_wp_github_sync_switch_branch', array($this, 'handle_ajax_switch_branch'));
-        add_action('wp_ajax_wp_github_sync_rollback', array($this, 'handle_ajax_rollback'));
-        add_action('wp_ajax_wp_github_sync_refresh_branches', array($this, 'handle_ajax_refresh_branches'));
-        add_action('wp_ajax_wp_github_sync_regenerate_webhook', array($this, 'handle_ajax_regenerate_webhook'));
-        add_action('wp_ajax_wp_github_sync_oauth_connect', array($this, 'handle_ajax_oauth_connect'));
-        add_action('wp_ajax_wp_github_sync_oauth_disconnect', array($this, 'handle_ajax_oauth_disconnect'));
-        add_action('wp_ajax_wp_github_sync_initial_sync', array($this, 'handle_ajax_initial_sync'));
-        add_action('wp_ajax_wp_github_sync_background_initial_sync', array($this, 'handle_ajax_background_initial_sync'));
-        add_action('wp_ajax_wp_github_sync_full_sync', array($this, 'handle_ajax_full_sync'));
-        add_action('wp_ajax_wp_github_sync_background_full_sync', array($this, 'handle_ajax_background_full_sync'));
-        add_action('wp_ajax_wp_github_sync_test_connection', array($this, 'handle_ajax_test_connection'));
-        add_action('wp_ajax_wp_github_sync_log_error', array($this, 'handle_ajax_log_error'));
-        add_action('wp_ajax_wp_github_sync_check_progress', array($this, 'handle_ajax_check_progress'));
-        add_action('wp_ajax_wp_github_sync_check_requirements', array($this, 'handle_ajax_check_requirements'));
-        add_action('wp_ajax_wp_github_sync_check_status', array($this, 'handle_ajax_check_status'));
-        
-        // Register action for background processing
-        add_action('wp_github_sync_background_sync_process', array($this, 'process_background_sync'), 10, 2);
-        
-        // Handle OAuth callback
-        add_action('admin_init', array($this, 'handle_oauth_callback'));
-    }
+        $this->plugin_file = $plugin_file;
+        $this->github_api = $github_api;
+        $this->sync_manager = $sync_manager;
+        $this->repository = $repository;
 
-    /**
-     * Register the stylesheets for the admin area.
-     */
-    public function enqueue_styles() {
-        $screen = get_current_screen();
-        
-        // Only enqueue on our plugin pages
-        if (!$screen || strpos($screen->id, 'wp-github-sync') === false) {
-            return;
-        }
-        
-        // Always load the main admin CSS
-        wp_enqueue_style(
-            'wp-github-sync-admin',
-            WP_GITHUB_SYNC_URL . 'admin/assets/css/admin.css',
-            array(),
-            $this->version,
-            'all'
+        // Instantiate Core Managers & Helpers
+        $this->asset_manager = new Asset_Manager($this->version);
+        $this->notice_manager = new Notice_Manager();
+        $this->oauth_handler = new OAuth_Handler();
+        $this->progress_tracker = new Progress_Tracker();
+        $this->background_task_runner = new BackgroundTaskRunner();
+        $this->log_manager = new Log_Manager();
+
+        // Instantiate Managers requiring dependencies
+        $this->job_manager = new Job_Manager(
+            $this->github_api,
+            $this->sync_manager,
+            $this->repository,
+            $this->progress_tracker,
+            $this->background_task_runner
         );
-        
-        // Load page-specific CSS files
-        if (strpos($screen->id, 'wp-github-sync-dashboard') !== false || $screen->id === 'toplevel_page_wp-github-sync') {
-            wp_enqueue_style(
-                'wp-github-sync-dashboard',
-                WP_GITHUB_SYNC_URL . 'admin/assets/css/dashboard.css',
-                array('wp-github-sync-admin'),
-                $this->version,
-                'all'
-            );
-        }
-        
-        // Load Jobs Monitor specific CSS
-        if (strpos($screen->id, 'wp-github-sync-jobs') !== false) {
-            wp_enqueue_style(
-                'wp-github-sync-jobs',
-                WP_GITHUB_SYNC_URL . 'admin/assets/css/jobs.css',
-                array('wp-github-sync-admin'),
-                $this->version,
-                'all'
-            );
-        }
-    }
+        $this->admin_pages = new Admin_Pages($this->log_manager, $this->job_manager); // Inject dependencies
+        $this->menu_manager = new Menu_Manager($this->admin_pages, $this->plugin_file);
 
-    /**
-     * Register the JavaScript for the admin area.
-     */
-    public function enqueue_scripts() {
-        $screen = get_current_screen();
-        
-        // Only enqueue on our plugin pages
-        if (!$screen || strpos($screen->id, 'wp-github-sync') === false) {
-            return;
-        }
-        
-        // Base admin script needed for all pages
-        wp_enqueue_script(
-            'wp-github-sync-admin',
-            WP_GITHUB_SYNC_URL . 'admin/assets/js/admin.js',
-            array('jquery'),
-            $this->version,
-            false
+        // Instantiate new AJAX Handlers
+        $this->sync_actions_handler = new AJAX\SyncActionsHandler(
+            $this->sync_manager,
+            $this->repository,
+            $this->job_manager,
+            $this->progress_tracker
         );
-        
-        // Add localized script data
-        wp_localize_script(
-            'wp-github-sync-admin',
-            'wpGitHubSync',
-            array(
-                'ajaxUrl' => admin_url('admin-ajax.php'),
-                'adminUrl' => admin_url(),
-                'nonce' => wp_create_nonce('wp_github_sync_nonce'),
-                'initialSyncNonce' => wp_create_nonce('wp_github_sync_initial_sync'),
-                'currentPage' => $screen->id,
-                'strings' => array(
-                    'confirmDeploy' => __('Are you sure you want to deploy the latest changes from GitHub? This will update your site files.', 'wp-github-sync'),
-                    'confirmSwitchBranch' => __('Are you sure you want to switch branches? This will update your site files to match the selected branch.', 'wp-github-sync'),
-                    'confirmRollback' => __('Are you sure you want to roll back to this commit? This will revert your site files to an earlier state.', 'wp-github-sync'),
-                    'confirmRegenerateWebhook' => __('Are you sure you want to regenerate the webhook secret? You will need to update it in your GitHub repository settings.', 'wp-github-sync'),
-                    'confirmFullSync' => __('This will sync all your WordPress site files to GitHub. Continue?', 'wp-github-sync'),
-                    'backgroundProcessInfo' => __('This will run in the background without time limits.', 'wp-github-sync'),
-                    'inBackground' => __('in background mode', 'wp-github-sync'),
-                    'backgroundSyncStarted' => __('Background Process Started', 'wp-github-sync'),
-                    'success' => __('Operation completed successfully.', 'wp-github-sync'),
-                    'error' => __('An error occurred. Please try again.', 'wp-github-sync'),
-                    'deploying' => __('Deploying latest changes...', 'wp-github-sync'),
-                    'checkingUpdates' => __('Checking for updates...', 'wp-github-sync'),
-                    'syncing' => __('Syncing files to GitHub...', 'wp-github-sync'),
-                    'switchingBranch' => __('Switching to branch: %s', 'wp-github-sync'),
-                    'refreshingBranches' => __('Refreshing branches list...', 'wp-github-sync'),
-                    'branchesRefreshed' => __('Branches list refreshed successfully.', 'wp-github-sync'),
-                    'rollingBack' => __('Rolling back to commit: %s', 'wp-github-sync'),
-                    'regeneratingWebhook' => __('Regenerating webhook secret...', 'wp-github-sync'),
-                ),
-            )
-        );
-        
-        // Load page-specific scripts
-        if (strpos($screen->id, 'wp-github-sync-dashboard') !== false || $screen->id === 'toplevel_page_wp-github-sync') {
-            wp_enqueue_script(
-                'wp-github-sync-dashboard',
-                WP_GITHUB_SYNC_URL . 'admin/assets/js/dashboard.js',
-                array('jquery', 'wp-github-sync-admin'),
-                $this->version,
-                false
-            );
-        }
-        
-        // Load jobs monitor page scripts
-        if (strpos($screen->id, 'wp-github-sync-jobs') !== false) {
-            wp_enqueue_script(
-                'wp-github-sync-jobs',
-                WP_GITHUB_SYNC_URL . 'admin/assets/js/jobs.js',
-                array('jquery', 'wp-github-sync-admin'),
-                $this->version,
-                false
-            );
-        }
-        
-        // Load settings page specific scripts
-        if (strpos($screen->id, 'wp-github-sync-settings') !== false) {
-            // We're on the settings page - ensure CSS is properly loaded
-            wp_add_inline_script('wp-github-sync-admin', '
-                // Ensure settings tabs work properly when loaded
-                jQuery(document).ready(function($) {
-                    // Helper to forcibly display all tab content for debugging
-                    function forceShowAllTabContent() {
-                        $(".wp-github-sync-tab-content").css("display", "block");
-                    }
-                    
-                    // Helper to forcibly show a specific tab
-                    function forceShowTab(tabId) {
-                        $(".wp-github-sync-tab").removeClass("active");
-                        $(".wp-github-sync-tab-content").removeClass("active").hide();
-                        $(".wp-github-sync-tab[data-tab=" + tabId + "]").addClass("active");
-                        $("#" + tabId + "-tab-content").addClass("active").show();
-                    }
-                    
-                    // Uncomment for debugging tab issues
-                    // forceShowAllTabContent();
-                    
-                    // Initialize tabs if not already done
-                    if ($(".wp-github-sync-tab-content.active").length === 0) {
-                        // Default to first tab
-                        forceShowTab("general");
-                    }
-                    
-                    // Manually trigger authentication tab if hash is present
-                    if (window.location.hash === "#authentication") {
-                        forceShowTab("authentication");
-                    }
-                    
-                    console.log("Settings tabs initialized");
-                });
-            ');
-        }
-    }
+        $this->status_check_handler = new AJAX\StatusCheckHandler($this->progress_tracker);
+        $this->settings_actions_handler = new AJAX\SettingsActionsHandler($this->github_api);
+        $this->oauth_actions_handler = new AJAX\OAuthActionsHandler(); // Add dependencies if needed
+        $this->utility_actions_handler = new AJAX\UtilityActionsHandler(); // Add dependencies if needed
 
-    /**
-     * Add plugin admin menu.
-     */
-    public function add_plugin_admin_menu() {
-        // Main menu item
-        add_menu_page(
-            __('GitHub Sync', 'wp-github-sync'),
-            __('GitHub Sync', 'wp-github-sync'),
-            'manage_options',
-            'wp-github-sync',
-            array($this, 'display_dashboard_page'),
-            'dashicons-update',
-            65
-        );
+        // Register hooks for core managers
+        $this->asset_manager->register_hooks();
+        $this->menu_manager->register_hooks();
+        $this->notice_manager->register_hooks();
+        $this->oauth_handler->register_hooks();
+        $this->job_manager->register_hooks();
 
-        // Dashboard submenu
-        add_submenu_page(
-            'wp-github-sync',
-            __('Dashboard', 'wp-github-sync'),
-            __('Dashboard', 'wp-github-sync'),
-            'manage_options',
-            'wp-github-sync',
-            array($this, 'display_dashboard_page')
-        );
+        // Register hooks for new AJAX Handlers
+        $this->sync_actions_handler->register_hooks();
+        $this->status_check_handler->register_hooks();
+        $this->settings_actions_handler->register_hooks();
+        $this->oauth_actions_handler->register_hooks();
+        $this->utility_actions_handler->register_hooks();
 
-        // Settings submenu
-        add_submenu_page(
-            'wp-github-sync',
-            __('Settings', 'wp-github-sync'),
-            __('Settings', 'wp-github-sync'),
-            'manage_options',
-            'wp-github-sync-settings',
-            array($this, 'display_settings_page')
-        );
+        // Deprecated AJAX Handler - keep for potential backward compatibility if needed, but don't register hooks
+        // $this->ajax_handler = new AJAX_Handler($this->github_api, $this->sync_manager, $this->repository);
+        // $this->ajax_handler->register_hooks(); // DO NOT REGISTER HOOKS FOR OLD HANDLER
 
-        // Deployment history submenu
-        add_submenu_page(
-            'wp-github-sync',
-            __('Deployment History', 'wp-github-sync'),
-            __('Deployment History', 'wp-github-sync'),
-            'manage_options',
-            'wp-github-sync-history',
-            array($this, 'display_history_page')
-        );
-        
-        // Jobs Monitor submenu
-        add_submenu_page(
-            'wp-github-sync',
-            __('Background Jobs', 'wp-github-sync'),
-            __('Jobs Monitor', 'wp-github-sync'),
-            'manage_options',
-            'wp-github-sync-jobs',
-            array($this, 'display_jobs_page')
-        );
-        
-        // Logs submenu
-        add_submenu_page(
-            'wp-github-sync',
-            __('Logs', 'wp-github-sync'),
-            __('Logs', 'wp-github-sync'),
-            'manage_options',
-            'wp-github-sync-logs',
-            array($this, 'display_logs_page')
-        );
-    }
+        // Register dashboard widget hook
+        add_action('wp_dashboard_setup', array($this, 'add_dashboard_widget'));
 
-    /**
-     * Add action links to the plugin listing.
-     *
-     * @param array $links Existing plugin action links.
-     * @return array Modified plugin action links.
-     */
-    public function add_action_links($links) {
-        $settings_link = '<a href="' . admin_url('admin.php?page=wp-github-sync-settings') . '">' . __('Settings', 'wp-github-sync') . '</a>';
-        array_unshift($links, $settings_link);
-        return $links;
-    }
-
-    /**
-     * Display the dashboard page.
-     */
-    public function display_dashboard_page() {
-        // Handle direct actions like deploy, switch branch, rollback
-        $this->handle_admin_actions();
-        
-        // Get current repository info
-        $repository_url = get_option('wp_github_sync_repository', '');
-        $branch = wp_github_sync_get_current_branch();
-        $last_deployed_commit = get_option('wp_github_sync_last_deployed_commit', '');
-        $latest_commit_info = get_option('wp_github_sync_latest_commit', array());
-        $update_available = get_option('wp_github_sync_update_available', false);
-        $deployment_in_progress = get_option('wp_github_sync_deployment_in_progress', false);
-        $last_deployment_time = !empty(get_option('wp_github_sync_deployment_history', array())) ? 
-            max(array_column(get_option('wp_github_sync_deployment_history', array()), 'timestamp')) : 0;
-        $branches = get_option('wp_github_sync_branches', array());
-        $recent_commits = get_option('wp_github_sync_recent_commits', array());
-        
-        include WP_GITHUB_SYNC_DIR . 'admin/templates/dashboard-page.php';
-    }
-
-    /**
-     * Display the settings page.
-     */
-    public function display_settings_page() {
-        include WP_GITHUB_SYNC_DIR . 'admin/templates/settings-page.php';
-    }
-
-    /**
-     * Display the deployment history page.
-     */
-    public function display_history_page() {
-        // Handle direct actions if any
-        $this->handle_admin_actions();
-        
-        // Get deployment history
-        $history = get_option('wp_github_sync_deployment_history', array());
-        $repository_url = get_option('wp_github_sync_repository', '');
-        
-        // Sort history by date (newest first) and group by date
-        $grouped_history = array();
-        
-        if (!empty($history)) {
-            // Sort by timestamp (newest first)
-            usort($history, function($a, $b) {
-                return $b['timestamp'] <=> $a['timestamp'];
-            });
-            
-            // Group by date
-            foreach ($history as $deployment) {
-                $date = date('Y-m-d', $deployment['timestamp']);
-                if (!isset($grouped_history[$date])) {
-                    $grouped_history[$date] = array();
-                }
-                $grouped_history[$date][] = $deployment;
-            }
-        }
-        
-        include WP_GITHUB_SYNC_DIR . 'admin/templates/history-page.php';
-    }
-    
-    /**
-     * Display the logs page.
-     */
-    public function display_logs_page() {
-        // Check if wp_github_sync_log function exists
-        if (!function_exists('wp_github_sync_log')) {
-            wp_die(__('Required functions are missing. Please make sure the plugin is correctly installed.', 'wp-github-sync'));
-        }
-        
-        // Verify user has permission
-        if (!wp_github_sync_current_user_can()) {
-            wp_die(__('You do not have sufficient permissions to access this page.', 'wp-github-sync'));
-        }
-        
-        // Handle log actions
-        $this->handle_log_actions();
-        
-        // Get log file path
-        $log_file = WP_CONTENT_DIR . '/wp-github-sync-debug.log';
-        $logs = array();
-        $log_file_size = 0;
-        $log_level_filter = isset($_GET['level']) ? sanitize_text_field($_GET['level']) : '';
-        $search_query = isset($_GET['search']) ? sanitize_text_field($_GET['search']) : '';
-        
-        // Validate log level filter if provided
-        $valid_levels = array('debug', 'info', 'warning', 'error');
-        if (!empty($log_level_filter) && !in_array($log_level_filter, $valid_levels)) {
-            $log_level_filter = '';
-        }
-        
-        // Check if log file exists and is readable
-        if (file_exists($log_file) && is_readable($log_file)) {
-            // Get file size
-            $file_size = filesize($log_file);
-            $log_file_size = size_format($file_size);
-            
-            // Check if file is too large to process entirely
-            $max_size = apply_filters('wp_github_sync_max_log_size', 5 * 1024 * 1024); // 5MB default
-            
-            try {
-                if ($file_size > $max_size) {
-                    // For large files, read only the last portion
-                    $log_content = $this->read_last_lines($log_file, 1000);
-                    
-                    // Add a notice that we're only showing partial logs
-                    add_settings_error(
-                        'wp_github_sync',
-                        'logs_truncated',
-                        sprintf(__('Log file is large (%s). Only showing the last 1000 entries.', 'wp-github-sync'), $log_file_size),
-                        'info'
-                    );
-                } else {
-                    // Read the entire log file
-                    $log_content = file_get_contents($log_file);
-                }
-                
-                // Parse log entries
-                if (!empty($log_content)) {
-                    $log_lines = explode(PHP_EOL, $log_content);
-                    
-                    // Process each log line
-                    foreach ($log_lines as $line) {
-                        if (empty(trim($line))) {
-                            continue;
-                        }
-                        
-                        // Parse log entry
-                        // Format: [2023-01-01 12:00:00] [level] Message
-                        if (preg_match('/\[(.*?)\] \[(.*?)\] (.*)/', $line, $matches)) {
-                            $timestamp = $matches[1];
-                            $level = strtolower($matches[2]);
-                            $message = $matches[3];
-                            
-                            // Validate log level
-                            if (!in_array($level, $valid_levels)) {
-                                $level = 'info'; // Default to info for invalid levels
-                            }
-                            
-                            // Apply filters
-                            if (!empty($log_level_filter) && $level !== $log_level_filter) {
-                                continue;
-                            }
-                            
-                            if (!empty($search_query) && stripos($message, $search_query) === false) {
-                                continue;
-                            }
-                            
-                            // Add to logs array with sanitized values
-                            $logs[] = array(
-                                'timestamp' => $timestamp,
-                                'level' => $level,
-                                'message' => $message,
-                            );
-                        }
-                    }
-                    
-                    // Reverse array to show newest logs first
-                    $logs = array_reverse($logs);
-                }
-            } catch (Exception $e) {
-                // Log the error and show a message
-                error_log('WP GitHub Sync: Error reading log file - ' . $e->getMessage());
-                add_settings_error(
-                    'wp_github_sync',
-                    'logs_error',
-                    __('Error reading log file. Check PHP error log for details.', 'wp-github-sync'),
-                    'error'
-                );
-            }
-        }
-        
-        include WP_GITHUB_SYNC_DIR . 'admin/templates/logs-page.php';
-    }
-    
-    /**
-     * Read the last N lines of a file.
-     * 
-     * @param string $file_path Path to the file
-     * @param int    $lines     Number of lines to read from end
-     * @return string The last N lines of the file
-     */
-    private function read_last_lines($file_path, $lines = 100) {
-        if (!file_exists($file_path) || !is_readable($file_path)) {
-            return '';
-        }
-        
-        // Try to use SplFileObject which is more efficient
-        try {
-            $file = new \SplFileObject($file_path, 'r');
-            $file->seek(PHP_INT_MAX);
-            $total_lines = $file->key();
-            
-            // Calculate starting position
-            $start = max(0, $total_lines - $lines);
-            
-            // Read the desired lines
-            $file->seek($start);
-            $content = '';
-            
-            while (!$file->eof()) {
-                $content .= $file->fgets();
-            }
-            
-            return $content;
-        } catch (Exception $e) {
-            // Fallback to a simpler implementation
-            $content = file_get_contents($file_path);
-            $content_lines = explode(PHP_EOL, $content);
-            $content_lines = array_slice($content_lines, -$lines);
-            return implode(PHP_EOL, $content_lines);
-        }
-    }
-    
-    /**
-     * Handle log-related actions.
-     */
-    private function handle_log_actions() {
-        if (!isset($_GET['action'])) {
-            return;
-        }
-        
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_die(__('You do not have sufficient permissions to perform this action.', 'wp-github-sync'));
-        }
-        
-        $action = sanitize_text_field($_GET['action']);
-        $log_file = WP_CONTENT_DIR . '/wp-github-sync-debug.log';
-        
-        // Verify the log file path is within WordPress content directory
-        if (!$this->is_path_in_wp_content($log_file)) {
-            wp_die(__('Invalid log file path.', 'wp-github-sync'));
-        }
-        
-        switch ($action) {
-            case 'clear_logs':
-                // Verify nonce
-                if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_clear_logs')) {
-                    wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
-                }
-                
-                try {
-                    // Check if the log file exists
-                    if (file_exists($log_file)) {
-                        // Check if the file is writable
-                        if (!is_writable($log_file)) {
-                            // Try to make it writable
-                            if (!@chmod($log_file, 0644)) {
-                                throw new \Exception(__('Log file is not writable.', 'wp-github-sync'));
-                            }
-                        }
-                        
-                        // Clear log file
-                        if (file_put_contents($log_file, '') === false) {
-                            throw new \Exception(__('Failed to clear log file.', 'wp-github-sync'));
-                        }
-                    } else {
-                        // If file doesn't exist, create an empty one
-                        if (file_put_contents($log_file, '') === false) {
-                            throw new \Exception(__('Failed to create log file.', 'wp-github-sync'));
-                        }
-                    }
-                    
-                    // Add success message
-                    add_settings_error(
-                        'wp_github_sync',
-                        'logs_cleared',
-                        __('Logs cleared successfully.', 'wp-github-sync'),
-                        'success'
-                    );
-                } catch (\Exception $e) {
-                    add_settings_error(
-                        'wp_github_sync',
-                        'logs_clear_error',
-                        sprintf(__('Error clearing logs: %s', 'wp-github-sync'), $e->getMessage()),
-                        'error'
-                    );
-                }
-                break;
-                
-            case 'download_logs':
-                // Verify nonce
-                if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_download_logs')) {
-                    wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
-                }
-                
-                // Check if log file exists and is readable
-                if (!file_exists($log_file)) {
-                    wp_die(__('Log file not found.', 'wp-github-sync'));
-                }
-                
-                if (!is_readable($log_file)) {
-                    wp_die(__('Log file is not readable.', 'wp-github-sync'));
-                }
-                
-                // Set the downloaded file name
-                $download_name = 'wp-github-sync-logs-' . date('Y-m-d') . '.log';
-                
-                // Set headers for download
-                nocache_headers(); // Disable caching
-                header('Content-Description: File Transfer');
-                header('Content-Type: text/plain');
-                header('Content-Disposition: attachment; filename=' . $download_name);
-                header('Expires: 0');
-                header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
-                header('Pragma: public');
-                
-                // Get file size
-                $file_size = filesize($log_file);
-                header('Content-Length: ' . $file_size);
-                
-                // Check if we need to limit the download size
-                $max_download_size = apply_filters('wp_github_sync_max_download_size', 15 * 1024 * 1024); // 15MB default
-                
-                if ($file_size > $max_download_size) {
-                    // Read and output only the last portion of the file
-                    $fp = fopen($log_file, 'rb');
-                    if ($fp) {
-                        fseek($fp, -$max_download_size, SEEK_END);
-                        // Add header indicating truncation
-                        echo "--- Log file was too large. Showing only the last " . size_format($max_download_size) . " ---\n\n";
-                        // Output file content
-                        fpassthru($fp);
-                        fclose($fp);
-                    } else {
-                        wp_die(__('Failed to open log file.', 'wp-github-sync'));
-                    }
-                } else {
-                    // Read and output the entire file
-                    readfile($log_file);
-                }
-                exit;
-                
-            case 'test_log':
-                // Verify nonce
-                if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_test_log')) {
-                    wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
-                }
-                
-                try {
-                    // Create test log entries for each log level
-                    if (!function_exists('wp_github_sync_log')) {
-                        throw new \Exception(__('Logging function not available.', 'wp-github-sync'));
-                    }
-                    
-                    // Add some useful context to the test logs
-                    $site_name = get_bloginfo('name');
-                    $time = date('H:i:s');
-                    
-                    // Create test log entries for each log level with force=true to ensure they're written
-                    wp_github_sync_log("This is a test DEBUG message. Site: '{$site_name}', Time: {$time}", 'debug', true);
-                    wp_github_sync_log("This is a test INFO message. Site: '{$site_name}', Time: {$time}", 'info', true);
-                    wp_github_sync_log("This is a test WARNING message. Site: '{$site_name}', Time: {$time}", 'warning', true);
-                    wp_github_sync_log("This is a test ERROR message. Site: '{$site_name}', Time: {$time}", 'error', true);
-                    
-                    // Add success message
-                    add_settings_error(
-                        'wp_github_sync',
-                        'logs_created',
-                        __('Test log entries created. You can now see how different log levels are displayed.', 'wp-github-sync'),
-                        'success'
-                    );
-                } catch (\Exception $e) {
-                    add_settings_error(
-                        'wp_github_sync',
-                        'logs_test_error',
-                        sprintf(__('Error creating test logs: %s', 'wp-github-sync'), $e->getMessage()),
-                        'error'
-                    );
-                }
-                break;
-        }
-    }
-    
-    /**
-     * Checks if a path is within the WordPress content directory.
-     *
-     * @param string $path The path to check.
-     * @return bool True if the path is inside wp-content, false otherwise.
-     */
-    private function is_path_in_wp_content($path) {
-        $wp_content_dir = wp_normalize_path(WP_CONTENT_DIR);
-        $path = wp_normalize_path($path);
-        
-        return strpos($path, $wp_content_dir) === 0;
+        // Hook for handling non-AJAX admin actions (e.g., from URL parameters)
+        add_action('admin_init', array($this, 'handle_admin_actions'));
     }
 
     /**
      * Add dashboard widget.
      */
     public function add_dashboard_widget() {
-        wp_add_dashboard_widget(
-            'wp_github_sync_dashboard_widget',
-            __('GitHub Sync Status', 'wp-github-sync'),
-            array($this, 'display_dashboard_widget')
-        );
+        // Check if user has permissions before adding widget
+        if (wp_github_sync_current_user_can()) {
+            wp_add_dashboard_widget(
+                'wp_github_sync_dashboard_widget',
+                __('GitHub Sync Status', 'wp-github-sync'),
+                array($this, 'display_dashboard_widget')
+            );
+        }
     }
 
     /**
      * Display the dashboard widget content.
+     * This remains here as it's simple and directly related to the dashboard widget hook.
      */
     public function display_dashboard_widget() {
         $last_commit = get_option('wp_github_sync_last_deployed_commit', '');
         $latest_commit = get_option('wp_github_sync_latest_commit', array());
         $update_available = get_option('wp_github_sync_update_available', false);
-        
+
         echo '<div class="wp-github-sync-widget">';
-        
+
         if (empty($last_commit)) {
-            echo '<p>' . __('GitHub Sync is configured but no deployments have been made yet.', 'wp-github-sync') . '</p>';
+            echo '<p>' . esc_html__('GitHub Sync is configured but no deployments have been made yet.', 'wp-github-sync') . '</p>';
         } else {
-            echo '<p><strong>' . __('Last deployed commit:', 'wp-github-sync') . '</strong> ' . substr($last_commit, 0, 8) . '</p>';
+            echo '<p><strong>' . esc_html__('Last deployed commit:', 'wp-github-sync') . '</strong> ' . esc_html(substr($last_commit, 0, 8)) . '</p>';
         }
-        
+
         if ($update_available && !empty($latest_commit)) {
-            echo '<p class="wp-github-sync-update-available">' . __('Update available!', 'wp-github-sync') . '</p>';
-            echo '<p><strong>' . __('Latest commit:', 'wp-github-sync') . '</strong> ' . substr($latest_commit['sha'], 0, 8) . '</p>';
-            echo '<p>' . wp_github_sync_format_commit_message($latest_commit['message']) . '</p>';
-            echo '<p><a href="' . admin_url('admin.php?page=wp-github-sync') . '" class="button">' . __('Deploy Now', 'wp-github-sync') . '</a></p>';
+            echo '<p class="wp-github-sync-update-available">' . esc_html__('Update available!', 'wp-github-sync') . '</p>';
+            echo '<p><strong>' . esc_html__('Latest commit:', 'wp-github-sync') . '</strong> ' . esc_html(substr($latest_commit['sha'], 0, 8)) . '</p>';
+            if (isset($latest_commit['message'])) {
+                 echo '<p>' . esc_html(wp_github_sync_format_commit_message($latest_commit['message'])) . '</p>';
+            }
+            echo '<p><a href="' . esc_url(admin_url('admin.php?page=wp-github-sync')) . '" class="button">' . esc_html__('Deploy Now', 'wp-github-sync') . '</a></p>';
         } elseif (!empty($last_commit)) {
-            echo '<p>' . __('Your site is up to date with GitHub.', 'wp-github-sync') . '</p>';
+            echo '<p>' . esc_html__('Your site is up to date with GitHub.', 'wp-github-sync') . '</p>';
         }
-        
-        echo '<p><a href="' . admin_url('admin.php?page=wp-github-sync') . '">' . __('View Dashboard', 'wp-github-sync') . '</a></p>';
+
+        echo '<p><a href="' . esc_url(admin_url('admin.php?page=wp-github-sync')) . '">' . esc_html__('View Dashboard', 'wp-github-sync') . '</a></p>';
         echo '</div>';
     }
 
     /**
-     * Display admin notices.
+     * Handle direct admin actions (e.g., from URL parameters like deploy, switch_branch, rollback).
+     * This method remains here to catch actions triggered directly on admin pages before AJAX might be used.
      */
-    public function display_admin_notices() {
-        // Display notice if updates are available
-        $update_available = get_option('wp_github_sync_update_available', false);
-        $latest_commit = get_option('wp_github_sync_latest_commit', array());
-        
-        if ($update_available && !empty($latest_commit) && isset($_GET['page']) && strpos($_GET['page'], 'wp-github-sync') === false) {
-            ?>
-            <div class="notice notice-info is-dismissible">
-                <p>
-                    <?php _e('GitHub Sync: New updates are available for deployment.', 'wp-github-sync'); ?>
-                    <a href="<?php echo admin_url('admin.php?page=wp-github-sync'); ?>"><?php _e('View Details', 'wp-github-sync'); ?></a>
-                </p>
-            </div>
-            <?php
+    public function handle_admin_actions() {
+        // Only process on our plugin pages to avoid conflicts
+        if (!isset($_GET['page']) || strpos($_GET['page'], 'wp-github-sync') === false) {
+            return;
         }
-        
-        // Display notice if plugin is not fully configured
-        $repository_url = get_option('wp_github_sync_repository', '');
-        $access_token = get_option('wp_github_sync_access_token', '');
-        
-        if (empty($repository_url) || empty($access_token)) {
-            if (isset($_GET['page']) && strpos($_GET['page'], 'wp-github-sync') !== false) {
-                ?>
-                <div class="notice notice-warning">
-                    <p>
-                        <?php _e('GitHub Sync is not fully configured. Please complete the setup to enable syncing with GitHub.', 'wp-github-sync'); ?>
-                        <a href="<?php echo admin_url('admin.php?page=wp-github-sync-settings'); ?>"><?php _e('Configure Now', 'wp-github-sync'); ?></a>
-                    </p>
-                </div>
-                <?php
-            }
-        }
-    }
-    
-    /**
-     * Handle direct admin actions (e.g., from URL).
-     */
-    private function handle_admin_actions() {
+
         $action = isset($_GET['action']) ? sanitize_text_field($_GET['action']) : '';
-        
+
         if (empty($action)) {
             return;
         }
-        
+
         if (!wp_github_sync_current_user_can()) {
             wp_die(__('You do not have sufficient permissions to perform this action.', 'wp-github-sync'));
         }
-        
+
+        $nonce_verified = false;
+        $result = null;
+        $success_message = '';
+        $error_message_format = '';
+
         // Handle different actions
         switch ($action) {
             case 'deploy':
-                if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_deploy')) {
-                    wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
-                }
-                
-                $branch = wp_github_sync_get_current_branch();
-                $result = $this->sync_manager->deploy($branch);
-                
-                if (is_wp_error($result)) {
-                    add_settings_error(
-                        'wp_github_sync',
-                        'deploy_failed',
-                        sprintf(__('Deployment failed: %s', 'wp-github-sync'), $result->get_error_message()),
-                        'error'
-                    );
-                } else {
-                    add_settings_error(
-                        'wp_github_sync',
-                        'deploy_success',
-                        __('Deployment completed successfully.', 'wp-github-sync'),
-                        'success'
-                    );
+                $nonce_verified = isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_deploy');
+                if ($nonce_verified) {
+                    $branch = wp_github_sync_get_current_branch();
+                    $result = $this->sync_manager->deploy($branch);
+                    $success_message = __('Deployment completed successfully.', 'wp-github-sync');
+                    $error_message_format = __('Deployment failed: %s', 'wp-github-sync');
                 }
                 break;
-                
+
             case 'switch_branch':
-                if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_switch_branch')) {
-                    wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
-                }
-                
-                if (!isset($_GET['branch']) || empty($_GET['branch'])) {
-                    wp_die(__('No branch specified.', 'wp-github-sync'));
-                }
-                
-                $branch = sanitize_text_field($_GET['branch']);
-                $result = $this->sync_manager->switch_branch($branch);
-                
-                if (is_wp_error($result)) {
-                    add_settings_error(
-                        'wp_github_sync',
-                        'switch_branch_failed',
-                        sprintf(__('Branch switch failed: %s', 'wp-github-sync'), $result->get_error_message()),
-                        'error'
-                    );
-                } else {
-                    add_settings_error(
-                        'wp_github_sync',
-                        'switch_branch_success',
-                        sprintf(__('Successfully switched to branch: %s', 'wp-github-sync'), $branch),
-                        'success'
-                    );
+                $nonce_verified = isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_switch_branch');
+                if ($nonce_verified && isset($_GET['branch']) && !empty($_GET['branch'])) {
+                    $branch = sanitize_text_field($_GET['branch']);
+                    $result = $this->sync_manager->switch_branch($branch);
+                    $success_message = sprintf(__('Successfully switched to branch: %s', 'wp-github-sync'), $branch);
+                    $error_message_format = __('Branch switch failed: %s', 'wp-github-sync');
+                } elseif ($nonce_verified) {
+                     wp_die(__('No branch specified.', 'wp-github-sync'));
                 }
                 break;
-                
+
             case 'rollback':
-                if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_rollback')) {
-                    wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
-                }
-                
-                if (!isset($_GET['commit']) || empty($_GET['commit'])) {
-                    wp_die(__('No commit specified.', 'wp-github-sync'));
-                }
-                
-                $commit = sanitize_text_field($_GET['commit']);
-                $result = $this->sync_manager->rollback($commit);
-                
-                if (is_wp_error($result)) {
-                    add_settings_error(
-                        'wp_github_sync',
-                        'rollback_failed',
-                        sprintf(__('Rollback failed: %s', 'wp-github-sync'), $result->get_error_message()),
-                        'error'
-                    );
-                } else {
-                    add_settings_error(
-                        'wp_github_sync',
-                        'rollback_success',
-                        sprintf(__('Successfully rolled back to commit: %s', 'wp-github-sync'), substr($commit, 0, 8)),
-                        'success'
-                    );
+                $nonce_verified = isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'wp_github_sync_rollback');
+                 if ($nonce_verified && isset($_GET['commit']) && !empty($_GET['commit'])) {
+                    $commit = sanitize_text_field($_GET['commit']);
+                    $result = $this->sync_manager->rollback($commit);
+                    $success_message = sprintf(__('Successfully rolled back to commit: %s', 'wp-github-sync'), substr($commit, 0, 8));
+                    $error_message_format = __('Rollback failed: %s', 'wp-github-sync');
+                } elseif ($nonce_verified) {
+                     wp_die(__('No commit specified.', 'wp-github-sync'));
                 }
                 break;
         }
-    }
 
-    /**
-     * Handle AJAX deploy request.
-     */
-    public function handle_ajax_deploy() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Deploy AJAX: Permission denied", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_github_sync_log("Deploy AJAX: Nonce verification failed", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Get current branch
-        $branch = wp_github_sync_get_current_branch();
-        wp_github_sync_log("Deploy AJAX: Starting deployment of branch '{$branch}'", 'info');
-        
-        // Deploy
-        $result = $this->sync_manager->deploy($branch);
-        
-        if (is_wp_error($result)) {
-            $error_message = $result->get_error_message();
-            wp_github_sync_log("Deploy AJAX: Deployment failed - {$error_message}", 'error');
-            wp_send_json_error(array('message' => $error_message));
-        } else {
-            wp_github_sync_log("Deploy AJAX: Deployment of '{$branch}' completed successfully", 'info');
-            wp_send_json_success(array('message' => __('Deployment completed successfully.', 'wp-github-sync')));
-        }
-    }
-    
-    /**
-     * Handle AJAX background deploy request.
-     */
-    public function handle_ajax_background_deploy() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Background Deploy AJAX: Permission denied", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_github_sync_log("Background Deploy AJAX: Nonce verification failed", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Check if sync is already in progress
-        if (get_option('wp_github_sync_sync_in_progress', false)) {
-            // Check if the sync has been running for too long
-            $sync_start_time = get_option('wp_github_sync_sync_start_time', 0);
-            $current_time = time();
-            $sync_duration = $current_time - $sync_start_time;
-            
-            if ($sync_start_time > 0 && $sync_duration > 900) { // 15 minutes in seconds
-                wp_github_sync_log("Background Deploy AJAX: Previous sync has been running for {$sync_duration} seconds, likely stalled. Clearing lock.", 'warning');
-                delete_option('wp_github_sync_sync_in_progress');
-                // Continue with the new sync
-            } else {
-                wp_github_sync_log("Background Deploy AJAX: Sync already in progress, cannot start another", 'warning');
-                wp_send_json_error(array('message' => __('A sync operation is already in progress. Please wait for it to complete.', 'wp-github-sync')));
-                return;
-            }
-        }
-        
-        // Set sync in progress and start time
-        update_option('wp_github_sync_sync_in_progress', true);
-        update_option('wp_github_sync_sync_start_time', time());
-        
-        // Reset progress tracking
-        update_option('wp_github_sync_sync_progress', array(
-            'step' => 0,
-            'detail' => __('Scheduling background deploy...', 'wp-github-sync'),
-            'status' => 'pending',
-            'timestamp' => time()
-        ));
-        
-        // Get current branch
-        $branch = wp_github_sync_get_current_branch();
-        wp_github_sync_log("Background Deploy AJAX: Scheduling background deployment of branch '{$branch}'", 'info');
-        
-        // Schedule the background job
-        wp_schedule_single_event(
-            time(), 
-            'wp_github_sync_background_sync_process',
-            array(
-                'deploy',
-                array('branch' => $branch)
-            )
-        );
-        
-        wp_github_sync_log("Background Deploy AJAX: Background deployment scheduled", 'info');
-        
-        // Return success to the client
-        wp_send_json_success(array(
-            'message' => __('Background deployment process started. You can monitor the progress or continue working on other tasks.', 'wp-github-sync')
-        ));
-    }
-
-    /**
-     * Handle AJAX switch branch request.
-     */
-    public function handle_ajax_switch_branch() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Switch Branch AJAX: Permission denied", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_github_sync_log("Switch Branch AJAX: Nonce verification failed", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Check if branch is provided
-        if (!isset($_POST['branch']) || empty($_POST['branch'])) {
-            wp_github_sync_log("Switch Branch AJAX: No branch specified in request", 'error');
-            wp_send_json_error(array('message' => __('No branch specified.', 'wp-github-sync')));
-            return;
-        }
-        
-        $branch = sanitize_text_field($_POST['branch']);
-        $current_branch = wp_github_sync_get_current_branch();
-        
-        wp_github_sync_log("Switch Branch AJAX: Attempting to switch from '{$current_branch}' to '{$branch}'", 'info');
-        
-        // Switch branch
-        $result = $this->sync_manager->switch_branch($branch);
-        
-        if (is_wp_error($result)) {
-            $error_message = $result->get_error_message();
-            wp_github_sync_log("Switch Branch AJAX: Failed to switch to branch '{$branch}' - {$error_message}", 'error');
-            wp_send_json_error(array('message' => $error_message));
-        } else {
-            wp_github_sync_log("Switch Branch AJAX: Successfully switched to branch '{$branch}'", 'info');
-            wp_send_json_success(array(
-                'message' => sprintf(__('Successfully switched to branch: %s', 'wp-github-sync'), $branch),
-                'branch' => $branch,
-            ));
-        }
-    }
-
-    /**
-     * Handle AJAX rollback request.
-     */
-    public function handle_ajax_rollback() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Rollback AJAX: Permission denied", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_github_sync_log("Rollback AJAX: Nonce verification failed", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Check if commit is provided
-        if (!isset($_POST['commit']) || empty($_POST['commit'])) {
-            wp_github_sync_log("Rollback AJAX: No commit specified in request", 'error');
-            wp_send_json_error(array('message' => __('No commit specified.', 'wp-github-sync')));
-            return;
-        }
-        
-        $commit = sanitize_text_field($_POST['commit']);
-        $commit_short = substr($commit, 0, 8);
-        
-        wp_github_sync_log("Rollback AJAX: Attempting rollback to commit '{$commit_short}'", 'info');
-        
-        // Rollback
-        $result = $this->sync_manager->rollback($commit);
-        
-        if (is_wp_error($result)) {
-            $error_message = $result->get_error_message();
-            wp_github_sync_log("Rollback AJAX: Failed to rollback to commit '{$commit_short}' - {$error_message}", 'error');
-            wp_send_json_error(array('message' => $error_message));
-        } else {
-            wp_github_sync_log("Rollback AJAX: Successfully rolled back to commit '{$commit_short}'", 'info');
-            wp_send_json_success(array(
-                'message' => sprintf(__('Successfully rolled back to commit: %s', 'wp-github-sync'), $commit_short),
-                'commit' => $commit,
-            ));
-        }
-    }
-
-    /**
-     * Handle AJAX refresh branches request.
-     */
-    public function handle_ajax_refresh_branches() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Refresh Branches AJAX: Permission denied", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_github_sync_log("Refresh Branches AJAX: Nonce verification failed", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        wp_github_sync_log("Refresh Branches AJAX: Fetching branches from repository", 'info');
-        
-        // Refresh GitHub API client
-        $this->github_api->initialize();
-        
-        // Get branches
-        $branches = array();
-        $branches_api = $this->github_api->get_branches();
-        
-        if (is_wp_error($branches_api)) {
-            $error_message = $branches_api->get_error_message();
-            wp_github_sync_log("Refresh Branches AJAX: Failed to fetch branches - {$error_message}", 'error');
-            wp_send_json_error(array('message' => $error_message));
-        } else {
-            foreach ($branches_api as $branch_data) {
-                if (isset($branch_data['name'])) {
-                    $branches[] = $branch_data['name'];
-                }
-            }
-            
-            $branches_count = count($branches);
-            wp_github_sync_log("Refresh Branches AJAX: Successfully fetched {$branches_count} branches", 'info');
-            
-            // Store the branches in the database for future use
-            update_option('wp_github_sync_branches', $branches);
-            
-            wp_send_json_success(array('branches' => $branches));
-        }
-    }
-
-    /**
-     * Handle AJAX regenerate webhook secret request.
-     */
-    public function handle_ajax_regenerate_webhook() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Regenerate Webhook AJAX: Permission denied", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_github_sync_log("Regenerate Webhook AJAX: Nonce verification failed", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        wp_github_sync_log("Regenerate Webhook AJAX: Generating new webhook secret", 'info');
-        
-        // Get old secret for logging
-        $old_secret = get_option('wp_github_sync_webhook_secret', '');
-        $has_old_secret = !empty($old_secret);
-        
-        // Generate new webhook secret
-        $new_secret = wp_github_sync_generate_webhook_secret();
-        update_option('wp_github_sync_webhook_secret', $new_secret);
-        
-        if ($has_old_secret) {
-            wp_github_sync_log("Regenerate Webhook AJAX: Webhook secret was successfully regenerated", 'info');
-        } else {
-            wp_github_sync_log("Regenerate Webhook AJAX: New webhook secret was generated (no previous secret existed)", 'info');
-        }
-        
-        wp_send_json_success(array(
-            'message' => __('Webhook secret regenerated successfully.', 'wp-github-sync'),
-            'secret' => $new_secret,
-        ));
-    }
-
-    /**
-     * Handle AJAX OAuth connect request.
-     */
-    public function handle_ajax_oauth_connect() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-        }
-        
-        // Here we would generate a GitHub OAuth URL and redirect the user
-        // For simplicity, we're just returning the URL that should be opened in a new window/tab
-        
-        // In a real implementation, you would have registered a GitHub OAuth App
-        $client_id = defined('WP_GITHUB_SYNC_OAUTH_CLIENT_ID') ? WP_GITHUB_SYNC_OAUTH_CLIENT_ID : '';
-        
-        if (empty($client_id)) {
-            wp_send_json_error(array('message' => __('GitHub OAuth Client ID is not configured. Please define WP_GITHUB_SYNC_OAUTH_CLIENT_ID in your wp-config.php file.', 'wp-github-sync')));
-        }
-        
-        // Generate a state value for security
-        $state = wp_generate_password(24, false);
-        update_option('wp_github_sync_oauth_state', $state);
-        
-        // Generate the auth URL
-        $redirect_uri = admin_url('admin.php?page=wp-github-sync-settings&github_oauth_callback=1');
-        $oauth_url = add_query_arg(
-            array(
-                'client_id' => $client_id,
-                'redirect_uri' => urlencode($redirect_uri),
-                'scope' => 'repo',
-                'state' => $state,
-            ),
-            'https://github.com/login/oauth/authorize'
-        );
-        
-        wp_send_json_success(array('oauth_url' => $oauth_url));
-    }
-
-    /**
-     * Handle AJAX OAuth disconnect request.
-     */
-    public function handle_ajax_oauth_disconnect() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-        }
-        
-        // Delete the stored OAuth token
-        delete_option('wp_github_sync_oauth_token');
-        
-        wp_send_json_success(array('message' => __('Successfully disconnected from GitHub.', 'wp-github-sync')));
-    }
-
-    /**
-     * Store sync progress data
-     */
-    private $sync_progress = [
-        'step' => 0,
-        'detail' => '',
-        'status' => 'pending',
-        'timestamp' => 0,
-        'subStep' => null
-    ];
-    
-    /**
-     * Store file processing statistics
-     */
-    private $file_processing_stats = [
-        'total_files' => 0,
-        'processed_files' => 0,
-        'binary_files' => 0,
-        'text_files' => 0,
-        'blobs_created' => 0,
-        'failures' => 0
-    ];
-    
-    /**
-     * Update sync progress
-     * 
-     * @param int $step The current step number
-     * @param string $detail Detailed status message
-     * @param string $status Status ('pending', 'error', 'complete')
-     * @param int|null $subStep Optional sub-step for granular progress tracking
-     */
-    private function update_sync_progress($step, $detail = '', $status = 'pending', $subStep = null) {
-        $this->sync_progress = [
-            'step' => $step,
-            'detail' => $detail,
-            'status' => $status,
-            'timestamp' => time(),
-            'subStep' => $subStep
-        ];
-        
-        // For step 5 (Creating initial commit), include file processing stats
-        if ($step === 5) {
-            $this->sync_progress['stats'] = $this->file_processing_stats;
-            
-            // Calculate overall progress for file processing
-            if ($this->file_processing_stats['total_files'] > 0) {
-                $this->sync_progress['fileProgress'] = round(
-                    ($this->file_processing_stats['processed_files'] / $this->file_processing_stats['total_files']) * 100
-                );
-            }
-        }
-        
-        // Store progress in transient for AJAX polling
-        set_transient('wp_github_sync_progress', $this->sync_progress, 3600);
-        wp_github_sync_log("Sync progress updated: Step {$step}" . ($subStep !== null ? ", Sub-step {$subStep}" : "") . " - {$detail}", 'debug');
-    }
-    
-    /**
-     * Update file processing stats
-     * 
-     * @param array $stats The stats to update
-     */
-    private function update_file_stats($stats) {
-        foreach ($stats as $key => $value) {
-            if (isset($this->file_processing_stats[$key])) {
-                $this->file_processing_stats[$key] = $value;
-            }
-        }
-    }
-    
-    /**
-     * Handle AJAX check progress request
-     */
-    public function handle_ajax_check_progress() {
-        // Security check
-        if (!wp_github_sync_current_user_can() || 
-            !isset($_POST['nonce']) || 
-            !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_send_json_error(['message' => 'Security check failed']);
-            return;
-        }
-        
-        // Get current progress
-        $progress = get_transient('wp_github_sync_progress');
-        if (!$progress) {
-            // Check if we should query the progress from options (for background sync)
-            $bg_progress = get_option('wp_github_sync_sync_progress');
-            if ($bg_progress) {
-                $progress = $bg_progress;
-            } else {
-                $progress = [
-                    'step' => 0,
-                    'detail' => 'Initializing...',
-                    'status' => 'pending',
-                    'timestamp' => time()
-                ];
-            }
-        }
-        
-        wp_send_json_success($progress);
-    }
-    
-    /**
-     * Process background sync task
-     *
-     * @param string $type The type of sync ('initial' or 'full')
-     * @param array $params Parameters for the sync operation
-     */
-    public function process_background_sync($type, $params) {
-        // Set unlimited timeout
-        set_time_limit(0);
-        
-        // Try to increase memory limit
-        $current_memory_limit = ini_get('memory_limit');
-        $current_memory_bytes = wp_convert_hr_to_bytes($current_memory_limit);
-        $desired_memory_bytes = wp_convert_hr_to_bytes('512M');
-        
-        if ($current_memory_bytes < $desired_memory_bytes) {
-            try {
-                ini_set('memory_limit', '512M');
-                $new_limit = ini_get('memory_limit');
-                wp_github_sync_log("Background process - increased memory limit from {$current_memory_limit} to {$new_limit}", 'info');
-            } catch (\Exception $e) {
-                wp_github_sync_log("Could not increase memory limit: " . $e->getMessage(), 'warning');
-            }
-        }
-        
-        wp_github_sync_log("Starting background {$type} sync process", 'info');
-        
-        // Initialize stats and progress
-        update_option('wp_github_sync_sync_progress', [
-            'step' => 1,
-            'detail' => __('Background process initializing', 'wp-github-sync'),
-            'status' => 'running',
-            'timestamp' => time()
-        ]);
-        
-        try {
-            if ($type === 'initial') {
-                $create_new_repo = isset($params['create_new_repo']) && $params['create_new_repo'];
-                $repo_name = isset($params['repo_name']) ? $params['repo_name'] : '';
-                
-                wp_github_sync_log("Running initial sync in background mode. Create new repo: " . ($create_new_repo ? 'yes' : 'no'), 'info');
-                
-                // Initialize the GitHub API
-                $this->github_api->initialize();
-                
-                // Run the sync process
-                if ($create_new_repo) {
-                    $this->perform_create_repo_sync($repo_name);
-                } else {
-                    $this->perform_existing_repo_sync();
-                }
-            } 
-            else if ($type === 'full') {
-                wp_github_sync_log("Running full sync in background mode", 'info');
-                // Full sync implementation would go here
-            }
-            else if ($type === 'deploy') {
-                // Get the branch to deploy
-                $branch = isset($params['branch']) ? $params['branch'] : wp_github_sync_get_current_branch();
-                
-                wp_github_sync_log("Running deploy in background mode for branch '{$branch}'", 'info');
-                
-                // Initialize the GitHub API
-                $this->github_api->initialize();
-                
-                // Update progress
-                update_option('wp_github_sync_sync_progress', [
-                    'step' => 2,
-                    'detail' => sprintf(__('Deploying branch %s from GitHub...', 'wp-github-sync'), $branch),
-                    'status' => 'running',
-                    'timestamp' => time()
-                ]);
-                
-                // Deploy the branch
-                $result = $this->sync_manager->deploy($branch);
-                
-                if (is_wp_error($result)) {
-                    $error_message = $result->get_error_message();
-                    wp_github_sync_log("Background deploy failed: " . $error_message, 'error');
-                    throw new \Exception($error_message);
-                }
-                
-                wp_github_sync_log("Background deploy of branch '{$branch}' completed successfully", 'info');
-            }
-            
-            // Update progress as complete
-            update_option('wp_github_sync_sync_progress', [
-                'step' => 8,
-                'detail' => __('Background sync completed successfully', 'wp-github-sync'),
-                'status' => 'complete',
-                'message' => __('Synchronization completed successfully.', 'wp-github-sync'),
-                'timestamp' => time()
-            ]);
-            
-            // Clear the lock
-            delete_option('wp_github_sync_sync_in_progress');
-            wp_github_sync_log("Background {$type} sync completed successfully", 'info');
-            
-        } catch (\Exception $e) {
-            // Log the error
-            wp_github_sync_log("Background {$type} sync failed: " . $e->getMessage(), 'error');
-            wp_github_sync_log("Stack trace: " . $e->getTraceAsString(), 'error');
-            
-            // Update progress as failed
-            update_option('wp_github_sync_sync_progress', [
-                'step' => 0,
-                'detail' => sprintf(__('Error: %s', 'wp-github-sync'), $e->getMessage()),
-                'status' => 'failed',
-                'message' => sprintf(__('Synchronization failed: %s', 'wp-github-sync'), $e->getMessage()),
-                'timestamp' => time()
-            ]);
-            
-            // Clear the lock
-            delete_option('wp_github_sync_sync_in_progress');
-        }
-    }
-    
-    /**
-     * Handle AJAX background initial sync request.
-     */
-    public function handle_ajax_background_initial_sync() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Permission denied for background initial sync", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_initial_sync')) {
-            wp_github_sync_log("Invalid nonce for background initial sync", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Check if sync is already in progress
-        if (get_option('wp_github_sync_sync_in_progress', false)) {
-            // Check if the sync has been running for too long (more than 15 minutes)
-            $sync_start_time = get_option('wp_github_sync_sync_start_time', 0);
-            $current_time = time();
-            $sync_duration = $current_time - $sync_start_time;
-            
-            if ($sync_start_time > 0 && $sync_duration > 900) { // 15 minutes in seconds
-                wp_github_sync_log("Previous sync has been running for {$sync_duration} seconds, likely stalled. Clearing lock.", 'warning');
-                delete_option('wp_github_sync_sync_in_progress');
-                // Continue with the new sync
-            } else {
-                wp_github_sync_log("Sync already in progress, cannot start another", 'warning');
-                wp_send_json_error(array('message' => __('A sync operation is already in progress. Please wait for it to complete.', 'wp-github-sync')));
-                return;
-            }
-        }
-        
-        // Set sync in progress and start time
-        update_option('wp_github_sync_sync_in_progress', true);
-        update_option('wp_github_sync_sync_start_time', time());
-        
-        // Reset progress tracking
-        update_option('wp_github_sync_sync_progress', array(
-            'step' => 0,
-            'detail' => __('Scheduling background initial sync...', 'wp-github-sync'),
-            'status' => 'pending',
-            'timestamp' => time()
-        ));
-        
-        // Create a new repository if requested
-        $create_new_repo = isset($_POST['create_new_repo']) && intval($_POST['create_new_repo']) === 1;
-        $repo_name = isset($_POST['repo_name']) ? sanitize_text_field($_POST['repo_name']) : '';
-        
-        // Schedule the background sync
-        wp_schedule_single_event(
-            time(), 
-            'wp_github_sync_background_sync_process',
-            array(
-                'initial',
-                array(
-                    'create_new_repo' => $create_new_repo,
-                    'repo_name' => $repo_name
-                )
-            )
-        );
-        
-        wp_github_sync_log("Background initial sync scheduled", 'info');
-        
-        // Return success to the client
-        wp_send_json_success(array(
-            'message' => __('Background synchronization process started. You can monitor the progress or continue working on other tasks.', 'wp-github-sync')
-        ));
-    }
-    
-    /**
-     * Handle AJAX background full sync request.
-     */
-    public function handle_ajax_background_full_sync() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Permission denied for background full sync", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_github_sync_log("Invalid nonce for background full sync", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Check if sync is already in progress
-        if (get_option('wp_github_sync_sync_in_progress', false)) {
-            // Check if the sync has been running for too long
-            $sync_start_time = get_option('wp_github_sync_sync_start_time', 0);
-            $current_time = time();
-            $sync_duration = $current_time - $sync_start_time;
-            
-            if ($sync_start_time > 0 && $sync_duration > 900) { // 15 minutes in seconds
-                wp_github_sync_log("Previous sync has been running for {$sync_duration} seconds, likely stalled. Clearing lock.", 'warning');
-                delete_option('wp_github_sync_sync_in_progress');
-                // Continue with the new sync
-            } else {
-                wp_github_sync_log("Sync already in progress, cannot start another", 'warning');
-                wp_send_json_error(array('message' => __('A sync operation is already in progress. Please wait for it to complete.', 'wp-github-sync')));
-                return;
-            }
-        }
-        
-        // Set sync in progress and start time
-        update_option('wp_github_sync_sync_in_progress', true);
-        update_option('wp_github_sync_sync_start_time', time());
-        
-        // Reset progress tracking
-        update_option('wp_github_sync_sync_progress', array(
-            'step' => 0,
-            'detail' => __('Scheduling background full sync...', 'wp-github-sync'),
-            'status' => 'pending',
-            'timestamp' => time()
-        ));
-        
-        // Schedule the background job
-        wp_schedule_single_event(
-            time(), 
-            'wp_github_sync_background_sync_process',
-            array(
-                'full',
-                array() // Any parameters for full sync
-            )
-        );
-        
-        wp_github_sync_log("Background full sync scheduled", 'info');
-        
-        // Return success to the client
-        wp_send_json_success(array(
-            'message' => __('Background synchronization process started. You can monitor the progress or continue working on other tasks.', 'wp-github-sync')
-        ));
-    }
-    
-    /**
-     * Helper method to process create repo sync
-     * 
-     * @param string $repo_name The repository name to create
-     */
-    private function perform_create_repo_sync($repo_name) {
-        // This method would implement the repository creation and sync logic
-        // It would be similar to the logic in handle_ajax_initial_sync for create_new_repo = true
-        // Would be implemented based on the existing code
-    }
-    
-    /**
-     * Helper method to process existing repo sync
-     */
-    private function perform_existing_repo_sync() {
-        // This method would implement the existing repository sync logic
-        // It would be similar to the logic in handle_ajax_initial_sync for create_new_repo = false
-        // Would be implemented based on the existing code
-    }
-    
-    /**
-     * Handle AJAX initial sync request.
-     */
-    public function handle_ajax_initial_sync() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Permission denied for initial sync", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce - accept both the specific initial sync nonce and the general plugin nonce
-        if (!isset($_POST['nonce']) || 
-            (!wp_verify_nonce($_POST['nonce'], 'wp_github_sync_initial_sync') && 
-             !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce'))) {
-            wp_github_sync_log("Invalid nonce for initial sync", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        try {
-            // Initialize progress tracking
-            $this->update_sync_progress(0, 'Starting initial sync process');
-            
-            // Check if we should create a new repository
-            $create_new_repo = isset($_POST['create_new_repo']) && $_POST['create_new_repo'] == 1;
-            $repo_name = isset($_POST['repo_name']) ? sanitize_text_field($_POST['repo_name']) : '';
-            
-            // Make sure GitHub API is initialized with the latest settings
-            $this->update_sync_progress(1, 'Initializing API client');
-            $this->github_api->initialize();
-            
-            wp_github_sync_log("Starting initial sync. Create new repo: " . ($create_new_repo ? 'yes' : 'no'), 'info');
-            
-            // Check if authentication is working
-            $this->update_sync_progress(2, 'Testing GitHub authentication');
-            $auth_test = $this->github_api->test_authentication();
-            if ($auth_test !== true) {
-                wp_github_sync_log("Authentication failed during initial sync: " . $auth_test, 'error');
-                $this->update_sync_progress(2, 'Authentication failed: ' . $auth_test, 'error');
-                wp_send_json_error(array('message' => sprintf(__('Authentication failed: %s. Please check your GitHub access token.', 'wp-github-sync'), $auth_test)));
-                return;
-            }
-            
-            $this->update_sync_progress(2, 'GitHub authentication successful');
-            wp_github_sync_log("GitHub authentication successful", 'info');
-            
-            // If creating a new repository
-            if ($create_new_repo) {
-                try {
-                    if (empty($repo_name)) {
-                        // Generate default repo name based on site URL
-                        $site_url = parse_url(get_site_url(), PHP_URL_HOST);
-                        $repo_name = sanitize_title(str_replace('.', '-', $site_url));
-                        wp_github_sync_log("Using generated repo name: " . $repo_name, 'info');
-                    }
-                    
-                    // Create description based on site name
-                    $site_name = get_bloginfo('name');
-                    $description = sprintf(__('WordPress site: %s', 'wp-github-sync'), $site_name);
-                    
-                    wp_github_sync_log("Creating new repository: " . $repo_name, 'info');
-                    $this->update_sync_progress(3, "Creating new repository: " . $repo_name);
-                    
-                    try {
-                        // Create the repository
-                        $result = $this->github_api->create_repository($repo_name, $description);
-                        
-                        if (is_wp_error($result)) {
-                            wp_github_sync_log("Failed to create repository: " . $result->get_error_message(), 'error');
-                            wp_send_json_error(array('message' => sprintf(__('Failed to create repository: %s', 'wp-github-sync'), $result->get_error_message())));
-                            return;
-                        }
-                        
-                        // Get the repository URL and owner/repo details
-                        if (isset($result['html_url'])) {
-                            $repo_url = $result['html_url'];
-                            $repo_owner = isset($result['owner']['login']) ? $result['owner']['login'] : '';
-                            $repo_name = isset($result['name']) ? $result['name'] : '';
-                            
-                            wp_github_sync_log("Repository created successfully: " . $repo_url, 'info');
-                            $this->update_sync_progress(4, "Repository created successfully: " . $repo_url);
-                            
-                            // Save repository URL to settings
-                            update_option('wp_github_sync_repository', $repo_url);
-                            
-                            // Try initial sync for a new repository
-                            wp_github_sync_log("Starting initial file sync to new repository", 'info');
-                            $this->update_sync_progress(5, "Starting initial file sync to new repository");
-                            
-                            try {
-                                // Create Repository instance with the API client
-                                $repository = new \WPGitHubSync\API\Repository($this->github_api);
-                                $sync_result = $repository->initial_sync();
-                                
-                                if (is_wp_error($sync_result)) {
-                                    wp_github_sync_log("Initial file sync failed: " . $sync_result->get_error_message(), 'error');
-                                    // Even if sync fails, we created the repo, so consider it successful
-                                    wp_send_json_success(array(
-                                        'message' => sprintf(
-                                            __('Repository created successfully at %s. However, initial file sync failed: %s', 'wp-github-sync'),
-                                            $repo_url,
-                                            $sync_result->get_error_message()
-                                        ),
-                                        'repo_url' => $repo_url,
-                                    ));
-                                    return;
-                                }
-                                
-                                // Set deployed branch and mark first deployment
-                                update_option('wp_github_sync_branch', 'main');
-                                update_option('wp_github_sync_last_deployment_time', time());
-                                update_option('wp_github_sync_last_deployed_commit', $sync_result);
-                                
-                                wp_github_sync_log("Repository created and initialized successfully", 'info');
-                                $this->update_sync_progress(8, "Repository created and initialized successfully", 'complete');
-                                
-                                wp_send_json_success(array(
-                                    'message' => sprintf(__('Repository created and initialized successfully at %s', 'wp-github-sync'), $repo_url),
-                                    'repo_url' => $repo_url,
-                                ));
-                                return;
-                            } catch (Exception $sync_exception) {
-                                wp_github_sync_log("Exception during initial file sync: " . $sync_exception->getMessage(), 'error');
-                                wp_github_sync_log("Stack trace: " . $sync_exception->getTraceAsString(), 'error');
-                                $this->update_sync_progress(5, "Initial sync failed: " . $sync_exception->getMessage(), 'error');
-                                wp_send_json_error(array('message' => sprintf(__('Repository created, but initial sync failed: %s', 'wp-github-sync'), $sync_exception->getMessage())));
-                                return;
-                            }
-                        } else {
-                            wp_github_sync_log("Repository created, but response missing URL", 'error');
-                            wp_send_json_error(array('message' => __('Repository created, but the response did not include the repository URL.', 'wp-github-sync')));
-                            return;
-                        }
-                    } catch (Exception $repo_exception) {
-                        wp_github_sync_log("Exception creating repository: " . $repo_exception->getMessage(), 'error');
-                        wp_github_sync_log("Stack trace: " . $repo_exception->getTraceAsString(), 'error');
-                        wp_send_json_error(array('message' => sprintf(__('Failed to create repository: %s', 'wp-github-sync'), $repo_exception->getMessage())));
-                        return;
-                    }
-                } catch (Exception $create_repo_exception) {
-                    wp_github_sync_log("Critical exception during repository creation: " . $create_repo_exception->getMessage(), 'error');
-                    wp_github_sync_log("Stack trace: " . $create_repo_exception->getTraceAsString(), 'error');
-                    wp_send_json_error(array('message' => sprintf(__('Critical error while creating repository: %s', 'wp-github-sync'), $create_repo_exception->getMessage())));
-                    return;
-                }
-            } else {
-                // Using existing repository - perform initial deployment
-                try {
-                    $repo_url = get_option('wp_github_sync_repository', '');
-                    
-                    if (empty($repo_url)) {
-                        wp_github_sync_log("No repository URL configured for initial sync", 'error');
-                        wp_send_json_error(array('message' => __('No repository URL configured. Please enter a repository URL in the settings.', 'wp-github-sync')));
-                        return;
-                    }
-                    
-                    wp_github_sync_log("Performing initial sync with existing repository: " . $repo_url, 'info');
-                    $this->update_sync_progress(3, "Connecting to existing repository: " . $repo_url);
-                    
-                    try {
-                        // Check if repository exists and is accessible
-                        $this->update_sync_progress(3, "Verifying repository access");
-                        if (!$this->github_api->repository_exists()) {
-                            wp_github_sync_log("Repository does not exist or is not accessible: " . $repo_url, 'error');
-                            wp_send_json_error(array('message' => __('The repository does not exist or is not accessible with your current GitHub credentials.', 'wp-github-sync')));
-                            return;
-                        }
-                        
-                        wp_github_sync_log("Repository exists and is accessible", 'info');
-                        $this->update_sync_progress(4, "Repository access verified");
-                        
-                        // Try to get the default branch from the repository
-                        $default_branch = $this->github_api->get_default_branch();
-                        if (!is_wp_error($default_branch) && !empty($default_branch)) {
-                            wp_github_sync_log("Detected default branch: " . $default_branch, 'info');
-                            update_option('wp_github_sync_branch', $default_branch);
-                            $branch = $default_branch;
-                        } else {
-                            // Use configured branch or fallback to main
-                            $branch = get_option('wp_github_sync_branch', 'main');
-                            wp_github_sync_log("Using configured branch: " . $branch, 'info');
-                        }
-                        
-                        // First try an initial sync to establish the repository structure
-                        wp_github_sync_log("Attempting initial file sync to repository", 'info');
-                        
-                        try {
-                            // Before attempting sync, check if we need to initialize an empty repository
-                            try {
-                                $repo_info = $this->github_api->get_repository();
-                                
-                                // Check for various empty repository error messages
-                                if (is_wp_error($repo_info) && 
-                                    (strpos($repo_info->get_error_message(), 'Git Repository is empty') !== false ||
-                                     strpos($repo_info->get_error_message(), 'Not Found') !== false ||
-                                     strpos($repo_info->get_error_message(), '404') !== false)) {
-                                    
-                                    wp_github_sync_log("Empty repository detected before sync, initializing", 'info');
-                                    
-                                    // Try to initialize the repository
-                                    $init_result = $this->github_api->initialize_repository($branch);
-                                    
-                                    if (is_wp_error($init_result)) {
-                                        wp_github_sync_log("Failed to initialize repository: " . $init_result->get_error_message(), 'error');
-                                        wp_github_sync_log("Will continue with sync as Repository class has robust initialization handling", 'info');
-                                    } else {
-                                        wp_github_sync_log("Repository successfully initialized before sync", 'info');
-                                    }
-                                }
-                            } catch (\Exception $e) {
-                                wp_github_sync_log("Exception checking repository before sync: " . $e->getMessage(), 'error');
-                                wp_github_sync_log("Continuing with sync as Repository handles initialization", 'info');
-                            }
-                            
-                            // Create Repository instance with the API client
-                            $this->update_sync_progress(5, "Starting file upload to GitHub", 'pending', 0);
-                            
-                            // Create a progress callback for the repository class
-                            $progress_callback = function($subStep, $detail, $stats = []) {
-                                if (!empty($stats)) {
-                                    $this->update_file_stats($stats);
-                                }
-                                $this->update_sync_progress(5, $detail, 'pending', $subStep);
-                            };
-                            
-                            $repository = new \WPGitHubSync\API\Repository($this->github_api);
-                            $repository->set_progress_callback($progress_callback);
-                            $sync_result = $repository->initial_sync($branch);
-                            
-                            if (is_wp_error($sync_result)) {
-                                wp_github_sync_log("Initial file sync failed: " . $sync_result->get_error_message(), 'error');
-                                $this->update_sync_progress(5, "Initial file sync failed: " . $sync_result->get_error_message(), 'error');
-                                wp_send_json_error(array('message' => sprintf(__('Initial file sync failed: %s', 'wp-github-sync'), $sync_result->get_error_message())));
-                                return;
-                            }
-                            
-                            // Set initial deployment commit reference
-                            if (!empty($sync_result)) {
-                                update_option('wp_github_sync_last_deployed_commit', $sync_result);
-                                update_option('wp_github_sync_last_deployment_time', time());
-                                wp_github_sync_log("Initial sync completed successfully, commit: " . $sync_result, 'info');
-                                $this->update_sync_progress(8, "Initial sync completed successfully! Commit ID: " . $sync_result, 'complete');
-                            }
-                            
-                            wp_send_json_success(array('message' => __('Initial sync completed successfully.', 'wp-github-sync')));
-                            return;
-                        } catch (Exception $sync_exception) {
-                            wp_github_sync_log("Exception during initial file sync: " . $sync_exception->getMessage(), 'error');
-                            wp_github_sync_log("Stack trace: " . $sync_exception->getTraceAsString(), 'error');
-                            wp_send_json_error(array('message' => sprintf(__('Initial file sync failed: %s', 'wp-github-sync'), $sync_exception->getMessage())));
-                            return;
-                        }
-                    } catch (Exception $repo_exception) {
-                        wp_github_sync_log("Exception checking repository: " . $repo_exception->getMessage(), 'error');
-                        wp_github_sync_log("Stack trace: " . $repo_exception->getTraceAsString(), 'error');
-                        wp_send_json_error(array('message' => sprintf(__('Error verifying repository: %s', 'wp-github-sync'), $repo_exception->getMessage())));
-                        return;
-                    }
-                } catch (Exception $existing_repo_exception) {
-                    wp_github_sync_log("Critical exception during existing repository sync: " . $existing_repo_exception->getMessage(), 'error');
-                    wp_github_sync_log("Stack trace: " . $existing_repo_exception->getTraceAsString(), 'error');
-                    wp_send_json_error(array('message' => sprintf(__('Critical error during repository sync: %s', 'wp-github-sync'), $existing_repo_exception->getMessage())));
-                    return;
-                }
-            }
-        } catch (Exception $e) {
-            // Catch any exceptions and return an error response
-            wp_github_sync_log("Initial sync exception: " . $e->getMessage(), 'error');
-            wp_github_sync_log("Stack trace: " . $e->getTraceAsString(), 'error');
-            wp_send_json_error(array('message' => sprintf(__('Initial sync failed: %s', 'wp-github-sync'), $e->getMessage())));
-            return;
-        }
-    }
-
-    /**
-     * Handle AJAX full sync request.
-     */
-    public function handle_ajax_full_sync() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Permission denied for full sync", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_github_sync_log("Invalid nonce for full sync", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Check if sync is already in progress
-        if (get_option('wp_github_sync_sync_in_progress', false)) {
-            // Check if the sync has been running for too long (more than 15 minutes)
-            $sync_start_time = get_option('wp_github_sync_sync_start_time', 0);
-            $current_time = time();
-            $sync_duration = $current_time - $sync_start_time;
-            
-            if ($sync_start_time > 0 && $sync_duration > 900) { // 15 minutes in seconds
-                wp_github_sync_log("Previous sync has been running for {$sync_duration} seconds, likely stalled. Clearing lock.", 'warning');
-                delete_option('wp_github_sync_sync_in_progress');
-                // Continue with the new sync
-            } else {
-                wp_github_sync_log("Sync already in progress, cannot start another", 'warning');
-                wp_send_json_error(array('message' => __('A sync operation is already in progress. Please wait for it to complete.', 'wp-github-sync')));
-                return;
-            }
-        }
-        
-        // Ensure GitHub API is initialized
-        $this->github_api->initialize();
-        
-        // Get repository URL and check if it exists
-        $repo_url = get_option('wp_github_sync_repository', '');
-        
-        if (empty($repo_url)) {
-            wp_send_json_error(array('message' => __('No repository URL configured. Please enter a repository URL in the settings.', 'wp-github-sync')));
-            return;
-        }
-        
-        // First test if authentication is working
-        $auth_test = $this->github_api->test_authentication();
-        if ($auth_test !== true) {
-            wp_send_json_error(array('message' => sprintf(__('Authentication error: %s', 'wp-github-sync'), $auth_test)));
-            return;
-        }
-        
-        // Check if repository exists
-        $repo_exists = $this->github_api->repository_exists();
-        
-        if (!$repo_exists) {
-            wp_send_json_error(array('message' => __('Repository does not exist or is not accessible with current credentials.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Perform the full sync to GitHub
-        $branch = wp_github_sync_get_current_branch();
-        
-        // Show a message that sync is starting
-        wp_github_sync_log("Starting full sync to GitHub for branch: {$branch}", 'info');
-        
-        // Set a flag that sync is in progress with start time
-        update_option('wp_github_sync_sync_in_progress', true);
-        update_option('wp_github_sync_sync_start_time', time());
-        
-        // Execute the initial sync operation
-        // First check for empty repository and initialize if needed
-        try {
-            $repo_info = $this->github_api->get_repository();
-            
-            // Check for various empty repository error messages
-            if (is_wp_error($repo_info) && 
-                (strpos($repo_info->get_error_message(), 'Git Repository is empty') !== false ||
-                 strpos($repo_info->get_error_message(), 'Not Found') !== false ||
-                 strpos($repo_info->get_error_message(), '404') !== false)) {
-                
-                wp_github_sync_log("Empty repository detected during full sync, initializing first", 'info');
-                
-                // Try multiple initialization methods
-                $init_result = $this->github_api->initialize_repository($branch);
-                
-                if (is_wp_error($init_result)) {
-                    wp_github_sync_log("Failed to initialize repository: " . $init_result->get_error_message(), 'error');
-                    wp_github_sync_log("Will still attempt sync as Repository class has its own initialization logic", 'info');
-                } else {
-                    wp_github_sync_log("Repository successfully initialized", 'info');
-                }
-            } else {
-                wp_github_sync_log("Repository exists and is accessible", 'info');
-            }
-        } catch (\Exception $e) {
-            wp_github_sync_log("Exception checking repository status: " . $e->getMessage(), 'error');
-            wp_github_sync_log("Will attempt sync anyway as Repository has robust error handling", 'info');
-        }
-        
-        // Create Repository instance with the API client
-        $repository = new \WPGitHubSync\API\Repository($this->github_api);
-        $result = $repository->initial_sync($branch);
-        
-        // Clear the in-progress and start time flags
-        delete_option('wp_github_sync_sync_in_progress');
-        delete_option('wp_github_sync_sync_start_time');
-        
-        if (is_wp_error($result)) {
-            // Log the error details
-            wp_github_sync_log("Full sync to GitHub failed: " . $result->get_error_message(), 'error');
-            
-            // Return error to the user
-            wp_send_json_error(array(
-                'message' => sprintf(__('Full sync to GitHub failed: %s', 'wp-github-sync'), $result->get_error_message())
-            ));
-        } else {
-            // Update the sync time
-            update_option('wp_github_sync_last_deployment_time', time());
-            
-            // Log successful sync
-            wp_github_sync_log("Full sync to GitHub completed successfully", 'info');
-            
-            // Return success message
-            wp_send_json_success(array(
-                'message' => __('All WordPress files have been successfully synced to GitHub!', 'wp-github-sync')
-            ));
-        }
-    }
-
-    /**
-     * Handle AJAX check status request.
-     * This checks the status of a chunked sync operation.
-     */
-    public function handle_ajax_check_status() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_send_json_error(array('message' => 'Permission denied'));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_send_json_error(array('message' => 'Invalid nonce'));
-            return;
-        }
-        
-        // Check the chunked sync state
-        $sync_state = get_option('wp_github_sync_chunked_sync_state', null);
-        
-        if ($sync_state) {
-            // Sync is in progress
-            $stage = isset($sync_state['stage']) ? $sync_state['stage'] : 'unknown';
-            $progress_step = isset($sync_state['progress_step']) ? $sync_state['progress_step'] : 0;
-            
-            // Format a human-readable progress message
-            $progress_message = '';
-            switch($stage) {
-                case 'authentication':
-                    $progress_message = __('Verifying authentication with GitHub...', 'wp-github-sync');
-                    break;
-                case 'repository_check':
-                    $progress_message = __('Checking repository access...', 'wp-github-sync');
-                    break;
-                case 'prepare_temp_directory':
-                    $progress_message = __('Preparing temporary directory...', 'wp-github-sync');
-                    break;
-                case 'collecting_files':
-                    $progress_message = __('Collecting files from WordPress...', 'wp-github-sync');
-                    // Add file count if available
-                    if (isset($sync_state['files_copied'])) {
-                        $progress_message .= ' (' . $sync_state['files_copied'] . ' files processed)';
-                    }
-                    break;
-                case 'uploading_files':
-                    $progress_message = __('Uploading files to GitHub...', 'wp-github-sync');
-                    break;
-                default:
-                    $progress_message = __('Processing...', 'wp-github-sync');
-            }
-            
-            // Return the status
-            wp_send_json_success(array(
-                'in_progress' => true,
-                'stage' => $stage,
-                'progress' => $progress_message,
-                'progress_step' => $progress_step,
-                'timestamp' => time()
-            ));
-            return;
-        } else {
-            // No sync in progress
-            wp_send_json_success(array(
-                'in_progress' => false,
-                'message' => __('No sync operation is currently in progress.', 'wp-github-sync'),
-                'timestamp' => time()
-            ));
-            return;
-        }
-    }
-
-    /**
-     * Handle AJAX log error request.
-     */
-    public function handle_ajax_log_error() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            return;
-        }
-        
-        // Get error details from AJAX request
-        $error_context = isset($_POST['error_context']) ? sanitize_text_field($_POST['error_context']) : 'Unknown context';
-        $error_status = isset($_POST['error_status']) ? sanitize_text_field($_POST['error_status']) : 'Unknown status';
-        $error_message = isset($_POST['error_message']) ? sanitize_text_field($_POST['error_message']) : 'Unknown error';
-        
-        // Log error with detailed information
-        wp_github_sync_log(
-            "JavaScript Error - Context: {$error_context}, Status: {$error_status}, Message: {$error_message}",
-            'error',
-            true // Force logging even if debug mode is off
-        );
-        
-        // No need to send a detailed response
-        wp_send_json_success();
-    }
-    
-    /**
-     * Handle AJAX test connection request.
-     */
-    public function handle_ajax_test_connection() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Test Connection AJAX: Permission denied", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_github_sync_log("Test Connection AJAX: Nonce verification failed", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Check if a temporary token was provided for testing
-        $temp_token = isset($_POST['token']) ? sanitize_text_field($_POST['token']) : '';
-        $repo_url = isset($_POST['repo_url']) ? esc_url_raw($_POST['repo_url']) : get_option('wp_github_sync_repository', '');
-        
-        wp_github_sync_log("Test Connection AJAX: Testing GitHub connection" . 
-            (!empty($temp_token) ? " with new token" : " with existing token") . 
-            (!empty($repo_url) ? " and repository URL: {$repo_url}" : ""), 'info');
-        
-        // If a temporary token was provided, use it instead of the stored one
-        if (!empty($temp_token)) {
-            // Log token length and format for debugging without revealing the actual token
-            $token_length = strlen($temp_token);
-            $token_prefix = substr($temp_token, 0, 8);
-            $token_suffix = substr($temp_token, -4);
-            
-            wp_github_sync_log("Test Connection AJAX: Using temporary token with length {$token_length}, prefix {$token_prefix}..., suffix ...{$token_suffix}", 'debug');
-            
-            // Validate token format before proceeding
-            $is_valid_format = false;
-            
-            if (strpos($temp_token, 'github_pat_') === 0) {
-                wp_github_sync_log("Test Connection AJAX: Token appears to be a fine-grained PAT", 'debug');
-                $is_valid_format = true;
-            } else if (strpos($temp_token, 'ghp_') === 0) {
-                wp_github_sync_log("Test Connection AJAX: Token appears to be a classic PAT", 'debug');
-                $is_valid_format = true;
-            } else if (strpos($temp_token, 'gho_') === 0) {
-                wp_github_sync_log("Test Connection AJAX: Token appears to be an OAuth token", 'debug');
-                $is_valid_format = true;
-            } else if (strlen($temp_token) === 40 && ctype_xdigit($temp_token)) {
-                wp_github_sync_log("Test Connection AJAX: Token appears to be a classic PAT (40 char hex)", 'debug');
-                $is_valid_format = true;
-            } else {
-                wp_github_sync_log("Test Connection AJAX: Warning - Token format doesn't match known GitHub token patterns", 'warning');
-            }
-            
-            // Set the token directly on the API client (bypassing encryption)
-            $this->github_api->set_temporary_token($temp_token);
-        } else {
-            wp_github_sync_log("Test Connection AJAX: Using previously stored token", 'debug');
-        }
-        
-        // Test authentication
-        wp_github_sync_log("Test Connection AJAX: Starting authentication test", 'debug');
-        $auth_test = $this->github_api->test_authentication();
-        
-        if ($auth_test === true) {
-            $username = $this->github_api->get_user_login();
-            wp_github_sync_log("Test Connection AJAX: Authentication successful! Authenticated as user: {$username}", 'info');
-            
-            // Authentication succeeded, now check repo if provided
-            if (!empty($repo_url)) {
-                // Parse the repo URL
-                $parsed_url = $this->github_api->parse_github_url($repo_url);
-                
-                if ($parsed_url) {
-                    $owner = $parsed_url['owner'];
-                    $repo = $parsed_url['repo'];
-                    wp_github_sync_log("Test Connection AJAX: Checking repository: {$owner}/{$repo}", 'info');
-                    
-                    // Check if repo exists and is accessible
-                    $repo_exists = $this->github_api->repository_exists($owner, $repo);
-                    
-                    if ($repo_exists) {
-                        wp_github_sync_log("Test Connection AJAX: Repository verified and accessible", 'info');
-                        // Success! Authentication and repo are valid
-                        wp_send_json_success(array(
-                            'message' => __('Success! Your GitHub credentials and repository are valid.', 'wp-github-sync'),
-                            'username' => $username,
-                            'repo_info' => array(
-                                'owner' => $owner,
-                                'repo' => $repo
-                            )
-                        ));
-                    } else {
-                        wp_github_sync_log("Test Connection AJAX: Repository not accessible: {$owner}/{$repo}", 'error');
-                        // Authentication worked but repo isn't accessible
-                        wp_send_json_error(array(
-                            'message' => __('Authentication successful, but the repository could not be accessed. Please check your repository URL and ensure your token has access to it.', 'wp-github-sync'),
-                            'username' => $username,
-                            'auth_ok' => true,
-                            'repo_error' => true
-                        ));
-                    }
-                } else {
-                    wp_github_sync_log("Test Connection AJAX: Invalid repository URL format: {$repo_url}", 'error');
-                    // Authentication worked but repo URL is invalid
-                    wp_send_json_error(array(
-                        'message' => __('Authentication successful, but the repository URL is invalid. Please provide a valid GitHub repository URL.', 'wp-github-sync'),
-                        'username' => $username,
-                        'auth_ok' => true,
-                        'url_error' => true
-                    ));
-                }
-            } else {
-                // Authentication worked but no repo was provided
-                wp_send_json_success(array(
-                    'message' => __('Authentication successful! Your GitHub credentials are valid.', 'wp-github-sync'),
-                    'username' => $username,
-                    'auth_ok' => true,
-                    'no_repo' => true
-                ));
-            }
-        } else {
-            wp_github_sync_log("Test Connection AJAX: Authentication failed - {$auth_test}", 'error');
-            // Authentication failed
-            wp_send_json_error(array(
-                'message' => sprintf(__('Authentication failed: %s', 'wp-github-sync'), $auth_test),
-                'auth_error' => true
-            ));
-        }
-    }
-
-    /**
-     * Handle OAuth callback.
-     */
-    public function handle_oauth_callback() {
-        // Check if this is an OAuth callback
-        if (!isset($_GET['github_oauth_callback']) || $_GET['github_oauth_callback'] != 1) {
-            return;
-        }
-        
-        // Check if we have a code and state
-        if (!isset($_GET['code']) || !isset($_GET['state'])) {
-            add_settings_error(
-                'wp_github_sync',
-                'oauth_failed',
-                __('GitHub OAuth authentication failed. Missing code or state.', 'wp-github-sync'),
-                'error'
-            );
-            return;
-        }
-        
-        // Verify state to prevent CSRF
-        $stored_state = get_option('wp_github_sync_oauth_state', '');
-        
-        if (empty($stored_state) || $_GET['state'] !== $stored_state) {
-            add_settings_error(
-                'wp_github_sync',
-                'oauth_failed',
-                __('GitHub OAuth authentication failed. Invalid state.', 'wp-github-sync'),
-                'error'
-            );
-            return;
-        }
-        
-        // Clear the state
-        delete_option('wp_github_sync_oauth_state');
-        
-        // Exchange code for access token
-        $client_id = defined('WP_GITHUB_SYNC_OAUTH_CLIENT_ID') ? WP_GITHUB_SYNC_OAUTH_CLIENT_ID : '';
-        $client_secret = defined('WP_GITHUB_SYNC_OAUTH_CLIENT_SECRET') ? WP_GITHUB_SYNC_OAUTH_CLIENT_SECRET : '';
-        
-        if (empty($client_id) || empty($client_secret)) {
-            add_settings_error(
-                'wp_github_sync',
-                'oauth_failed',
-                __('GitHub OAuth authentication failed. Client ID or Client Secret is not configured.', 'wp-github-sync'),
-                'error'
-            );
-            return;
-        }
-        
-        $response = wp_remote_post('https://github.com/login/oauth/access_token', array(
-            'body' => array(
-                'client_id' => $client_id,
-                'client_secret' => $client_secret,
-                'code' => $_GET['code'],
-                'redirect_uri' => admin_url('admin.php?page=wp-github-sync-settings&github_oauth_callback=1'),
-            ),
-            'headers' => array(
-                'Accept' => 'application/json',
-            ),
-        ));
-        
-        if (is_wp_error($response)) {
-            add_settings_error(
-                'wp_github_sync',
-                'oauth_failed',
-                sprintf(__('GitHub OAuth authentication failed. Error: %s', 'wp-github-sync'), $response->get_error_message()),
-                'error'
-            );
-            return;
-        }
-        
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        
-        if (!isset($body['access_token'])) {
-            add_settings_error(
-                'wp_github_sync',
-                'oauth_failed',
-                __('GitHub OAuth authentication failed. No access token received.', 'wp-github-sync'),
-                'error'
-            );
-            return;
-        }
-        
-        // Store the token
-        $encrypted_token = wp_github_sync_encrypt($body['access_token']);
-        update_option('wp_github_sync_oauth_token', $encrypted_token);
-        update_option('wp_github_sync_auth_method', 'oauth');
-        
-        add_settings_error(
-            'wp_github_sync',
-            'oauth_success',
-            __('Successfully connected to GitHub using OAuth.', 'wp-github-sync'),
-            'success'
-        );
-    }
-    
-    /**
-     * Handle AJAX system requirements check.
-     * Verifies PHP settings, directory permissions, and GitHub credentials.
-     */
-    public function handle_ajax_check_requirements() {
-        // Check permissions
-        if (!wp_github_sync_current_user_can()) {
-            wp_github_sync_log("Requirements check AJAX: Permission denied", 'error');
-            wp_send_json_error(array('message' => __('You do not have sufficient permissions to perform this action.', 'wp-github-sync')));
-            return;
-        }
-        
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wp_github_sync_nonce')) {
-            wp_github_sync_log("Requirements check AJAX: Nonce verification failed", 'error');
-            wp_send_json_error(array('message' => __('Security check failed. Please refresh the page and try again.', 'wp-github-sync')));
-            return;
-        }
-        
-        wp_github_sync_log("Starting system requirements check", 'info');
-        
-        $requirements = array();
-        $requirements_passed = true;
-        
-        // 1. Check PHP version
-        $php_version = phpversion();
-        $min_php_version = '7.4.0';
-        $php_check = version_compare($php_version, $min_php_version, '>=');
-        $requirements[] = array(
-            'name' => 'PHP Version',
-            'status' => $php_check,
-            'value' => $php_version,
-            'expected' => '>= ' . $min_php_version,
-            'message' => $php_check 
-                ? sprintf(__('PHP version %s is compatible', 'wp-github-sync'), $php_version)
-                : sprintf(__('PHP version %s is too old, need %s or higher', 'wp-github-sync'), $php_version, $min_php_version)
-        );
-        $requirements_passed = $requirements_passed && $php_check;
-        
-        // 2. Check PHP extensions
-        $required_extensions = array('curl', 'json', 'mbstring', 'zip');
-        foreach ($required_extensions as $extension) {
-            $has_extension = extension_loaded($extension);
-            $requirements[] = array(
-                'name' => sprintf(__('PHP %s Extension', 'wp-github-sync'), strtoupper($extension)),
-                'status' => $has_extension,
-                'value' => $has_extension ? __('Enabled', 'wp-github-sync') : __('Disabled', 'wp-github-sync'),
-                'expected' => __('Enabled', 'wp-github-sync'),
-                'message' => $has_extension 
-                    ? sprintf(__('%s extension is available', 'wp-github-sync'), strtoupper($extension))
-                    : sprintf(__('%s extension is required but not available', 'wp-github-sync'), strtoupper($extension))
-            );
-            $requirements_passed = $requirements_passed && $has_extension;
-        }
-        
-        // 3. Check PHP memory limit
-        $memory_limit = ini_get('memory_limit');
-        $min_memory = '64M';
-        // Convert memory limit to bytes for comparison
-        $memory_limit_bytes = wp_convert_hr_to_bytes($memory_limit);
-        $min_memory_bytes = wp_convert_hr_to_bytes($min_memory);
-        $memory_check = ($memory_limit_bytes >= $min_memory_bytes);
-        $requirements[] = array(
-            'name' => 'PHP Memory Limit',
-            'status' => $memory_check,
-            'value' => $memory_limit,
-            'expected' => '>= ' . $min_memory,
-            'message' => $memory_check 
-                ? sprintf(__('Memory limit %s is sufficient', 'wp-github-sync'), $memory_limit)
-                : sprintf(__('Memory limit %s is too low, need at least %s', 'wp-github-sync'), $memory_limit, $min_memory)
-        );
-        $requirements_passed = $requirements_passed && $memory_check;
-        
-        // 4. Check PHP max execution time
-        $max_execution_time = ini_get('max_execution_time');
-        $min_execution_time = 30;
-        // 0 means no time limit which is ideal
-        $execution_check = ($max_execution_time == 0 || $max_execution_time >= $min_execution_time);
-        $requirements[] = array(
-            'name' => 'PHP Max Execution Time',
-            'status' => $execution_check,
-            'value' => $max_execution_time == 0 ? __('No limit', 'wp-github-sync') : $max_execution_time . __(' seconds', 'wp-github-sync'),
-            'expected' => '>= ' . $min_execution_time . __(' seconds', 'wp-github-sync'),
-            'message' => $execution_check 
-                ? ($max_execution_time == 0 
-                    ? __('No execution time limit (ideal)', 'wp-github-sync') 
-                    : sprintf(__('Max execution time %s seconds is sufficient', 'wp-github-sync'), $max_execution_time))
-                : sprintf(__('Max execution time %s seconds is too low, need at least %s seconds', 'wp-github-sync'), 
-                    $max_execution_time, $min_execution_time)
-        );
-        $requirements_passed = $requirements_passed && $execution_check;
-        
-        // 5. Check temporary directory
-        $tmp_dir = sys_get_temp_dir();
-        $tmp_dir_writable = is_writable($tmp_dir);
-        $requirements[] = array(
-            'name' => 'Temporary Directory',
-            'status' => $tmp_dir_writable,
-            'value' => $tmp_dir,
-            'expected' => __('Writable', 'wp-github-sync'),
-            'message' => $tmp_dir_writable 
-                ? sprintf(__('Temporary directory %s is writable', 'wp-github-sync'), $tmp_dir)
-                : sprintf(__('Temporary directory %s is not writable', 'wp-github-sync'), $tmp_dir)
-        );
-        $requirements_passed = $requirements_passed && $tmp_dir_writable;
-        
-        // 6. Check wp-content directory
-        $wp_content_dir = WP_CONTENT_DIR;
-        $wp_content_writable = is_writable($wp_content_dir);
-        $requirements[] = array(
-            'name' => 'WordPress Content Directory',
-            'status' => $wp_content_writable,
-            'value' => $wp_content_dir,
-            'expected' => __('Writable', 'wp-github-sync'),
-            'message' => $wp_content_writable 
-                ? sprintf(__('WordPress content directory %s is writable', 'wp-github-sync'), $wp_content_dir)
-                : sprintf(__('WordPress content directory %s is not writable', 'wp-github-sync'), $wp_content_dir)
-        );
-        $requirements_passed = $requirements_passed && $wp_content_writable;
-        
-        // 7. Check if GitHub API is configured
-        $token_configured = false;
-        $auth_method = get_option('wp_github_sync_auth_method', 'pat');
-        
-        if ($auth_method === 'pat') {
-            $token_configured = !empty(get_option('wp_github_sync_access_token', ''));
-        } else if ($auth_method === 'oauth') {
-            $token_configured = !empty(get_option('wp_github_sync_oauth_token', ''));
-        }
-        
-        $requirements[] = array(
-            'name' => 'GitHub Authentication',
-            'status' => $token_configured,
-            'value' => $token_configured ? __('Configured', 'wp-github-sync') : __('Not configured', 'wp-github-sync'),
-            'expected' => __('Configured', 'wp-github-sync'),
-            'message' => $token_configured 
-                ? sprintf(__('GitHub %s authentication is configured', 'wp-github-sync'), strtoupper($auth_method))
-                : sprintf(__('GitHub authentication is not configured. Please add a token.', 'wp-github-sync'))
-        );
-        $requirements_passed = $requirements_passed && $token_configured;
-        
-        // 8. Check if repository is configured
-        $repo_configured = !empty(get_option('wp_github_sync_repository', ''));
-        $requirements[] = array(
-            'name' => 'GitHub Repository',
-            'status' => $repo_configured,
-            'value' => $repo_configured ? __('Configured', 'wp-github-sync') : __('Not configured', 'wp-github-sync'),
-            'expected' => __('Configured', 'wp-github-sync'),
-            'message' => $repo_configured 
-                ? __('GitHub repository is configured', 'wp-github-sync')
-                : __('GitHub repository is not configured', 'wp-github-sync')
-        );
-        // Don't fail if repository not configured - this is expected for initial sync
-        
-        // Determine overall status
-        if ($requirements_passed) {
-            wp_github_sync_log("All system requirements passed", 'info');
-            wp_send_json_success(array(
-                'message' => __('All system requirements check passed.', 'wp-github-sync'),
-                'requirements' => $requirements
-            ));
-        } else {
-            wp_github_sync_log("Some system requirements failed", 'warning');
-            wp_send_json_error(array(
-                'message' => __('Some system requirements check failed. See details below.', 'wp-github-sync'),
-                'details' => $requirements
-            ));
-        }
-    }
-    
-    /**
-     * Display the jobs monitor page.
-     */
-    public function display_jobs_page() {
-        // Validate user has permission
-        if (!wp_github_sync_current_user_can()) {
-            wp_die(__('You do not have sufficient permissions to access this page.', 'wp-github-sync'));
-        }
-        
-        // Process actions (cancel/clear jobs)
-        if (isset($_GET['action']) && check_admin_referer('wp_github_sync_jobs_action', 'nonce')) {
-            if ($_GET['action'] === 'cancel_chunked_sync' && current_user_can('manage_options')) {
-                delete_option('wp_github_sync_chunked_sync_state');
+        // Process result and add admin notice
+        if ($nonce_verified && $result !== null) {
+            if (is_wp_error($result)) {
                 add_settings_error(
-                    'wp_github_sync_jobs',
-                    'job_canceled',
-                    __('Chunked sync job has been canceled.', 'wp-github-sync'),
-                    'updated'
+                    'wp_github_sync', // Setting group
+                    'admin_action_failed', // Slug
+                    sprintf($error_message_format, $result->get_error_message()), // Message
+                    'error' // Type
                 );
-            } elseif ($_GET['action'] === 'clear_scheduled_jobs' && current_user_can('manage_options')) {
-                // Clear all scheduled cron events related to our plugin
-                $cron_events = _get_cron_array();
-                $cleared_count = 0;
-                
-                if (!empty($cron_events)) {
-                    foreach ($cron_events as $timestamp => $hooks) {
-                        foreach ($hooks as $hook => $events) {
-                            if (strpos($hook, 'wp_github_sync') !== false) {
-                                foreach ($events as $key => $event) {
-                                    wp_unschedule_event($timestamp, $hook, $event['args']);
-                                    $cleared_count++;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                add_settings_error(
-                    'wp_github_sync_jobs',
-                    'jobs_cleared',
-                    sprintf(_n('%d scheduled job has been cleared.', '%d scheduled jobs have been cleared.', $cleared_count, 'wp-github-sync'), $cleared_count),
-                    'updated'
+            } else {
+                 add_settings_error(
+                    'wp_github_sync', // Setting group
+                    'admin_action_success', // Slug
+                    $success_message, // Message
+                    'success' // Type
                 );
             }
+            // Redirect to remove action parameters from URL
+            wp_safe_redirect(remove_query_arg(array('action', '_wpnonce', 'commit', 'branch'), wp_get_referer()));
+            exit;
+        } elseif ($action !== '' && !$nonce_verified) {
+             wp_die(__('Security check failed. Please try again.', 'wp-github-sync'));
         }
-        
-        // Get any active chunked sync
-        $chunked_sync_state = get_option('wp_github_sync_chunked_sync_state', null);
-        
-        // Get scheduled cron events
-        $cron_events = array();
-        $cron_array = _get_cron_array();
-        
-        if (!empty($cron_array)) {
-            foreach ($cron_array as $timestamp => $hooks) {
-                foreach ($hooks as $hook => $events) {
-                    // Only show our plugin's events
-                    if (strpos($hook, 'wp_github_sync') !== false) {
-                        foreach ($events as $event_key => $event) {
-                            $cron_events[] = array(
-                                'timestamp' => $timestamp,
-                                'hook' => $hook,
-                                'args' => $event['args'],
-                                'interval' => isset($event['interval']) ? $event['interval'] : 0,
-                                'scheduled' => human_time_diff(time(), $timestamp) . ' ' . 
-                                              ($timestamp > time() ? __('from now', 'wp-github-sync') : __('ago', 'wp-github-sync')),
-                                'next_run' => date_i18n('Y-m-d H:i:s', $timestamp),
-                                'key' => $event_key
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Get deployment in progress
-        $deployment_in_progress = get_option('wp_github_sync_deployment_in_progress', false);
-        $deployment_start_time = get_option('wp_github_sync_last_deployment_time', 0);
-        
-        // Get sync in progress (for backward compatibility)
-        $sync_in_progress = get_option('wp_github_sync_sync_in_progress', false);
-        $sync_start_time = get_option('wp_github_sync_sync_start_time', 0);
-        
-        // Include the template file
-        include WP_GITHUB_SYNC_DIR . 'admin/templates/jobs-page.php';
     }
 }

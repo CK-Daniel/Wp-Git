@@ -15,6 +15,70 @@
     }
 }
 
+/* Getting Started Tab Styles */
+.wp-github-sync-getting-started-columns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 30px;
+    margin: 30px 0;
+}
+
+.wp-github-sync-getting-started-column {
+    flex: 1;
+    min-width: 280px;
+}
+
+.wp-github-sync-getting-started-heading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 0;
+    color: #1e293b; /* Match h3 color from admin.css */
+    font-size: 16px; /* Match h3 size from admin.css */
+}
+
+.wp-github-sync-getting-started-heading .dashicons {
+    color: var(--wp-github-sync-primary); /* Corrected variable */
+}
+
+.wp-github-sync-getting-started-subheading {
+    margin-top: 20px;
+    font-size: 14px; /* Slightly smaller than h3 */
+    font-weight: 600;
+}
+
+.wp-github-sync-task-list {
+    list-style-type: none;
+    padding: 0;
+    margin: 15px 0;
+}
+
+.wp-github-sync-task-list li {
+    margin-bottom: 15px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.wp-github-sync-task-list li .dashicons {
+    color: var(--wp-github-sync-success); /* Corrected variable */
+    margin-top: 2px;
+}
+
+.wp-github-sync-task-list li span {
+    line-height: 1.6;
+}
+
+.wp-github-sync-getting-started-column .wp-github-sync-info-box {
+    margin-top: 15px; /* Keep specific margin */
+}
+
+.wp-github-sync-getting-started-column .wp-github-sync-button,
+.wp-github-sync-getting-started-column .wp-github-sync-action-buttons {
+     margin-top: 15px; /* Keep specific margin */
+}
+
+
 /* Status Card */
 .wp-github-sync-card {
     background: #fff;
