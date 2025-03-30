@@ -60,14 +60,19 @@ class InitialSyncManager {
      */
     private $stats = [];
 
+    // Injected dependencies
+    private $blob_creator;
+    private $tree_builder;
+    private $branch_manager;
+
     /**
      * Constructor.
      *
      * @param API_Client          $api_client The API client instance.
      * @param Repository_Uploader $uploader   The Repository Uploader instance (may become redundant).
-     * @param BlobCreator         $blob_creator The Blob Creator instance.
-     * @param TreeBuilder         $tree_builder The Tree Builder instance.
-     * @param BranchManager       $branch_manager The Branch Manager instance.
+     * @param GitData\BlobCreator $blob_creator The Blob Creator instance.
+     * @param GitData\TreeBuilder $tree_builder The Tree Builder instance.
+     * @param GitData\BranchManager $branch_manager The Branch Manager instance.
      */
     public function __construct(
         API_Client $api_client,
@@ -95,9 +100,14 @@ class InitialSyncManager {
      */
     public function set_progress_callback($callback) {
         $this->progress_callback = $callback;
+        // Pass to uploader if still needed, and directly to tree_builder
         if ($this->uploader) {
             $this->uploader->set_progress_callback($callback);
         }
+         if ($this->tree_builder) {
+            $this->tree_builder->set_progress_callback($callback);
+        }
+        // Blob creator doesn't currently use progress callback
     }
 
     /**
@@ -301,13 +311,44 @@ class InitialSyncManager {
         try {
             switch ($sync_state['stage']) {
                 case 'collecting_files':
-                    $result = $this->process_chunked_file_collection($sync_state, $branch);
+                    // Call helper method
+                    $state_update = InitialSyncHelper::process_collection_chunk($sync_state, $this->wp_filesystem);
+                    if (is_array($state_update)) {
+                        $this->state_manager->update_state($state_update);
+                        // If stage changed, update progress
+                        if (isset($state_update['stage']) && $state_update['stage'] === 'scanning_temp_dir') {
+                             $this->update_progress(6, "File collection complete, scanning files...");
+                        }
+                    }
+                    $result = null; // Always continue chunking during collection
                     break;
                 case 'scanning_temp_dir': // New stage
-                    $result = $this->process_scan_temp_dir($sync_state);
+                    // Call helper method
+                    $scan_result = InitialSyncHelper::scan_temp_directory_for_files($sync_state['temp_dir']);
+                    // Update state with results and move to blob creation
+                    $this->state_manager->update_state([
+                        'files_to_process' => $scan_result['files_to_process'],
+                        'total_files_to_process' => $scan_result['total_files'],
+                        'processed_file_index' => 0,
+                        'created_blobs' => [], // Reset blob list
+                        'stage' => 'creating_blobs',
+                        'progress_step' => 7,
+                        // Optionally store skipped files: 'scan_skipped_files' => $scan_result['skipped_files']
+                    ]);
+                    $this->update_progress(7, "Starting blob creation for " . $scan_result['total_files'] . " files...");
+                    $result = null; // Continue to blob creation
                     break;
                 case 'creating_blobs': // New stage
-                    $result = $this->process_blob_creation_chunk($sync_state);
+                    // Call helper method
+                    $state_update = InitialSyncHelper::process_blob_creation_chunk($sync_state, $this->blob_creator, [$this, 'update_progress']);
+                    if (is_array($state_update)) {
+                        $this->state_manager->update_state($state_update);
+                         // If stage changed, update progress
+                        if (isset($state_update['stage']) && $state_update['stage'] === 'preparing_tree_items') {
+                             $this->update_progress(8, "Preparing Git tree structure...");
+                        }
+                    }
+                    $result = null; // Always continue chunking during blob creation
                     break;
                 case 'preparing_tree_items': // New stage
                     $result = $this->process_prepare_tree_items($sync_state);
@@ -348,228 +389,10 @@ class InitialSyncManager {
     // --- Private Chunk Processing Methods ---
 
     /**
-     * Process a chunk of file collection.
-     */
-    private function process_chunked_file_collection($sync_state, $branch) {
-        $temp_dir = $sync_state['temp_dir'];
-        $paths_to_sync = $sync_state['paths_to_sync'];
-        $current_path_index = $sync_state['current_path_index'] ?? 0;
-        $path_keys = array_keys($paths_to_sync);
-
-        if (!isset($path_keys[$current_path_index])) {
-            // All paths processed, move to scan the collected files before upload stages
-            $this->state_manager->update_state(['stage' => 'scanning_temp_dir', 'progress_step' => 6]); // Use state manager
-            $this->update_progress(6, "File collection complete, scanning files...");
-            return null; // Continue to next stage (scanning) in the next chunk
-        }
-
-        $current_path = $path_keys[$current_path_index];
-        $include = $paths_to_sync[$current_path];
-
-        if (!$include) {
-            // Skip disabled path
-            $this->state_manager->update_state(['current_path_index' => $current_path_index + 1]); // Use state manager
-            return null; // Continue to next path in the next chunk
-        }
-
-        $this->update_progress(5, "Processing directory " . ($current_path_index + 1) . "/" . count($path_keys) . ": " . $current_path);
-        wp_github_sync_log("Processing directory chunk: {$current_path}", 'info');
-
-        // Determine source path
-        $wp_content_dir = $this->wp_filesystem->wp_content_dir();
-        if (strpos($current_path, 'wp-content/') === 0) {
-            $rel_path = substr($current_path, strlen('wp-content/'));
-            $source_path = trailingslashit($wp_content_dir) . $rel_path;
-        } else {
-            wp_github_sync_log("Skipping invalid path (must be within wp-content): {$current_path}", 'warning');
-            $this->state_manager->update_state(['current_path_index' => $current_path_index + 1]); // Use state manager
-            return null;
-        }
-
-        // Validate source path
-        if (!FilesystemHelper::is_safe_path($source_path) || !$this->wp_filesystem->exists($source_path) || !FilesystemHelper::is_within_wordpress($source_path)) {
-            wp_github_sync_log("Skipping invalid or non-existent source path: {$source_path}", 'warning');
-            $this->state_manager->update_state(['current_path_index' => $current_path_index + 1]); // Use state manager
-            return null;
-        }
-
-        // Prepare destination path
-        $dest_path = trailingslashit($temp_dir) . FilesystemHelper::normalize_path($current_path);
-        $dest_parent_dir = dirname($dest_path);
-        if (!$this->wp_filesystem->exists($dest_parent_dir)) {
-            if (!$this->wp_filesystem->mkdir($dest_parent_dir, FS_CHMOD_DIR)) {
-                 throw new \Exception("Failed to create destination parent directory: {$dest_parent_dir}");
-            }
-        }
-
-        // Copy directory using FilesystemHelper
-        $copy_result = FilesystemHelper::copy_directory($source_path, $dest_path);
-        if (is_wp_error($copy_result)) {
-            wp_github_sync_log("Failed to copy {$current_path}: " . $copy_result->get_error_message(), 'error');
-            // Log error but continue to next path
-        } else {
-            wp_github_sync_log("Successfully copied {$current_path} to temporary directory", 'debug');
-        }
-
-        // Move to the next path for the next chunk
-        $this->state_manager->update_state(['current_path_index' => $current_path_index + 1]); // Use state manager
-        return null; // Indicate processing continues
-    }
-
-    /**
-     * Scan the temporary directory to build the list of files to process.
-     */
-    private function process_scan_temp_dir($sync_state) {
-        $temp_dir = $sync_state['temp_dir'];
-        wp_github_sync_log("Scanning temporary directory for files: {$temp_dir}", 'info');
-        $this->update_progress(6, "Scanning collected files...");
-
-        $files_to_process = [];
-        $total_files = 0;
-        $skipped_files = []; // Track skipped files during scan
-
-        try {
-            $iterator = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($temp_dir, \RecursiveDirectoryIterator::SKIP_DOTS),
-                \RecursiveIteratorIterator::SELF_FIRST
-            );
-
-            $temp_dir_normalized = FilesystemHelper::normalize_path($temp_dir);
-            $temp_dir_prefix_len = strlen(trailingslashit($temp_dir_normalized));
-
-            foreach ($iterator as $item) {
-                // Skip directories
-                if ($item->isDir()) {
-                    continue;
-                }
-
-                $full_path = FilesystemHelper::normalize_path($item->getPathname());
-                // Calculate relative path within the temp dir, which corresponds to the GitHub path
-                $github_relative_path = substr($full_path, $temp_dir_prefix_len);
-
-                // Basic safety/ignore checks (redundant but safe)
-                 if (strpos($item->getFilename(), '.') === 0 || in_array($item->getFilename(), ['node_modules', 'vendor', '.git', 'cache'])) {
-                    wp_github_sync_log("Skipping excluded file during scan: {$github_relative_path}", 'debug');
-                    $skipped_files[] = ['path' => $github_relative_path, 'reason' => 'excluded'];
-                    continue;
-                }
-                 if (!FilesystemHelper::is_safe_path($github_relative_path)) {
-                    wp_github_sync_log("Skipping unsafe path during scan: {$github_relative_path}", 'warning');
-                    $skipped_files[] = ['path' => $github_relative_path, 'reason' => 'unsafe_path'];
-                    continue;
-                }
-
-                // Determine file mode
-                // Note: WP_Filesystem doesn't have a built-in is_executable. Use PHP's function.
-                // This might not be reliable depending on filesystem permissions and PHP setup.
-                $file_mode = is_executable($full_path) ? '100755' : '100644';
-
-                $files_to_process[] = [
-                    'local_full_path' => $full_path,
-                    'github_relative_path' => $github_relative_path,
-                    'mode' => $file_mode, // Store the mode
-                ];
-                $total_files++;
-            }
-
-        } catch (\Exception $e) {
-             wp_github_sync_log("Exception during temporary directory scan: " . $e->getMessage(), 'error');
-             throw new \Exception("Failed to scan temporary directory: " . $e->getMessage());
-        }
-
-        wp_github_sync_log("Scan complete. Found {$total_files} files to process.", 'info');
-        if (!empty($skipped_files)) {
-             wp_github_sync_log("Skipped " . count($skipped_files) . " files during scan.", 'warning');
-             // Optionally store skipped files info
-             // $this->state_manager->update_state(['scan_skipped_files' => $skipped_files]);
-        }
-
-        // Update state and move to blob creation
-        $this->state_manager->update_state([
-            'files_to_process' => $files_to_process,
-            'total_files_to_process' => $total_files,
-            'processed_file_index' => 0,
-            'created_blobs' => [], // Reset blob list
-            'stage' => 'creating_blobs',
-            'progress_step' => 7,
-        ]);
-        $this->update_progress(7, "Starting blob creation for {$total_files} files...");
-
-        return null; // Indicate processing continues in the next chunk
-    }
-
-    /**
-     * Process a chunk of blob creation.
-     */
-    private function process_blob_creation_chunk($sync_state) {
-        $files_to_process = $sync_state['files_to_process'] ?? [];
-        $current_index = $sync_state['processed_file_index'] ?? 0;
-        $created_blobs = $sync_state['created_blobs'] ?? [];
-        $total_files = $sync_state['total_files_to_process'] ?? count($files_to_process);
-
-        // Define how many blobs to create per chunk
-        $blobs_per_chunk = apply_filters('wp_github_sync_blobs_per_chunk', 50);
-        $processed_in_chunk = 0;
-
-        // Use the injected BlobCreator instance
-        $blob_creator = $this->blob_creator;
-
-
-        wp_github_sync_log("Processing blob creation chunk starting from index {$current_index}", 'debug');
-
-        while ($current_index < $total_files && $processed_in_chunk < $blobs_per_chunk) {
-            $file_info = $files_to_process[$current_index];
-            $local_path = $file_info['local_full_path'];
-            $github_path = $file_info['github_relative_path'];
-
-            $this->update_progress(7, "Creating blob " . ($current_index + 1) . "/{$total_files}: {$github_path}");
-
-            $blob_result = $blob_creator->create_blob($local_path, $github_path);
-
-            if (is_wp_error($blob_result)) {
-                // Log error but continue processing other files in the chunk
-                wp_github_sync_log("Failed to create blob for {$github_path}: " . $blob_result->get_error_message(), 'error');
-                // Optionally store skipped file info in state
-                // $sync_state['skipped_blobs'][] = ['path' => $github_path, 'reason' => $blob_result->get_error_message()];
-            } else {
-                // Store successful blob SHA mapped to its GitHub path
-                $created_blobs[$github_path] = $blob_result['sha'];
-            }
-
-            $current_index++;
-            $processed_in_chunk++;
-        }
-
-        // Update state with progress and created blobs for this chunk
-        $this->state_manager->update_state([
-            'processed_file_index' => $current_index,
-            'created_blobs' => $created_blobs,
-            // Optionally update skipped blobs: 'skipped_blobs' => $sync_state['skipped_blobs'] ?? []
-        ]);
-
-        // Check if all files have been processed
-        if ($current_index >= $total_files) {
-            // All blobs created, move to prepare the full tree item list
-            wp_github_sync_log("Blob creation complete. Processed {$total_files} files.", 'info');
-            $this->state_manager->update_state([
-                'stage' => 'preparing_tree_items', // New stage
-                'progress_step' => 8,
-                // 'tree_items_batch' => [], // No longer needed here
-                // 'last_tree_sha' => '', // No longer needed here
-            ]);
-            $this->update_progress(8, "Preparing Git tree structure...");
-            return null; // Continue to next stage in the next chunk
-        } else {
-            // More blobs to create, schedule next chunk for this stage
-            $this->update_progress(7, "Processed blob chunk, " . ($total_files - $current_index) . " remaining...");
-            return null; // Indicate processing continues (blob creation)
-        }
-    }
-
-    /**
      * Prepare the full list of tree items from created blobs and file info.
      */
     private function process_prepare_tree_items($sync_state) {
+        wp_github_sync_log("Entering stage: preparing_tree_items", 'debug');
         $created_blobs = $sync_state['created_blobs'] ?? [];
         $files_info = $sync_state['files_to_process'] ?? []; // Contains path and mode
 
@@ -620,6 +443,7 @@ class InitialSyncManager {
         ]);
         $this->update_progress(9, "Starting Git tree creation...");
 
+        wp_github_sync_log("Exiting stage: preparing_tree_items", 'debug');
         return null; // Continue to next stage in the next chunk
     }
 
@@ -627,6 +451,7 @@ class InitialSyncManager {
      * Process a chunk of tree creation using the API.
      */
     private function process_tree_creation_chunk($sync_state) {
+        wp_github_sync_log("Entering stage: creating_tree", 'debug');
         $full_tree_items = $sync_state['full_tree_items'] ?? [];
         $current_index = $sync_state['processed_tree_item_index'] ?? 0;
         $last_tree_sha = $sync_state['last_tree_sha'] ?? ''; // Base tree for this chunk
@@ -699,12 +524,14 @@ class InitialSyncManager {
             $this->update_progress(9, "Processed tree chunk, " . ($total_items - $next_index) . " items remaining...");
             return null; // Indicate processing continues (tree creation)
         }
+        wp_github_sync_log("Exiting stage: creating_tree", 'debug');
     }
 
     /**
      * Process the final commit creation and branch update stage.
      */
     private function process_commit_creation($sync_state, $branch) {
+        wp_github_sync_log("Entering stage: creating_commit", 'debug');
         $final_tree_sha = $sync_state['last_tree_sha'] ?? '';
         $base_commit_sha = $sync_state['base_commit_sha'] ?? ''; // Parent commit
         $site_name = get_bloginfo('name'); // Get site name for commit message
@@ -766,6 +593,7 @@ class InitialSyncManager {
         update_option('wp_github_sync_last_pushed_commit', $new_commit_sha);
 
         return true; // Indicate completion
+        // No exit log needed here as it returns true on success or throws exception on error
     }
 
 

@@ -144,4 +144,220 @@ class InitialSyncHelper {
         }
     }
 
+    /**
+     * Process a chunk of file collection, copying one directory from wp-content to the temp dir.
+     *
+     * @param array $sync_state The current sync state.
+     * @param \WP_Filesystem_Base $wp_filesystem WP Filesystem instance.
+     * @return array|null Updated state keys to merge, or null if processing continues without state change.
+     * @throws \Exception If a critical error occurs (e.g., cannot create directory).
+     */
+    public static function process_collection_chunk(array $sync_state, \WP_Filesystem_Base $wp_filesystem): ?array {
+        $temp_dir = $sync_state['temp_dir'];
+        $paths_to_sync = $sync_state['paths_to_sync'];
+        $current_path_index = $sync_state['current_path_index'] ?? 0;
+        $path_keys = array_keys($paths_to_sync);
+
+        if (!isset($path_keys[$current_path_index])) {
+            // All paths processed, return state update to move to next stage
+            return ['stage' => 'scanning_temp_dir', 'progress_step' => 6];
+        }
+
+        $current_path = $path_keys[$current_path_index];
+        $include = $paths_to_sync[$current_path];
+        $next_path_index = $current_path_index + 1; // Calculate next index
+
+        if (!$include) {
+            // Skip disabled path, return state update to move to next index
+            wp_github_sync_log("InitialSyncHelper: Skipping disabled path: {$current_path}", 'debug');
+            return ['current_path_index' => $next_path_index];
+        }
+
+        wp_github_sync_log("InitialSyncHelper: Processing directory chunk: {$current_path}", 'info');
+
+        // Determine source path
+        $wp_content_dir = $wp_filesystem->wp_content_dir();
+        if (strpos($current_path, 'wp-content/') === 0) {
+            $rel_path = substr($current_path, strlen('wp-content/'));
+            $source_path = trailingslashit($wp_content_dir) . $rel_path;
+        } else {
+            wp_github_sync_log("InitialSyncHelper: Skipping invalid path (must be within wp-content): {$current_path}", 'warning');
+            return ['current_path_index' => $next_path_index];
+        }
+
+        // Validate source path
+        if (!FilesystemHelper::is_safe_path($source_path) || !$wp_filesystem->exists($source_path) || !FilesystemHelper::is_within_wordpress($source_path)) {
+            wp_github_sync_log("InitialSyncHelper: Skipping invalid or non-existent source path: {$source_path}", 'warning');
+            return ['current_path_index' => $next_path_index];
+        }
+
+        // Prepare destination path
+        $dest_path = trailingslashit($temp_dir) . FilesystemHelper::normalize_path($current_path);
+        $dest_parent_dir = dirname($dest_path);
+        if (!$wp_filesystem->exists($dest_parent_dir)) {
+            if (!$wp_filesystem->mkdir($dest_parent_dir, FS_CHMOD_DIR)) {
+                 throw new \Exception("Failed to create destination parent directory: {$dest_parent_dir}");
+            }
+        }
+
+        // Copy directory using FilesystemHelper
+        $copy_result = FilesystemHelper::copy_directory($source_path, $dest_path);
+        if (is_wp_error($copy_result)) {
+            wp_github_sync_log("InitialSyncHelper: Failed to copy {$current_path}: " . $copy_result->get_error_message(), 'error');
+            // Log error but continue to next path
+        } else {
+            wp_github_sync_log("InitialSyncHelper: Successfully copied {$current_path} to temporary directory", 'debug');
+        }
+
+        // Return state update to move to the next path index
+        return ['current_path_index' => $next_path_index];
+    }
+
+    /**
+     * Scan the temporary directory to build the list of files to process.
+     *
+     * @param string $temp_dir The path to the temporary directory.
+     * @return array ['files_to_process' => array, 'total_files' => int, 'skipped_files' => array]
+     * @throws \Exception If scanning fails.
+     */
+    public static function scan_temp_directory_for_files(string $temp_dir): array {
+        wp_github_sync_log("InitialSyncHelper: Scanning temporary directory for files: {$temp_dir}", 'info');
+
+        $files_to_process = [];
+        $total_files = 0;
+        $skipped_files = []; // Track skipped files during scan
+
+        try {
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($temp_dir, \RecursiveDirectoryIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::SELF_FIRST
+            );
+
+            $temp_dir_normalized = FilesystemHelper::normalize_path($temp_dir);
+            $temp_dir_prefix_len = strlen(trailingslashit($temp_dir_normalized));
+
+            foreach ($iterator as $item) {
+                // Skip directories
+                if ($item->isDir()) {
+                    continue;
+                }
+
+                $full_path = FilesystemHelper::normalize_path($item->getPathname());
+                // Calculate relative path within the temp dir, which corresponds to the GitHub path
+                $github_relative_path = substr($full_path, $temp_dir_prefix_len);
+
+                // Basic safety/ignore checks (redundant but safe)
+                 if (strpos($item->getFilename(), '.') === 0 || in_array($item->getFilename(), ['node_modules', 'vendor', '.git', 'cache'])) {
+                    wp_github_sync_log("InitialSyncHelper: Skipping excluded file during scan: {$github_relative_path}", 'debug');
+                    $skipped_files[] = ['path' => $github_relative_path, 'reason' => 'excluded'];
+                    continue;
+                }
+                 if (!FilesystemHelper::is_safe_path($github_relative_path)) {
+                    wp_github_sync_log("InitialSyncHelper: Skipping unsafe path during scan: {$github_relative_path}", 'warning');
+                    $skipped_files[] = ['path' => $github_relative_path, 'reason' => 'unsafe_path'];
+                    continue;
+                }
+
+                // Determine file mode
+                $file_mode = is_executable($full_path) ? '100755' : '100644';
+
+                $files_to_process[] = [
+                    'local_full_path' => $full_path,
+                    'github_relative_path' => $github_relative_path,
+                    'mode' => $file_mode, // Store the mode
+                ];
+                $total_files++;
+            }
+
+        } catch (\Exception $e) {
+             wp_github_sync_log("InitialSyncHelper: Exception during temporary directory scan: " . $e->getMessage(), 'error');
+             throw new \Exception("Failed to scan temporary directory: " . $e->getMessage());
+        }
+
+        wp_github_sync_log("InitialSyncHelper: Scan complete. Found {$total_files} files to process.", 'info');
+        if (!empty($skipped_files)) {
+             wp_github_sync_log("InitialSyncHelper: Skipped " . count($skipped_files) . " files during scan.", 'warning');
+        }
+
+        return [
+            'files_to_process' => $files_to_process,
+            'total_files' => $total_files,
+            'skipped_files' => $skipped_files
+        ];
+    }
+
+    /**
+     * Process a chunk of blob creation.
+     *
+     * @param array $sync_state   The current sync state.
+     * @param GitData\BlobCreator $blob_creator The BlobCreator instance.
+     * @param callable|null $progress_callback Optional progress callback.
+     * @return array Updated state keys to merge.
+     * @throws \Exception If blob creator is missing or other critical error.
+     */
+    public static function process_blob_creation_chunk(array $sync_state, GitData\BlobCreator $blob_creator, ?callable $progress_callback = null): array {
+        wp_github_sync_log("InitialSyncHelper: Entering blob creation chunk processing", 'debug');
+        $files_to_process = $sync_state['files_to_process'] ?? [];
+        $current_index = $sync_state['processed_file_index'] ?? 0;
+        $created_blobs = $sync_state['created_blobs'] ?? [];
+        $total_files = $sync_state['total_files_to_process'] ?? count($files_to_process);
+
+        // Define how many blobs to create per chunk
+        $blobs_per_chunk = apply_filters('wp_github_sync_blobs_per_chunk', 50);
+        $processed_in_chunk = 0;
+
+        if (!$blob_creator) {
+             throw new \Exception("BlobCreator instance not provided to InitialSyncHelper::process_blob_creation_chunk.");
+        }
+
+        wp_github_sync_log("InitialSyncHelper: Processing blob creation chunk starting from index {$current_index}", 'debug');
+
+        while ($current_index < $total_files && $processed_in_chunk < $blobs_per_chunk) {
+            $file_info = $files_to_process[$current_index];
+            $local_path = $file_info['local_full_path'];
+            $github_path = $file_info['github_relative_path'];
+
+            // Update progress using the provided callback
+            if (is_callable($progress_callback)) {
+                call_user_func($progress_callback, 7, "Creating blob " . ($current_index + 1) . "/{$total_files}: {$github_path}");
+            }
+
+            $blob_result = $blob_creator->create_blob($local_path, $github_path);
+
+            if (is_wp_error($blob_result)) {
+                // Log error but continue processing other files in the chunk
+                wp_github_sync_log("InitialSyncHelper: Failed to create blob for {$github_path}: " . $blob_result->get_error_message(), 'error');
+                // Optionally store skipped file info in state
+                // $sync_state['skipped_blobs'][] = ['path' => $github_path, 'reason' => $blob_result->get_error_message()];
+            } else {
+                // Store successful blob SHA mapped to its GitHub path
+                $created_blobs[$github_path] = $blob_result['sha'];
+            }
+
+            $current_index++;
+            $processed_in_chunk++;
+        }
+
+        $updates = [
+            'processed_file_index' => $current_index,
+            'created_blobs' => $created_blobs,
+            // Optionally update skipped blobs: 'skipped_blobs' => $sync_state['skipped_blobs'] ?? []
+        ];
+
+        // Check if all files have been processed
+        if ($current_index >= $total_files) {
+            // All blobs created, update state to move to next stage
+            wp_github_sync_log("InitialSyncHelper: Blob creation complete. Processed {$total_files} files.", 'info');
+            $updates['stage'] = 'preparing_tree_items';
+            $updates['progress_step'] = 8;
+        } else {
+            // More blobs to create, progress updated by caller
+             if (is_callable($progress_callback)) {
+                 call_user_func($progress_callback, 7, "Processed blob chunk, " . ($total_files - $current_index) . " remaining...");
+             }
+        }
+        wp_github_sync_log("InitialSyncHelper: Exiting blob creation chunk processing", 'debug');
+        return $updates;
+    }
+
 } // End class InitialSyncHelper

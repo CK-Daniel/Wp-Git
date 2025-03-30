@@ -691,7 +691,14 @@
                 return;
             }
 
-            window.wpGitHubSyncAdmin.showOverlay('Testing Connection...'); // Correctly call overlay function
+            // Defensively check if the function exists before calling
+            if (window.wpGitHubSyncAdmin && typeof window.wpGitHubSyncAdmin.showOverlay === 'function') {
+                window.wpGitHubSyncAdmin.showOverlay('Testing Connection...');
+            } else {
+                console.error('WP GitHub Sync Error: showOverlay function not found.');
+                // Optionally provide fallback feedback if overlay isn't available
+                alert('Testing connection...');
+            }
             $button.text('Testing...').prop('disabled', true);
 
             $.ajax({
@@ -778,32 +785,3 @@
         console.log('WP GitHub Sync: Admin scripts initialized');
     });
 })(jQuery);
-</file_content>
-
-Try again with fewer/more precise SEARCH blocks.
-(If you run into this error two times in a row, you may use the write_to_file tool as a fallback.)
-</error><environment_details>
-# VSCode Visible Files
-wp-github-sync/admin/assets/css/admin.css
-wp-github-sync/admin/assets/css/admin.css
-wp-github-sync/admin/assets/css/dashboard.css
-wp-github-sync/admin/assets/css/dashboard.css
-wp-github-sync/admin/assets/js/admin.js
-
-# VSCode Open Tabs
-../../vscode/bin/linux-x64/ddc367ed5c8936efe395cffeec279b04ffd7db78/Untitled-1
-wp-github-sync/src/WP_GitHub_Sync.php
-wp-github-sync/admin/templates/logs-page.php
-wp-github-sync/src/Admin/Log_Manager.php
-wp-github-sync/src/Admin/Admin_Pages.php
-wp-github-sync/src/Admin/Admin.php
-wp-github-sync/admin/templates/settings-page.php
-wp-github-sync/src/Sync/DeploymentOrchestrator.php
-wp-github-sync/admin/assets/js/admin.js
-
-# Current Time
-3/29/2025, 10:41:20 PM (UTC, UTC+0:00)
-
-# Current Mode
-ACT MODE
-</environment_details>
